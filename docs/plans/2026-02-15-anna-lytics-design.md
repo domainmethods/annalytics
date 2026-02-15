@@ -24,6 +24,8 @@ Non-technical business stakeholders (<50 users) who currently ask the data team 
 7. **Supervisor Agent**: A second LLM pass that reviews the generated SQL, the logic/explanation, and the answer before it reaches the user — with retry loop on rejection
 8. **Clarification Agent**: Smart intake that detects ambiguous questions and asks targeted follow-up questions before generating SQL, ensuring the bot answers the user's actual intent
 9. **Human-in-the-Loop Escalation**: When the agent is uncertain, it escalates specific questions to a configurable data team channel or analyst DM — responses bootstrap the Knowledge Base organically
+10. **Reasoning Transparency**: Every response includes collapsible reasoning (assumptions, tables, SQL, teachings used). Users can interrogate the agent's logic with follow-up questions ("why did you use that table?", "if X is Y, how come Z is A?") and the agent can run diagnostic queries to investigate discrepancies
+11. **Channel-Based Access Control**: Configurable mapping of Slack channels to allowed BigQuery datasets — queries from #finance only see finance marts
 
 ### Out of Scope (MVP)
 
@@ -106,14 +108,16 @@ gcloud run deploy anna-lytics \
   --image gcr.io/$PROJECT_ID/anna-lytics \
   --min-instances=1 \
   --max-instances=10 \
-  --cpu=1 \
-  --memory=512Mi \
-  --concurrency=80 \
+  --cpu=2 \
+  --memory=1Gi \
+  --concurrency=20 \
   --cpu-boost \
   --no-cpu-throttling \
-  --timeout=60 \
+  --timeout=300 \
   --region=us-central1
 ```
+
+**Memory sizing rationale**: 1Gi accommodates Node.js runtime (~100MB), Bolt.js + deps (~50MB), in-memory schema index + teaching embeddings (~100-300MB depending on warehouse size), plus per-request overhead for up to 20 concurrent requests. Concurrency reduced from 80 to 20 because each request makes multiple LLM calls and holds state for the full pipeline duration (5-30s). The timeout is increased to 300s to accommodate escalation flows and supervisor retry loops. Monitor memory usage — if the schema index grows beyond ~500MB (large warehouse), migrate to an external vector store.
 
 ---
 
@@ -211,14 +215,23 @@ User: "Show me revenue"
     |   revenue tables — which one?")       |
     +----------------+-----------------------+
                      v
-    +--- 7. Execute + Respond ---------------+
-    |   - Run query (30s timeout, 1K rows)   |
-    |   - Adaptive formatting                |
-    |   - Include supervisor assessment      |
-    |     (if low confidence)                |
-    |   - Include thumbs-up/down buttons     |
-    |   - Log to feedback store              |
-    +----------------------------------------+
+    +--- 7. Execute ----------------------------+
+    |   - Run query (30s timeout, 1K rows)      |
+    |   - Persist ResponseContext to Firestore   |
+    |     (SQL, reasoning, assumptions, results) |
+    +----------------+--------------------------+
+                     v
+    +--- 8. Format + Respond -------------------+
+    |   - Summarize large results (Haiku, only  |
+    |     if >20 rows and summary format)       |
+    |   - Adaptive formatting with override     |
+    |     buttons: [Table] [Summary] [CSV]      |
+    |     [Show SQL] [👍] [👎]                  |
+    |   - Collapsible reasoning section         |
+    |   - Include supervisor caveat if low      |
+    |     confidence                            |
+    |   - Log to feedback store                 |
+    +-------------------------------------------+
 ```
 
 ---
@@ -318,6 +331,18 @@ USER QUESTION: {question}
 - **>30 tables**: Embed table descriptions into a vector store, retrieve top 5-15 relevant tables per query
 - **Sweet spot**: 5-15 relevant tables retrieved dynamically
 
+### Sample Rows Strategy
+
+Sample rows add +6 accuracy points on Spider benchmarks, making them one of the highest-impact prompt elements. Sourcing strategy:
+
+- **When**: Cached at dbt metadata refresh time (not queried live per request)
+- **How**: `SELECT * FROM table LIMIT 5` for each mart/gold layer model, run as a batch job after `dbt build` completes
+- **For partitioned tables**: Query the most recent partition (`WHERE _PARTITIONDATE >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) LIMIT 5`)
+- **Storage**: Firestore collection `sample_rows`, keyed by `dataset.table_name`
+- **Refresh**: Automatically on dbt CI completion (same trigger as metadata refresh). Stale sample rows (>7 days old) are flagged but still used — stale samples are better than no samples.
+- **Cost**: One-time batch of ~30 queries at refresh time. Each scans minimal data due to LIMIT 5. Negligible cost.
+- **Per-table budget**: 5 rows, truncated to 500 chars per cell to avoid blowing up prompt tokens on text columns
+
 ### Advanced Techniques
 
 - **Dynamic few-shot selection**: Maintain curated (question, SQL) pairs. Retrieve the 3-5 most semantically similar examples per query.
@@ -410,10 +435,16 @@ On submission, the bot auto-creates a PR in the repo via GitHub API. Once merged
 
 ### RAG Retrieval at Query Time
 
-1. Embed each teaching's `question_patterns` + `reasoning` text
-2. At query time, embed the user's question
-3. Retrieve top 3-5 most semantically similar teachings
-4. Inject into the prompt under a `TEACHINGS` section:
+**Embedding strategy**: Short `question_patterns` (2-4 words each) are too sparse for reliable vector similarity against verbose user questions. Instead, use a multi-signal approach:
+
+1. **Primary embedding**: The full `reasoning` field (natural-language paragraph) — embeds well against natural-language questions
+2. **Synthetic question expansion**: At index time, use an LLM to generate 10-20 realistic question variants per teaching from the `question_patterns` + `reasoning`. These synthetic questions are embedded alongside the reasoning, dramatically improving retrieval recall.
+3. **Keyword boost**: `question_patterns` and `tags` are used as a keyword filter (BM25 or exact match) to complement vector similarity — catches cases where embedding misses an exact term match
+
+At query time:
+1. Embed the user's question
+2. Retrieve top 3-5 teachings by hybrid score (vector similarity + keyword boost)
+3. Inject into the prompt under a `TEACHINGS` section:
 
 ```
 TEACHINGS (sanctioned patterns for similar questions):
@@ -553,6 +584,28 @@ The agent classifies each incoming question into one of three confidence levels:
 | **MEDIUM** | Answer with explicitly stated assumptions | "Show me revenue" -> "Showing monthly revenue for all regions, last 12 months (assuming completed orders only)" |
 | **LOW** | Ask 1-2 targeted clarifying questions before proceeding | "How are we doing?" -> "Could you clarify: are you asking about revenue, customer growth, or something else?" |
 
+### Lightweight Teaching Context
+
+The Clarification Agent runs *before* full Knowledge Base RAG (step 3 in the pipeline), so it cannot access full teachings. To avoid making assumptions blind, it receives a **teaching summary map** — a flat lookup of canonical definitions built at index time:
+
+```typescript
+// Built once when teachings are indexed, updated on CI
+interface TeachingSummary {
+  term: string;           // e.g., "revenue"
+  definition: string;     // e.g., "total_amount from fct_orders, completed orders only"
+  canonical_table: string; // e.g., "analytics.fct_orders"
+}
+
+// Injected into clarification prompt as AVAILABLE CONTEXT
+const teachingSummaries: TeachingSummary[] = teachings.map(t => ({
+  term: t.tags[0],
+  definition: t.reasoning.split('\n')[0], // first sentence only
+  canonical_table: t.models_referenced[0],
+}));
+```
+
+This gives the Clarification Agent enough domain knowledge to make informed assumptions ("Assuming 'revenue' means total_amount from fct_orders, completed orders only") without duplicating full RAG retrieval. The full teachings with sanctioned SQL are still retrieved in step 3 for the Primary Agent.
+
 ### Classification Prompt
 
 ```
@@ -560,8 +613,8 @@ You are a data analyst intake specialist. Evaluate whether the
 following question has enough specificity to generate an accurate
 SQL query against our data warehouse.
 
-AVAILABLE CONTEXT:
-- Business terms we know: {list_of_teaching_tags_and_definitions}
+AVAILABLE CONTEXT (canonical business definitions):
+- Business terms we know: {teaching_summary_map}
 - Common metrics: {list_of_known_metrics}
 
 USER QUESTION: {question}
@@ -603,19 +656,26 @@ The bot uses Block Kit buttons for common choices (fast click) with a text fallb
 
 ### Thread Context Awareness
 
-The Clarification Agent considers the full thread context. If the user has already been discussing customer churn in the thread, a follow-up like "now show me by region" doesn't need clarification — the agent infers the topic from thread history.
+The Clarification Agent considers thread context to avoid redundant clarification. If the user has already been discussing customer churn, a follow-up like "now show me by region" doesn't need clarification — the agent infers the topic from history.
+
+**Token budget**: Thread context is capped at **2,000 tokens** to prevent long conversations from blowing up prompt size and cost. Strategy:
+
+1. **Always include**: The last 4 messages (2 user + 2 bot) — the immediate conversational context
+2. **Summarize the rest**: If thread exceeds 4 messages, compress earlier messages into a 1-2 sentence summary: "Earlier in this thread, the user asked about customer churn rates by region. Results showed 12% overall churn."
+3. **Strip SQL results**: Bot responses that contain query results are replaced with a stub: "[Query result: 15 rows, columns: region, churn_rate, customer_count]" — the full results are in `ResponseContext` if needed
+4. **Hard cap**: If compressed context still exceeds 2,000 tokens, truncate oldest-first
 
 ```typescript
 const thread = await client.conversations.replies({
   channel, ts: thread_ts, oldest: thread_ts,
 });
 
-const threadContext = thread.messages!.map(m => ({
-  role: m.bot_id ? 'assistant' : 'user',
-  content: m.text || '',
-}));
-
-// Include thread context in clarification prompt
+const threadContext = buildThreadContext(thread.messages!, {
+  maxTokens: 2000,
+  recentMessageCount: 4,
+  summarizeOlder: true,
+  stripQueryResults: true,
+});
 ```
 
 ### When NOT to Clarify
@@ -662,20 +722,33 @@ User Question
     |                     Best-effort + verify OR park + wait
     |                     Human response -> teaching candidate
     v
-[Execute + Respond] ---- "Deliver the answer"
+[Execute] -------------- "Run the query"
+    |                     BigQuery execution with limits
+    v
+[Format + Summarize] --- "Present the answer"
+    |                     Uses: Haiku/mini for large result summaries
+    |                     Adaptive format (table/text/CSV)
+    |                     User can override via buttons
+    |                     Persist ResponseContext to Firestore
+    v
+[Respond] -------------- "Deliver to user"
+    |                     Post to Slack with reasoning + override buttons
+    |                     [📋 Table] [📝 Summary] [⬇️ CSV] [🔍 SQL] [👍] [👎]
 ```
 
 ### Cost per Query (Estimated)
 
 | Scenario | LLM Calls | Approx Cost |
 |----------|-----------|-------------|
-| Happy path (high confidence, supervisor passes) | 3 (clarify + generate + supervise) | ~$0.02-0.05 |
-| Clarification needed | 4+ (clarify + wait + generate + supervise) | ~$0.03-0.06 |
-| Supervisor retry (1 round) | 5 (clarify + generate + supervise + regenerate + supervise) | ~$0.05-0.10 |
-| Worst case (2 retries) | 7 calls | ~$0.08-0.15 |
-| Escalation (park + wait) | 3-7 calls + human wait time | ~$0.02-0.15 + delay |
+| Happy path (high confidence, supervisor passes) | 3-4 (clarify + generate + supervise + summarize) | ~$0.02-0.05 |
+| Clarification needed | 4-5 (clarify + wait + generate + supervise + summarize) | ~$0.03-0.06 |
+| Supervisor retry (1 round) | 5-6 (clarify + generate + supervise + regen + supervise + summarize) | ~$0.05-0.10 |
+| Worst case (2 retries) | 7-8 calls | ~$0.08-0.15 |
+| Escalation (park + wait) | 3-8 calls + human wait time | ~$0.02-0.15 + delay |
+| Meta-question follow-up | 1 (Haiku, no SQL generation) | ~$0.001 |
+| Discrepancy investigation | 2-4 (diagnostic SQL + format) | ~$0.02-0.05 |
 
-Note: Clarification Agent uses cheap models (Haiku/mini at ~$0.001/call). The expensive calls are Primary + Supervisor (Sonnet/GPT-4o). Escalation adds no LLM cost — only human wait time.
+Note: Clarification, summarization, and meta-question handling use cheap models (Haiku/mini at ~$0.001/call). The expensive calls are Primary + Supervisor (Sonnet/GPT-4o). Result summarization only runs for large results (>20 rows) or summary format — single-value and small-table responses skip it.
 
 ---
 
@@ -803,7 +876,150 @@ If the escalation rate stays flat or increases, the system is failing — the bo
 
 ---
 
-## 11. dbt Integration
+## 11. Reasoning Transparency & Interrogation
+
+Business users don't just want answers — they want to understand *how* the answer was derived so they can trust it, challenge it, and refine it. Anna Lytics must support "sausage-making" conversations where users interrogate the agent's logic.
+
+### Persisted Response Context
+
+Every response the agent generates is persisted to Firestore with full reasoning context:
+
+```typescript
+interface ResponseContext {
+  responseId: string;
+  threadTs: string;
+  messageTs: string;
+  // What the agent did
+  clarifiedQuestion: string;
+  assumptions: string[];
+  reasoningChain: string;
+  generatedSql: string;
+  tablesUsed: string[];
+  teachingsUsed: string[];  // IDs of teachings that influenced the answer
+  // What happened
+  supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
+  supervisorNotes: string;
+  confidence: 'high' | 'medium' | 'low';
+  queryResults: {
+    rowCount: number;
+    columnNames: string[];
+    sampleRows: any[];  // first 5 rows for diagnostic follow-ups
+    bytesProcessed: number;
+  };
+  // Timing
+  pipelineDurationMs: number;
+  createdAt: Date;
+}
+```
+
+This context is keyed by `threadTs + messageTs`, making it retrievable for any follow-up in the same thread.
+
+### Follow-Up Intent Classification
+
+When a user sends a follow-up message in a thread with a previous Anna Lytics response, the Clarification Agent classifies it into one of four intents:
+
+| Intent | Description | Example | Action |
+|--------|-------------|---------|--------|
+| **New query** | Unrelated data question | "How many customers do we have?" | Full pipeline from scratch |
+| **Refinement** | Modify the previous query | "Now break that down by region" | Re-run pipeline with modified question + prior context |
+| **Meta-question** | Question about the agent's reasoning | "Why did you use fct_orders?" | Load ResponseContext, answer from reasoning chain |
+| **Discrepancy investigation** | "If X, how come Y?" | "If total is $5M, how come Q4 is only $800K?" | Load ResponseContext + run diagnostic query |
+
+Classification prompt addition:
+
+```
+FOLLOW-UP CLASSIFICATION:
+If this message is in a thread with a prior Anna Lytics response,
+also classify the follow-up intent:
+{
+  "follow_up_intent": "new_query" | "refinement" | "meta_question" | "discrepancy",
+  ...existing fields...
+}
+```
+
+### Handling Meta-Questions
+
+For meta-questions ("Why did you use fct_orders?", "What does 'completed' mean here?"), the agent loads the `ResponseContext` and answers directly — no SQL generation, no supervisor, just a conversational LLM call with the reasoning context:
+
+```
+You are explaining your previous data analysis to a business user.
+
+YOUR PREVIOUS RESPONSE:
+Question: {clarifiedQuestion}
+SQL: {generatedSql}
+Tables used: {tablesUsed}
+Teachings referenced: {teachingsUsed}
+Assumptions: {assumptions}
+Reasoning: {reasoningChain}
+Supervisor assessment: {supervisorNotes}
+
+USER FOLLOW-UP: {follow_up_question}
+
+Explain your reasoning in plain language. Be specific about WHY
+you made each choice. If you used a teaching, cite it. If you
+made an assumption, flag it. Do not use jargon.
+```
+
+This uses Haiku (cheap, fast) since it's summarizing existing context, not generating new SQL.
+
+### Handling Discrepancy Investigations
+
+"If total revenue is $5M, how come Q4 only shows $800K?" requires more than explaining reasoning — it may need a **diagnostic query** to investigate.
+
+```
+1. Load ResponseContext for the previous answer
+2. Parse the discrepancy: user expected X, got Y
+3. Generate a diagnostic SQL query to investigate:
+   - Break down the original query by the dimension in question
+   - Check for filter effects ("how many rows were excluded by the
+     completed-only filter?")
+   - Look for data gaps ("are there NULL values in the date column?")
+4. Run diagnostic query through the normal validation pipeline
+5. Present findings: "The $5M total covers all of 2025. Q4 shows
+   $800K because it only includes October — November and December
+   haven't been loaded yet. The last data refresh was Oct 31."
+```
+
+Diagnostic queries use the Primary Agent (Sonnet) but skip the Supervisor — they're investigative, not user-facing answers.
+
+### Visible Reasoning in Responses
+
+Every response includes a collapsible reasoning summary so users can see the sausage without asking:
+
+```
+Total revenue last quarter: $5.2M
+
+📊 *Assumptions*: All regions, completed orders only, fct_orders table
+🔍 *Show reasoning* (click to expand)
+
+  Tables: analytics.fct_orders
+  Filter: order_status = 'completed' AND order_date >= '2025-10-01'
+  Guided by: "Monthly Revenue" teaching
+  Confidence: high ✓
+  SQL: [Show query]
+```
+
+Implemented via Block Kit's expandable sections. The summary line is always visible; the full reasoning is collapsed by default. Users who want transparency can expand; users who just want the number aren't cluttered.
+
+### Response Override Buttons
+
+Every response includes action buttons for format control and investigation:
+
+```
+[📋 Show as table] [📝 Summary] [⬇️ CSV] [🔍 Show SQL] [👍] [👎]
+```
+
+- **Show as table**: Re-render the same results as a Block Kit table
+- **Summary**: Re-render as natural language summary
+- **CSV**: Upload results as a CSV file
+- **Show SQL**: Show the generated SQL in a code block
+- **Thumbs up/down**: Existing feedback mechanism
+
+These override the bot's adaptive formatting choice without re-running the query — the results are already in `ResponseContext.queryResults`.
+
+---
+
+## 12. dbt Integration
 
 ### Metadata Ingestion
 
@@ -912,14 +1128,37 @@ Refresh the metadata index on dbt CI completion via:
 
 ### Run Status (MVP)
 
-Parse `run_results.json` from the most recent dbt run to answer:
-- "When was `dim_customers` last built?"
-- "Did the last dbt run succeed?"
-- "Which models failed?"
+Answer questions like "when was `dim_customers` last built?", "did the last run succeed?", "which models failed?"
+
+**Source**: `run_results.json` from each dbt run, ingested and stored in Firestore — not parsed from a single file at rest.
+
+**Ingestion flow**:
+1. dbt CI completes (GitHub Actions or dbt Cloud)
+2. Post-run webhook sends `run_results.json` to Anna Lytics ingest endpoint
+3. Anna Lytics parses and stores each model result as a Firestore document:
+   ```
+   collection: dbt_run_history
+   doc: {runId}_{modelName}
+   {
+     model: string,
+     status: 'success' | 'error' | 'skipped',
+     executionTime: number,
+     runId: string,
+     runStartedAt: Date,
+     errorMessage?: string,
+   }
+   ```
+4. Historical runs are retained (Firestore TTL: 90 days) for trend questions
+
+**What this enables**:
+- "When was `dim_customers` last built?" → query most recent doc for that model
+- "Did the last dbt run succeed?" → query all docs for most recent runId
+- "Has `fct_orders` been failing?" → query last N runs for that model, check error rate
+- "Which models are slowest?" → aggregate execution times
 
 ---
 
-## 12. Query Validation Pipeline
+## 13. Query Validation Pipeline
 
 ### 5-Layer Defense
 
@@ -969,9 +1208,34 @@ const bytesProcessed = parseInt(job.statistics.totalBytesProcessed, 10);
 - **Dataset-level permissions**: Restrict to mart/gold datasets
 - **Per-user daily quota**: Set via BigQuery project settings
 
+### Channel-Based Access Control
+
+Not every Slack channel should have access to every dataset. A configurable mapping restricts which datasets are queryable from which channels:
+
+```typescript
+interface ChannelAccessConfig {
+  // Channel ID -> list of allowed BigQuery datasets
+  channelDatasets: Record<string, string[]>;
+  // Channels not in this map get default access
+  defaultDatasets: string[];
+  // DMs use this user-level mapping (optional, falls back to default)
+  userDatasets?: Record<string, string[]>;
+}
+
+// Example config:
+// #finance -> ["analytics_finance", "analytics_shared"]
+// #marketing -> ["analytics_marketing", "analytics_shared"]
+// #general -> ["analytics_shared"]  (default)
+// DMs -> default datasets
+```
+
+**Enforcement**: Before SQL generation, the pipeline filters the schema context to only include tables from allowed datasets for the requesting channel. Tables in disallowed datasets are invisible — not blocked after the fact, but never offered to the LLM. The validation pipeline (Layer 2, AST check) also enforces the allowlist as a safety net.
+
+**Config management**: YAML file in the repo, refreshed on deploy. Changes require a PR, not a bot command — access control is a governance decision.
+
 ---
 
-## 13. Slack Integration
+## 14. Slack Integration
 
 ### Bolt.js Configuration
 
@@ -1073,7 +1337,7 @@ app.command('/anna', async ({ command, ack, client }) => {
 
 ---
 
-## 14. Feedback and Learning
+## 15. Feedback and Learning
 
 ### Feedback Tiers
 
@@ -1095,6 +1359,33 @@ app.command('/anna', async ({ command, ack, client }) => {
 **Tier 4 - Auto-correction**:
 - On execution failure, retry with error context (up to 2 attempts)
 - On validation failure, feed error back to LLM for self-correction
+
+### In-Conversation Learning (MVP)
+
+Feedback must have teeth in MVP, not just log to Firestore. When a user gives thumbs-down and then rephrases or asks a follow-up in the same thread, the bot incorporates the negative signal:
+
+```
+User: "Show me revenue by region"
+Bot: [returns result]
+User: 👎
+User: "No, I meant subscription revenue, not order revenue"
+```
+
+On the rephrased follow-up, the pipeline receives:
+1. The original `ResponseContext` (what SQL was generated, what tables were used)
+2. The negative feedback signal
+3. The follow-up message explaining what was wrong
+
+This is injected into the Primary Agent prompt as a **negative example**:
+
+```
+PREVIOUS ATTEMPT (rejected by user):
+SQL: SELECT ... FROM fct_orders ...
+User feedback: "No, I meant subscription revenue, not order revenue"
+Do NOT repeat this approach. Adjust based on the user's correction.
+```
+
+This doesn't require an analyst review queue. It works within a single conversation. And critically, it makes the thumbs-down button feel like it *does something* — the very next response is visibly informed by the feedback.
 
 ### Feedback-to-Teachings Promotion
 
@@ -1144,25 +1435,26 @@ Firestore collection: `feedback`
 
 ---
 
-## 15. Tech Stack
+## 16. Tech Stack
 
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
-| Runtime | Cloud Run (Node.js 20, distroless) | Serverless, GCP-native, IAM integration |
+| Runtime | Cloud Run (Node.js 20, distroless, 1Gi/2CPU) | Serverless, GCP-native, IAM integration |
 | Bot framework | Bolt.js (TypeScript, HTTP mode) | Official Slack SDK, first-class TS support |
 | LLM abstraction | Vercel AI SDK v5 | Provider-agnostic, Zod structured output, streaming |
 | Database client | @google-cloud/bigquery | Official Node.js client |
 | SQL validation | node-sql-parser | AST-level SELECT-only enforcement |
-| State/feedback | Firestore | Serverless, no connection pool, thread context |
-| Schema + teachings index | In-memory (MVP) -> vector DB later | RAG over dbt metadata and teachings; <30 tables: simple; >30: vector store |
+| State store | Firestore | Conversation state, feedback, response context, escalation state, dbt run history, sample rows |
+| Schema + teachings index | In-memory (MVP) -> vector DB later | Hybrid retrieval (vector + keyword); <30 tables: in-memory; >500MB: migrate to external store |
 | dbt metadata | Custom parser (manifest.json + catalog.json) | Direct parsing, no external deps |
 | Knowledge base | YAML files in Git repo | Version-controlled, PR-reviewed teachings |
+| Access control | YAML channel-dataset config in repo | Channel-based dataset restrictions, PR-managed |
 | Infra-as-code | Terraform | Cloud Run + IAM + Firestore provisioning |
-| CI/CD | GitHub Actions | Build, test, deploy, rebuild RAG index |
+| CI/CD | GitHub Actions | Build, test, deploy, rebuild RAG index, refresh sample rows |
 
 ---
 
-## 16. Extensibility Path
+## 17. Extensibility Path
 
 | Phase | Addition | Approach |
 |-------|----------|----------|
@@ -1176,7 +1468,7 @@ The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should b
 
 ---
 
-## 17. Risks and Mitigations
+## 18. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
@@ -1194,3 +1486,7 @@ The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should b
 | Escalation overload | Data team drowning in bot questions, negating self-serve goal | Track escalation rate (target <10% after 3 months); repeat escalations auto-flag missing teachings |
 | Escalation non-response | Human never replies, user left hanging | Configurable timeout (default 4h); reminder pings; fallback to best-effort with caveat after timeout |
 | Escalation rate stays flat | Bot is not learning from human responses | Alert on flat/rising escalation rate; auto-teaching conversion as primary mitigation |
+| ResponseContext storage growth | Firestore costs increase with every query | TTL on ResponseContext (30 days); archive older contexts; only persist full results for 7 days |
+| Diagnostic queries cause confusion | User asks "why?" and gets a second, different number | Clearly label diagnostic results as investigative, not authoritative; show alongside original |
+| In-memory index OOM | Cloud Run instance crashes on large warehouse | Monitor memory; 1Gi baseline; migrate to external vector store if index exceeds ~500MB |
+| Channel access misconfiguration | Users blocked from data they should access | Default datasets as fallback; admin audit log; easy YAML config in repo |
