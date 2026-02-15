@@ -13,21 +13,59 @@ Anna Lytics is a Slack bot that enables business users to query a BigQuery data 
 
 Non-technical business stakeholders (<50 users) who currently ask the data team for ad-hoc queries. Anna Lytics lets them self-serve in Slack.
 
-### Core MVP Features
+### Phasing Strategy
 
-1. Natural-language questions to BigQuery SQL to results (read-only, auto-execute)
-2. dbt metadata (manifest.json + catalog.json) as primary schema context, BigQuery INFORMATION_SCHEMA as fallback
-3. dbt model freshness/run status queries ("when was `customers` last built?")
-4. Adaptive response format (numbers, tables, summaries depending on question type)
-5. Thumbs-up/down feedback for continuous improvement
-6. **Knowledge Base (Teachings)**: Analyst-curated SQL examples and reasoning instructions injected via RAG to guide the agent on sanctioned query patterns — acts as pseudo-governance
-7. **Supervisor Agent**: A second LLM pass that reviews the generated SQL, the logic/explanation, and the answer before it reaches the user — with retry loop on rejection
-8. **Clarification Agent**: Smart intake that detects ambiguous questions and asks targeted follow-up questions before generating SQL, ensuring the bot answers the user's actual intent
-9. **Human-in-the-Loop Escalation**: When the agent is uncertain, it escalates specific questions to a configurable data team channel or analyst DM — responses bootstrap the Knowledge Base organically
-10. **Reasoning Transparency**: Every response includes collapsible reasoning (assumptions, tables, SQL, teachings used). Users can interrogate the agent's logic with follow-up questions ("why did you use that table?", "if X is Y, how come Z is A?") and the agent can run diagnostic queries to investigate discrepancies
-11. **Channel-Based Access Control**: Configurable mapping of Slack channels to allowed BigQuery datasets — queries from #finance only see finance marts
+The system is delivered in phases, each adding standalone value. Phase 0 gets the bot answering questions in Slack. Each subsequent phase is informed by real usage data from the prior phase.
 
-### Out of Scope (MVP)
+#### Phase 0 — "It works" (2-3 weeks)
+
+The minimum to get a question answered:
+
+1. Natural-language questions → BigQuery SQL → results (read-only, auto-execute)
+2. dbt metadata (manifest.json + catalog.json) as primary schema context (full schema in every prompt — no RAG needed for <30 tables)
+3. Single LLM call per query (no supervisor, no clarification agent)
+4. Query validation: dry run + cost gate + execution limits
+5. Adaptive response format (numbers, tables, summaries)
+6. Thumbs-up/down buttons (logged to Firestore, not yet acted on)
+7. Basic thread context (last 4 messages)
+
+**Goal**: Get the bot into a Slack channel answering real questions. Learn what breaks, what users ask, where accuracy falls down.
+
+#### Phase 1 — "It's accurate" (month 1-2)
+
+The accuracy layer, informed by Phase 0 usage:
+
+8. **Knowledge Base (Teachings)**: Analyst-curated SQL examples and reasoning instructions, retrieved via hybrid RAG (vector + keyword) to guide sanctioned query patterns
+9. **Supervisor Agent**: Second LLM pass reviewing SQL, logic, and teaching compliance — with retry loop
+10. **Clarification Agent**: Smart intake with confidence classification, lightweight teaching context, and Block Kit follow-up questions
+11. **In-conversation learning**: Thumbs-down + rephrase feeds negative example into next attempt
+12. Embedding infrastructure (embedding model, hybrid retrieval index)
+13. Full 5-layer query validation pipeline
+14. Sample rows in prompts (cached at dbt refresh)
+
+#### Phase 2 — "It's trustworthy" (month 2-3)
+
+Trust, transparency, and safety:
+
+15. **Human-in-the-Loop Escalation**: Configurable escalation to data team channel or analyst DM, with auto-teaching from human responses
+16. **Reasoning Transparency**: Persisted ResponseContext, collapsible reasoning in responses, meta-question handling ("why did you use that table?"), discrepancy investigations ("if X is Y, how come Z?")
+17. **Channel-Based Access Control**: Channel-to-dataset mapping restricting which data is queryable from which channels
+18. **Observability**: Structured logging with per-request trace IDs across all pipeline stages
+19. Response override buttons (show as table / summary / CSV / SQL)
+20. dbt run status queries (Firestore-based run history)
+21. INFORMATION_SCHEMA fallback for non-dbt tables
+
+#### Phase 3 — "It gets smarter" (month 3+)
+
+The learning flywheel:
+
+22. Feedback-to-teachings promotion pipeline (auto-PR from corrected patterns)
+23. Teaching staleness detection (model deletion + schema diff detection)
+24. Escalation rate metrics and health dashboard
+25. Slack-side per-user rate limiting
+26. dbt model freshness/run trend queries
+
+### Out of Scope (all phases)
 
 - Triggering dbt runs from Slack
 - Dataproc/PySpark integration
@@ -119,6 +157,57 @@ gcloud run deploy anna-lytics \
 
 **Memory sizing rationale**: 1Gi accommodates Node.js runtime (~100MB), Bolt.js + deps (~50MB), in-memory schema index + teaching embeddings (~100-300MB depending on warehouse size), plus per-request overhead for up to 20 concurrent requests. Concurrency reduced from 80 to 20 because each request makes multiple LLM calls and holds state for the full pipeline duration (5-30s). The timeout is increased to 300s to accommodate escalation flows and supervisor retry loops. Monitor memory usage — if the schema index grows beyond ~500MB (large warehouse), migrate to an external vector store.
 
+### Observability & Tracing
+
+Every pipeline run gets a unique `traceId` (UUID) that propagates through every log line, LLM call, BigQuery job, and Firestore write. This is the single most important debugging tool — when a user reports a bad answer, the trace ID links the entire pipeline execution.
+
+**Structured logging** (JSON to Cloud Logging via `pino`):
+
+```typescript
+interface PipelineLog {
+  traceId: string;         // per-request UUID
+  stage: 'clarify' | 'retrieve' | 'generate' | 'validate' | 'supervise' | 'escalate' | 'execute' | 'format';
+  durationMs: number;
+  // Stage-specific fields
+  model?: string;          // which LLM model was called
+  inputTokens?: number;    // LLM input tokens
+  outputTokens?: number;   // LLM output tokens
+  confidence?: string;     // agent confidence level
+  verdict?: string;        // supervisor pass/fail
+  bytesProcessed?: number; // BigQuery bytes
+  error?: string;          // error message if stage failed
+}
+```
+
+**What gets logged per stage**:
+
+| Stage | Key metrics |
+|-------|------------|
+| Clarify | confidence level, route (data_query/dbt_status), latency, follow-up asked? |
+| Retrieve | tables retrieved count, teachings retrieved count, latency |
+| Generate | model, tokens in/out, tables used, confidence, latency |
+| Validate | which layers passed/failed, dry run bytes, cost estimate |
+| Supervise | verdict, retry count, teaching compliance, latency |
+| Escalate | trigger reason, target (channel/DM), escalation ID |
+| Execute | rows returned, bytes processed, query duration |
+| Format | format chosen, result summarized?, latency |
+
+**Trace ID propagation**: The `traceId` is stored in `ResponseContext` and included as a hidden field in the Slack message metadata. When a user reports an issue, the data team can search Cloud Logging by `traceId` to see every step of the pipeline.
+
+**Dashboards** (Cloud Monitoring):
+- **P50/P95 end-to-end latency** per phase
+- **LLM cost per query** (tokens x price)
+- **Supervisor retry rate** (indicates accuracy problems)
+- **Escalation rate** (should trend down)
+- **Error rate by stage** (which stage fails most?)
+- **BigQuery bytes processed** (cost monitoring)
+
+**Alerting**:
+- Error rate >5% over 15 minutes
+- P95 latency >30s
+- Escalation rate >20% over 24h (system not learning)
+- Memory usage >80% of limit
+
 ---
 
 ## 3. Core Request Flow
@@ -162,8 +251,8 @@ User: "Show me revenue"
     |     - Retrieved table DDLs             |
     |     - Column descriptions from dbt     |
     |     - Sample rows                      |
-    |     - Teachings (sanctioned examples)  |
-    |     - Dynamic few-shot examples        |
+    |     - Teachings (sanctioned patterns   |
+    |       and examples)                    |
     |   - Structured output via Zod:         |
     |     { sql, explanation, confidence,    |
     |       assumptions, reasoning_chain }   |
@@ -307,11 +396,10 @@ SAMPLE DATA:
 BUSINESS CONTEXT:
 {relevant_metric_definitions_from_dbt}
 
-EXAMPLES:
-{few_shot_examples_similar_to_current_question}
-
-TEACHINGS (sanctioned patterns for similar questions):
+TEACHINGS (sanctioned patterns and examples for similar questions):
 {retrieved_teachings_from_knowledge_base}
+(Teachings include both sanctioned SQL patterns and curated
+question/SQL examples — one content system, not two.)
 
 USER QUESTION: {question}
 ```
@@ -343,11 +431,12 @@ Sample rows add +6 accuracy points on Spider benchmarks, making them one of the 
 - **Cost**: One-time batch of ~30 queries at refresh time. Each scans minimal data due to LIMIT 5. Negligible cost.
 - **Per-table budget**: 5 rows, truncated to 500 chars per cell to avoid blowing up prompt tokens on text columns
 
-### Advanced Techniques
+### Advanced Techniques (Phase 1+)
 
-- **Dynamic few-shot selection**: Maintain curated (question, SQL) pairs. Retrieve the 3-5 most semantically similar examples per query.
 - **Chain-of-thought**: For complex queries, ask the model to plan before generating SQL.
 - **Self-correction loops**: On execution failure, feed the error back and retry (up to 2 attempts).
+
+Note: Dynamic few-shot examples are folded into the Teachings system (section 6). Teachings with `sanctioned_sql` serve as few-shot examples. One content system, not two.
 
 ---
 
@@ -433,6 +522,24 @@ anna_lytics/
 
 On submission, the bot auto-creates a PR in the repo via GitHub API. Once merged, CI rebuilds the RAG index.
 
+### Embedding Infrastructure
+
+| Component | Choice | Rationale |
+|-----------|--------|-----------|
+| **Embedding model** | `text-embedding-3-small` (OpenAI) via Vercel AI SDK | 1536 dimensions, $0.02/M tokens, best cost/quality ratio for retrieval. Vercel AI SDK provides a unified `embed()` function — switch to Vertex AI or Cohere without code changes. |
+| **Index (Phase 0-1)** | In-memory (`hnswlib-node`) | <500 teachings + <30 table descriptions = <1,000 vectors. Fits in ~50MB RAM. No external infra needed. Rebuilt on startup from Firestore. |
+| **Index (scale)** | Vertex AI Vector Search or Pinecone | Migrate when index exceeds ~5,000 vectors or memory pressure triggers on Cloud Run. The retrieval interface stays the same — only the backend changes. |
+| **Keyword index** | In-memory BM25 (`wink-bm25-text-search`) | Lightweight JS BM25 implementation. Indexes `question_patterns` and `tags`. No external infra. |
+
+**Index lifecycle**:
+1. On deploy / teaching change: load all teachings + table descriptions from Firestore
+2. Generate embeddings for any new or changed documents (skip unchanged via content hash)
+3. Build HNSW index + BM25 index in memory
+4. Serve queries from memory for the lifetime of the Cloud Run instance
+5. Cold starts rebuild from Firestore (~2-5s for <1,000 documents)
+
+**Cost**: Embedding ~1,000 documents (teachings + synthetic questions + table descriptions) costs ~$0.001. Re-embedding on teaching changes is negligible.
+
 ### RAG Retrieval at Query Time
 
 **Embedding strategy**: Short `question_patterns` (2-4 words each) are too sparse for reliable vector similarity against verbose user questions. Instead, use a multi-signal approach:
@@ -460,10 +567,30 @@ Reasoning: A customer is "churned" if no completed orders in 90 days...
 
 ### Staleness Protection
 
-- Each teaching references specific dbt models (`models_referenced`)
-- When a referenced model is dropped or renamed in dbt, flag the teaching as stale
+Each teaching references specific dbt models (`models_referenced`) and may contain `sanctioned_sql` referencing specific columns. Staleness detection runs on CI whenever dbt metadata refreshes:
+
+**Level 1 — Model deletion/rename** (blocks retrieval):
+- If any model in `models_referenced` no longer exists in `manifest.json`, flag teaching as `stale:model_missing`
 - Stale teachings are excluded from RAG retrieval until an analyst updates them
-- CI job compares teaching model references against current manifest.json
+
+**Level 2 — Schema drift** (warns but still retrieved):
+- If a teaching has `sanctioned_sql`, parse it (AST) and extract referenced column names
+- Compare against the current `catalog.json` column list for each referenced model
+- If columns were dropped or renamed, flag as `stale:schema_drift` with a list of affected columns
+- Schema-drift teachings are still retrieved (the reasoning may still be valid) but include a warning in the prompt: "⚠️ This teaching references columns that may have changed: {columns}"
+- The Supervisor Agent treats schema-drift warnings as a review flag
+
+**Level 3 — Semantic drift** (Phase 3, advisory):
+- If a model's `description` changed significantly since the teaching was authored (cosine similarity of description embeddings drops below threshold), flag as `stale:semantic_drift`
+- This catches cases where a model's *meaning* changes without column-level schema changes (e.g., `fct_orders` is redefined to include refunded orders)
+- Advisory only — surfaces in a weekly digest to the data team, not enforced automatically
+
+**CI implementation**: A GitHub Actions step after `dbt docs generate` runs a comparison script:
+1. Load all teachings from the repo
+2. Load current `manifest.json` + `catalog.json`
+3. For each teaching, run Level 1 and Level 2 checks
+4. Update staleness flags in Firestore (used by RAG retrieval)
+5. If any teachings are newly stale, post a summary to the escalation channel
 
 ### Governance Effect
 
@@ -652,7 +779,46 @@ I want to make sure I get this right. A couple of quick questions:
 Reply with your choices, or just say "all revenue, last 12 months" etc.
 ```
 
-The bot uses Block Kit buttons for common choices (fast click) with a text fallback for custom answers. Once the user responds, the clarified question flows into Schema Retrieval and SQL Generation.
+The bot uses Block Kit buttons for common choices (fast click) with a text fallback for custom answers.
+
+### LOW Confidence: Async Wait via Firestore
+
+When the Clarification Agent classifies a question as LOW confidence and posts follow-up questions, the pipeline must **suspend and resume** across separate Slack events — the same pattern as escalation (section 10). The Cloud Run request that posted the clarification question ends; a new request arrives when the user replies.
+
+**State machine** (Firestore collection: `clarification_state`):
+
+```
+1. Clarification Agent classifies question as LOW
+2. Post clarifying questions to Slack thread (Block Kit buttons + text)
+3. Persist state to Firestore:
+   {
+     clarificationId: string,
+     threadTs: string,
+     channel: string,
+     originalQuestion: string,
+     ambiguities: string[],       // what we asked about
+     clarifyingMessageTs: string, // ts of our follow-up message
+     state: 'awaiting_reply',
+     createdAt: Date,
+     expiresAt: Date,             // 1 hour TTL
+   }
+4. Return (Cloud Run request ends)
+
+--- user replies (seconds/minutes later) ---
+
+5. Bolt.js receives message event in thread
+6. Check Firestore for pending clarificationId matching threadTs
+7. Load clarification state
+8. Merge user's reply into clarified question
+9. Delete clarification state from Firestore
+10. Resume pipeline at step 3 (Schema + Knowledge Retrieval)
+```
+
+**Timeout**: If the user doesn't reply within 1 hour, the clarification state expires (Firestore TTL). If the user sends a new message in the thread after expiry, it's treated as a fresh question.
+
+**Button responses**: Block Kit button clicks arrive as `block_actions` events, not messages. The handler matches the `action_id` to the `clarificationId` and resumes the pipeline with the selected option.
+
+Once the user responds, the clarified question flows into Schema Retrieval and SQL Generation.
 
 ### Thread Context Awareness
 
@@ -738,17 +904,24 @@ User Question
 
 ### Cost per Query (Estimated)
 
-| Scenario | LLM Calls | Approx Cost |
-|----------|-----------|-------------|
-| Happy path (high confidence, supervisor passes) | 3-4 (clarify + generate + supervise + summarize) | ~$0.02-0.05 |
-| Clarification needed | 4-5 (clarify + wait + generate + supervise + summarize) | ~$0.03-0.06 |
-| Supervisor retry (1 round) | 5-6 (clarify + generate + supervise + regen + supervise + summarize) | ~$0.05-0.10 |
-| Worst case (2 retries) | 7-8 calls | ~$0.08-0.15 |
-| Escalation (park + wait) | 3-8 calls + human wait time | ~$0.02-0.15 + delay |
-| Meta-question follow-up | 1 (Haiku, no SQL generation) | ~$0.001 |
-| Discrepancy investigation | 2-4 (diagnostic SQL + format) | ~$0.02-0.05 |
+**Token budget reality check**: The Primary Agent prompt includes schema DDL (500-2,000 tokens/table x 5-15 tables), sample rows, teachings, thread context, and instructions. Expect **15,000-50,000 input tokens** per Primary Agent call depending on warehouse size and retrieval count. At Sonnet pricing (~$3/M input, $15/M output), a single generation call costs ~$0.05-0.15 in input alone.
 
-Note: Clarification, summarization, and meta-question handling use cheap models (Haiku/mini at ~$0.001/call). The expensive calls are Primary + Supervisor (Sonnet/GPT-4o). Result summarization only runs for large results (>20 rows) or summary format — single-value and small-table responses skip it.
+#### By Phase
+
+| Phase | Scenario | LLM Calls | Approx Cost | Monthly (50 users x 10 q/day) |
+|-------|----------|-----------|-------------|-------------------------------|
+| **0** | Single LLM call, no agents | 1 (generate only) | ~$0.05-0.15 | ~$750-2,250 |
+| **1** | Happy path (supervisor passes) | 3 (clarify + generate + supervise) | ~$0.10-0.25 | ~$1,500-3,750 |
+| **1** | Supervisor retry (1 round) | 5 (+ regen + supervise) | ~$0.20-0.40 | — |
+| **2** | + meta-question follow-up | 1 (Haiku, no SQL) | ~$0.001 | negligible |
+| **2** | + discrepancy investigation | 2-3 (diagnostic SQL) | ~$0.05-0.15 | — |
+
+**Cost management levers**:
+- Phase 0 keeps costs low by using a single LLM call — no supervisor or clarification overhead
+- Clarification and summarization use Haiku (~$0.001/call) — negligible
+- Supervisor is the biggest cost multiplier; consider making it optional per channel in cost-sensitive deployments
+- Prompt token budget: cap schema context at 15 tables max, truncate DDLs to essential columns
+- Monitor actual costs from Phase 0 before committing to Phase 1 agent architecture
 
 ---
 
@@ -947,6 +1120,34 @@ also classify the follow-up intent:
 }
 ```
 
+### Handling Refinements
+
+Refinements are the most common follow-up pattern ("now break that down by region", "just show last quarter", "add the customer name column"). They modify the previous query rather than asking something new.
+
+**Strategy**: Re-run the full pipeline but seed it with context from the previous response:
+
+1. Load the previous `ResponseContext` from Firestore
+2. Construct a **composite question** that merges the refinement with the original:
+   ```
+   ORIGINAL QUESTION: "Show me revenue by month"
+   ORIGINAL SQL: SELECT DATE_TRUNC(order_date, MONTH) AS month, SUM(total_amount) AS revenue FROM ...
+   REFINEMENT: "Now break that down by region"
+   COMPOSITE: "Show me revenue by month, broken down by region"
+   ```
+3. Feed the composite question through the normal pipeline (Schema Retrieval → Primary Agent → Validation → Supervisor)
+4. The Primary Agent receives the original SQL as a **starting point** (not the answer — it's a hint):
+   ```
+   PREVIOUS SQL (user wants a modification):
+   {original_sql}
+
+   The user wants to refine this query. Use it as a starting point
+   but generate a complete new query incorporating the refinement.
+   ```
+
+**Why re-run the full pipeline instead of just patching SQL?** String-manipulating SQL is brittle and error-prone. The LLM is better at understanding "add region" means adding both a `SELECT` column and a `GROUP BY` clause. The supervisor catches any mistakes. The cost is one extra pipeline run, but the accuracy is much higher than a regex/AST patch.
+
+**Optimization**: The schema retrieval step can reuse the previous `retrievedSchema` (it's persisted in `ResponseContext`) rather than re-embedding and re-searching. The same tables are almost certainly relevant. This saves one embedding call and one vector search per refinement.
+
 ### Handling Meta-Questions
 
 For meta-questions ("Why did you use fct_orders?", "What does 'completed' mean here?"), the agent loads the full `ResponseContext` — including the dbt schema context and teachings that were already retrieved during the original query — and answers directly. No SQL generation, no supervisor, just a conversational LLM call:
@@ -1019,7 +1220,14 @@ Total revenue last quarter: $5.2M
   SQL: [Show query]
 ```
 
-Implemented via Block Kit's expandable sections. The summary line is always visible; the full reasoning is collapsed by default. Users who want transparency can expand; users who just want the number aren't cluttered.
+**Implementation note**: Block Kit has no native client-side toggle/expand widget. "Show reasoning" is implemented as a **button action** that updates the message:
+
+1. Initial response includes a `🔍 Show reasoning` button (Block Kit `actions` block)
+2. User clicks the button → Bolt.js receives a `block_actions` event
+3. Handler calls `chat.update()` on the original message, replacing the button with the full reasoning content (section blocks with the tables, filters, teachings, SQL)
+4. A `🔍 Hide reasoning` button is included to toggle back
+
+This is the standard Slack pattern for expandable content. The update is instant (no LLM call — the reasoning is already in `ResponseContext`). The trade-off is a server round-trip per toggle, but it's a single Firestore read + Slack API call (~200ms).
 
 ### Response Override Buttons
 
@@ -1355,6 +1563,30 @@ app.command('/anna', async ({ command, ack, client }) => {
 });
 ```
 
+### Per-User Rate Limiting
+
+Each pipeline run involves 1-5+ LLM calls and a BigQuery execution. Without rate limiting, a single user (or a bot loop) could burn through budget in minutes. Rate limiting is applied at the Slack user level, not the channel level.
+
+**Implementation**: Firestore-backed sliding window counter (no Redis needed):
+
+```typescript
+interface RateLimitEntry {
+  userId: string;
+  windowStart: Date;     // start of current 1-hour window
+  queryCount: number;    // queries in this window
+}
+
+const RATE_LIMIT = {
+  queriesPerHour: 30,      // per user
+  queriesPerMinute: 5,     // burst protection
+  cooldownMessage: "You've hit the query limit (30/hour). This resets in {minutes} minutes. For urgent queries, ask in the escalation channel directly.",
+};
+```
+
+**Why Firestore, not in-memory**: Cloud Run can have multiple instances. An in-memory counter per instance would let a user bypass limits by hitting different instances. Firestore provides a single source of truth. The read-then-write is acceptable because rate limiting doesn't need sub-millisecond precision — a few extra queries slipping through on a race condition is fine.
+
+**UX**: When rate-limited, the bot `ack()`s normally but responds with a friendly message instead of processing the query. The user sees the remaining cooldown time.
+
 ---
 
 ## 15. Feedback and Learning
@@ -1465,7 +1697,10 @@ Firestore collection: `feedback`
 | Database client | @google-cloud/bigquery | Official Node.js client |
 | SQL validation | node-sql-parser | AST-level SELECT-only enforcement |
 | State store | Firestore | Conversation state, feedback, response context, escalation state, dbt run history, sample rows |
-| Schema + teachings index | In-memory (MVP) -> vector DB later | Hybrid retrieval (vector + keyword); <30 tables: in-memory; >500MB: migrate to external store |
+| Embeddings | `text-embedding-3-small` (OpenAI) via Vercel AI SDK | 1536 dimensions, $0.02/M tokens, provider-swappable |
+| Vector index | `hnswlib-node` (in-memory) -> Vertex AI Vector Search later | <1,000 vectors fits in ~50MB; migrate at ~5,000 vectors |
+| Keyword index | `wink-bm25-text-search` (in-memory) | Lightweight BM25 for question_patterns + tags |
+| Observability | `pino` (structured JSON) -> Cloud Logging + Cloud Monitoring | Per-request trace IDs, stage-level metrics, dashboards + alerting |
 | dbt metadata | Custom parser (manifest.json + catalog.json) | Direct parsing, no external deps |
 | Knowledge base | YAML files in Git repo | Version-controlled, PR-reviewed teachings |
 | Access control | YAML channel-dataset config in repo | Channel-based dataset restrictions, PR-managed |
