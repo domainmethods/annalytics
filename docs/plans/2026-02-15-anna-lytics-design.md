@@ -894,8 +894,14 @@ interface ResponseContext {
   assumptions: string[];
   reasoningChain: string;
   generatedSql: string;
-  tablesUsed: string[];
-  teachingsUsed: string[];  // IDs of teachings that influenced the answer
+  tablesUsed: string[];        // table names referenced in the SQL
+  teachingsUsed: string[];     // IDs of teachings that influenced the answer
+  // Full dbt context (persisted from the pipeline — not fetched again)
+  retrievedSchema: TableContext[];  // all 5-15 tables retrieved by RAG, with
+                                    // descriptions, column definitions, lineage,
+                                    // sample DDL — including tables considered
+                                    // but not used in the final SQL
+  retrievedTeachings: Teaching[];   // full teaching objects, not just IDs
   // What happened
   supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
   supervisorNotes: string;
@@ -911,6 +917,10 @@ interface ResponseContext {
   createdAt: Date;
 }
 ```
+
+**Key insight**: The pipeline already retrieves 5-15 tables (with full descriptions, column definitions, lineage, sample DDL) and 3-5 teachings for SQL generation. Instead of discarding this context after the response, persist it. This gives the agent everything it needs to answer most "sausage-making" questions without any new infrastructure — it just doesn't throw away what it already fetched.
+
+`retrievedSchema` includes tables the agent **considered but didn't use** — this is what lets it answer "why fct_orders and not fct_subscriptions?" (both were in the retrieved context, and the agent can explain why it chose one).
 
 This context is keyed by `threadTs + messageTs`, making it retrievable for any follow-up in the same thread.
 
@@ -939,28 +949,38 @@ also classify the follow-up intent:
 
 ### Handling Meta-Questions
 
-For meta-questions ("Why did you use fct_orders?", "What does 'completed' mean here?"), the agent loads the `ResponseContext` and answers directly — no SQL generation, no supervisor, just a conversational LLM call with the reasoning context:
+For meta-questions ("Why did you use fct_orders?", "What does 'completed' mean here?"), the agent loads the full `ResponseContext` — including the dbt schema context and teachings that were already retrieved during the original query — and answers directly. No SQL generation, no supervisor, just a conversational LLM call:
 
 ```
 You are explaining your previous data analysis to a business user.
+You have access to the full data model context that was used.
 
 YOUR PREVIOUS RESPONSE:
 Question: {clarifiedQuestion}
 SQL: {generatedSql}
-Tables used: {tablesUsed}
-Teachings referenced: {teachingsUsed}
 Assumptions: {assumptions}
 Reasoning: {reasoningChain}
 Supervisor assessment: {supervisorNotes}
 
+TABLES YOU CONSIDERED (from dbt metadata):
+{retrievedSchema — full descriptions, columns, lineage for all
+ 5-15 tables that were retrieved, including ones NOT used in SQL}
+
+TEACHINGS REFERENCED:
+{retrievedTeachings — full reasoning and sanctioned SQL}
+
 USER FOLLOW-UP: {follow_up_question}
 
-Explain your reasoning in plain language. Be specific about WHY
-you made each choice. If you used a teaching, cite it. If you
-made an assumption, flag it. Do not use jargon.
+Explain your reasoning in plain language. Be specific about:
+- WHY you chose the tables you used
+- WHY you did NOT use other tables that were available
+- What each column/filter means in business terms (use dbt descriptions)
+- Where the data comes from (use the dependsOn lineage)
+- Which teachings guided your approach and why
+If you made an assumption, flag it. Do not use jargon.
 ```
 
-This uses Haiku (cheap, fast) since it's summarizing existing context, not generating new SQL.
+This uses Haiku (cheap, fast) since it's reasoning over context that was already fetched — no new retrieval, no SQL generation. The dbt metadata is the key: it lets the agent explain decisions in terms of the data model ("I used fct_orders because its description says it contains all completed transactions, while fct_subscriptions only tracks recurring revenue") rather than vague generalities.
 
 ### Handling Discrepancy Investigations
 
@@ -1460,6 +1480,7 @@ Firestore collection: `feedback`
 |-------|----------|----------|
 | Post-MVP | Trigger dbt runs from Slack | GitHub Actions API to trigger dbt workflow |
 | Post-MVP | Chart/visualization | Server-side chart generation (chart.js + canvas) uploaded as Slack images |
+| Post-MVP | Full dbt graph browsing | Tool-based dbt metadata search for meta-questions beyond the retrieved context (e.g., exploring unrelated models, deep multi-hop lineage traversal, reading compiled model SQL). MVP covers 80% of meta-questions via persisted `retrievedSchema`; this covers the remaining 20%. |
 | Future | Dataproc/PySpark | Plugin architecture: add a "pipeline provider" interface alongside dbt |
 | Future | Databricks | Same plugin interface, Databricks REST API for job status and SQL warehouse queries |
 | Future | Multi-tenant | Tenant isolation via separate BigQuery service accounts + Firestore namespacing |
