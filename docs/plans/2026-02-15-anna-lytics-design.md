@@ -454,7 +454,7 @@ Sample rows add +6 accuracy points on Spider benchmarks, making them one of the 
 
 - **When**: Cached at dbt metadata refresh time (not queried live per request)
 - **How**: `SELECT * FROM table LIMIT 5` for each mart/gold layer model, run as a batch job after `dbt build` completes
-- **For partitioned tables**: Query the most recent partition (`WHERE _PARTITIONDATE >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) LIMIT 5`)
+- **For partitioned tables**: Query the most recent partition using the actual partition column (extracted from `catalog.json` table stats during metadata parsing — not hardcoded to `_PARTITIONDATE`). Example for a table partitioned on `order_date`: `WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) LIMIT 5`. If the partition column can't be determined from catalog metadata, fall back to a plain `SELECT * FROM table LIMIT 5` (no partition filter) — this scans more data but is only run at refresh time, not per query
 - **Storage**: Firestore collection `sample_rows`, keyed by `dataset.table_name`
 - **Refresh**: Automatically on dbt CI completion (same trigger as metadata refresh). Stale sample rows (>7 days old) are flagged but still used — stale samples are better than no samples.
 - **Cost**: One-time batch of ~30 queries at refresh time. Each scans minimal data due to LIMIT 5. Negligible cost.
@@ -640,14 +640,42 @@ async function syncTeachingsToFileSearch(teachings: Teaching[]) {
 - Schema-drift warnings (Level 2) are appended as metadata to the teaching file
 - **Phase 0**: No teachings exist, File Search `tools` config is omitted from the Gemini call. Primary Agent generates SQL from schema context alone.
 
-**Teaching summary map** (for Clarification Agent, section 8): During the same CI sync step that uploads to File Search, the pipeline also reads the raw YAML files from Git and writes a `TeachingSummary[]` array to a Firestore document (`config/teaching_summaries`). The Clarification Agent loads this on startup — it's a flat list of terms + definitions, not a retrieval index.
+**Teaching summary map** (for Clarification Agent, section 8): During the same CI sync step that uploads to File Search, the pipeline also reads the raw YAML files from Git and writes a `TeachingSummary[]` array to a Firestore document (`config/teaching_summaries`) with a `lastUpdatedAt` timestamp. The Clarification Agent loads this on startup and **refreshes every 5 minutes** by comparing the cached `lastUpdatedAt` against Firestore. This ensures new teachings added via CI are picked up within minutes, not hours (Cloud Run instances can live for hours between cold starts). The refresh is a single Firestore read (~5ms) — if the timestamp hasn't changed, no work is done.
+
+```typescript
+let cachedSummaries: TeachingSummary[] = [];
+let cachedLastUpdatedAt: Date | null = null;
+
+async function getTeachingSummaries(): Promise<TeachingSummary[]> {
+  const doc = await db.doc('config/teaching_summaries').get();
+  const data = doc.data()!;
+  if (!cachedLastUpdatedAt || data.lastUpdatedAt.toDate() > cachedLastUpdatedAt) {
+    cachedSummaries = data.summaries;
+    cachedLastUpdatedAt = data.lastUpdatedAt.toDate();
+  }
+  return cachedSummaries;
+}
+
+// Refresh every 5 minutes
+setInterval(() => getTeachingSummaries().catch(console.error), 5 * 60 * 1000);
+```
 
 ### Staleness Protection
 
 Each teaching references specific dbt models (`models_referenced`) and may contain `sanctioned_sql` referencing specific columns. Staleness detection runs on CI whenever dbt metadata refreshes:
 
 **Level 1 — Model deletion/rename** (blocks retrieval):
-- If any model in `models_referenced` no longer exists in `manifest.json`, flag teaching as `stale:model_missing`
+- Teachings use `schema.table` format in `models_referenced` (e.g., `analytics.fct_orders`) because that's how business users think about tables. The manifest uses dbt node IDs (`model.project_name.fct_orders`). During manifest parsing, build a lookup map to bridge the two formats:
+  ```typescript
+  // Built during parseDbtArtifacts()
+  const manifestBySchemaTable: Record<string, string> = {};
+  for (const [nodeId, node] of Object.entries(manifest.nodes)) {
+    if (node.resource_type === 'model') {
+      manifestBySchemaTable[`${node.schema}.${node.name}`] = nodeId;
+    }
+  }
+  ```
+- If any model in `models_referenced` has no matching entry in `manifestBySchemaTable`, flag teaching as `stale:model_missing`
 - Stale teachings are excluded from RAG retrieval until an analyst updates them
 
 **Level 2 — Schema drift** (warns but still retrieved):
@@ -1125,26 +1153,7 @@ Escalation requires suspending and resuming the pipeline across separate Slack e
 
 While waiting for a human response to an escalation, the user may post additional messages in the original thread. The bot must not launch a new pipeline for a thread that is parked pending escalation.
 
-**Implementation**: The message filter (section 14) checks for pending escalation state before invoking the pipeline, using the same pattern as the clarification state check:
-
-```typescript
-// In the message handler, after shouldRespond() passes:
-const pendingEscalation = await db.collection('escalation_state')
-  .where('originalThreadTs', '==', event.thread_ts)
-  .where('pipelineState', '==', 'awaiting_human')
-  .limit(1).get();
-
-if (!pendingEscalation.empty) {
-  await client.chat.postMessage({
-    channel: event.channel,
-    thread_ts: event.thread_ts,
-    text: "I'm still waiting for the data team on your previous question. I'll reply here when I have an answer.",
-  });
-  return;
-}
-```
-
-This runs alongside the clarification state check and the thread processing lock — three guards that prevent the pipeline from launching when it shouldn't.
+**Implementation**: The shared `preflightChecks()` function (section 14) runs all three guards (processing lock, clarification state, escalation state) before any pipeline invocation — both `/anna` and `app_mention` entry points call it. See section 14 for the full implementation. This ensures no entry point can bypass the guards.
 
 ### Auto-Teaching from Escalations
 
@@ -1155,11 +1164,19 @@ Human responds: "Always use fct_orders for revenue.
 fct_subscriptions is only for MRR breakdowns."
     |
     v
-Bot extracts structured teaching:
-  - question_patterns: ["total revenue", "revenue by region"]
-  - reasoning: "Revenue = fct_orders.total_amount.
-    fct_subscriptions is MRR only."
-  - models_referenced: [analytics.fct_orders]
+Bot extracts structured teaching via Gemini 3.0 Flash
+  with structured output (Zod schema → TeachingCandidate):
+  - Input: original user question, escalation context,
+    human's free-text response, relevant table schemas
+  - Output (structured):
+    - question_patterns: ["total revenue", "revenue by region"]
+    - reasoning: "Revenue = fct_orders.total_amount.
+      fct_subscriptions is MRR only."
+    - models_referenced: [analytics.fct_orders]
+    - sanctioned_sql: (optional, extracted if human
+      provided SQL in their response)
+  - Cost: ~$0.002 per escalation (Flash, small context)
+  - Phase: 2 (same as escalation feature)
     |
     v
 Bot confirms with human: "I've drafted this as a teaching:
@@ -1223,7 +1240,10 @@ interface ResponseContext {
   queryResults: {
     rowCount: number;
     columnNames: string[];
-    sampleRows: any[];  // first 5 rows for diagnostic follow-ups
+    // No result rows stored — avoids PII persistence in Firestore.
+    // Diagnostic follow-ups (section 11) re-query BigQuery when needed.
+    // The original query SQL is in generatedSql — re-execution is cheap
+    // since BigQuery caches results for 24 hours.
     bytesProcessed: number;
   };
   // Timing
@@ -1342,7 +1362,7 @@ This uses Flash (cheap, fast) since it's reasoning over context that was already
    haven't been loaded yet. The last data refresh was Oct 31."
 ```
 
-Diagnostic queries use the Primary Agent (Gemini 3.0 Pro) but skip the Supervisor — they're investigative, not user-facing answers.
+Diagnostic queries use the Primary Agent (Gemini 3.0 Pro) and pass through a **lightweight Supervisor review** — a single Pro call with a reduced prompt ("verify this diagnostic SQL is sensible and won't mislead the user"). Although diagnostic results are investigative, they ARE shown to the user who is already in a state of questioning trust. An incorrect diagnostic is more damaging than an incorrect initial answer. The lightweight review adds ~1-2s but prevents the bot from deepening confusion.
 
 ### Visible Reasoning in Responses
 
@@ -1385,7 +1405,7 @@ Every response includes action buttons for format control and investigation:
 ```
 
 - **Show as table**: Re-render the same results as a Block Kit table (≤6 columns) or code block (>6 columns)
-- **Summary**: Re-render as natural language summary
+- **Summary**: Generate natural language summary via Flash LLM call (~2-3s, not instant — the message updates to "Generating summary..." while Flash runs, then replaces with the summary). This is the one override button that requires an LLM call; the others re-format cached data instantly
 - **CSV**: Upload results as a CSV file
 - **Thumbs up/down**: Existing feedback mechanism
 
@@ -1840,6 +1860,54 @@ const conversationHistory = thread.messages!.map((m) => ({
 **Primary entry points**: @mention is the main trigger in channels. `/anna` is a convenience alias. DMs respond to all messages. Both entry points funnel into the same pipeline.
 
 ```typescript
+// Shared preflight checks — run before every pipeline invocation.
+// Both /anna and app_mention must call this. Returns false if the
+// pipeline should NOT launch (lock held, pending escalation, pending clarification).
+async function preflightChecks(
+  channel: string,
+  threadTs: string,
+  client: WebClient,
+): Promise<boolean> {
+  // 1. Thread processing lock
+  const lockAcquired = await acquireThreadLock(threadTs);
+  if (!lockAcquired) {
+    await client.chat.postMessage({
+      channel, thread_ts: threadTs,
+      text: "I'm still working on your previous question...",
+    });
+    return false;
+  }
+
+  // 2. Pending clarification state
+  const pendingClarification = await db.collection('clarification_state')
+    .where('threadTs', '==', threadTs)
+    .where('state', '==', 'awaiting_reply')
+    .limit(1).get();
+  if (!pendingClarification.empty) {
+    const state = pendingClarification.docs[0].data();
+    if (state.expiresAt.toDate() > new Date()) {
+      await releaseThreadLock(threadTs);
+      return false; // user reply will resume the pipeline
+    }
+  }
+
+  // 3. Pending escalation state
+  const pendingEscalation = await db.collection('escalation_state')
+    .where('originalThreadTs', '==', threadTs)
+    .where('pipelineState', '==', 'awaiting_human')
+    .limit(1).get();
+  if (!pendingEscalation.empty) {
+    await client.chat.postMessage({
+      channel, thread_ts: threadTs,
+      text: "I'm still waiting for the data team on your previous question. I'll reply here when I have an answer.",
+    });
+    await releaseThreadLock(threadTs);
+    return false;
+  }
+
+  return true;
+}
+
 // Slash command entry point (/anna <question>)
 // Note: slash command ack() is ephemeral (only invoker sees it)
 app.command('/anna', async ({ command, ack, client }) => {
@@ -1851,17 +1919,47 @@ app.command('/anna', async ({ command, ack, client }) => {
     text: 'Understanding your question...',
   });
 
-  // All subsequent messages (including final response) reply in this thread
+  // statusMsg.ts is both the thread root AND the message to update in-place
   const threadTs = statusMsg.ts!;
+  const statusMsgTs = statusMsg.ts!; // same value — /anna creates its own thread
+
+  // Preflight checks (lock, escalation, clarification)
+  // For /anna, the lock key uses channel:user:questionHash to catch
+  // duplicate submissions — since each /anna creates a new thread root,
+  // a threadTs-based lock would never collide.
+  const questionHash = simpleHash(command.text);
+  const dedupKey = `${command.channel_id}:${command.user_id}:${questionHash}`;
+  const dedupRef = db.collection('processing_threads').doc(dedupKey);
+  try {
+    await dedupRef.create({
+      startedAt: FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 300_000),
+    });
+  } catch (e) {
+    if (e.code === 6) { // ALREADY_EXISTS
+      const doc = await dedupRef.get();
+      if (doc.exists && doc.data()!.expiresAt.toDate() > new Date()) {
+        await client.chat.update({
+          channel: command.channel_id, ts: statusMsgTs,
+          text: "I'm already working on that question — check the thread above.",
+        });
+        return;
+      }
+      await dedupRef.delete();
+      // Fall through to retry
+    }
+  }
 
   try {
-    await runPipeline(command.text, command.channel_id, threadTs, client);
+    await runPipeline(command.text, command.channel_id, threadTs, statusMsgTs, client);
   } catch (error) {
     await client.chat.update({
       channel: command.channel_id,
-      ts: threadTs,
+      ts: statusMsgTs,
       text: friendlyErrorMessage(error, traceId),
     });
+  } finally {
+    await dedupRef.delete().catch(() => {});
   }
 });
 
@@ -1871,14 +1969,64 @@ app.event('app_mention', async ({ event, client }) => {
   // Use existing thread if mention is inside one, otherwise start a new thread
   const threadTs = event.thread_ts || event.ts;
 
+  // Preflight checks (lock, escalation, clarification) — keyed by thread root
+  if (!await preflightChecks(event.channel, threadTs, client)) return;
+
   const statusMsg = await client.chat.postMessage({
     channel: event.channel,
     thread_ts: threadTs,
     text: 'Understanding your question...',
   });
-  await runPipeline(event.text, event.channel, statusMsg.ts!, client);
+
+  // IMPORTANT: pass threadTs (thread root) for state/locks/ResponseContext,
+  // and statusMsg.ts (the reply) for chat.update() calls only.
+  await runPipeline(event.text, event.channel, threadTs, statusMsg.ts!, client);
 });
 ```
+
+### `runPipeline` Signature
+
+The pipeline function takes two separate `ts` values to avoid the bug where thread identity and status message identity are conflated:
+
+```typescript
+async function runPipeline(
+  question: string,
+  channel: string,
+  threadTs: string,     // Thread root — used for ResponseContext, locks, state queries
+  statusMsgTs: string,  // Status message — used ONLY for chat.update() calls
+  client: WebClient,
+): Promise<void>
+```
+
+`threadTs` is the canonical thread identifier. All Firestore writes (`ResponseContext`, `processing_threads`, `clarification_state`) key off this value. `statusMsgTs` is only used by `updateStatus()` to update the progress message in-place. For `/anna` commands, these are the same value (the status message IS the thread root). For `app_mention`, they differ (the thread root pre-exists; the status message is a reply within it).
+
+### Message Edit Handling
+
+If a user sends a question and immediately edits it (correcting a typo, changing the question), the pipeline should not process the stale original text. Slack sends a `message_changed` subtype event when a message is edited.
+
+```typescript
+app.event('message', async ({ event, client }) => {
+  if (event.subtype === 'message_changed') {
+    const threadTs = event.message.thread_ts || event.message.ts;
+    const lockRef = db.collection('processing_threads').doc(threadTs);
+    const lockDoc = await lockRef.get();
+
+    if (lockDoc.exists && lockDoc.data()!.expiresAt.toDate() > new Date()) {
+      // Pipeline is in-flight for this thread — set cancellation flag
+      await lockRef.update({ cancelledAt: FieldValue.serverTimestamp() });
+      // The pipeline checks this flag between stages and aborts if set.
+      // After cancellation, re-process with the edited text:
+      // (The pipeline's finally block releases the lock, then the
+      // new message event from the edit triggers a fresh run.)
+    }
+    // If no lock exists, pipeline already completed — user can re-ask.
+    return;
+  }
+  // ... normal message handling ...
+});
+```
+
+The pipeline checks `cancelledAt` between stages (same Firestore read as the lock check). If set, it aborts cleanly, releases the lock, and updates the status message: "Got your edit — reprocessing..." The edited text triggers a normal pipeline run.
 
 ### Error Handling
 
@@ -1953,6 +2101,55 @@ await client.chat.update({
 ```
 
 **Why not streaming**: The pipeline architecture prevents meaningful streaming — nothing can stream to the user until the supervisor approves. Progressive stage updates give the user a sense of movement (every 2-5 seconds) without requiring streaming support.
+
+### Firestore Index Specifications
+
+Firestore requires explicit composite index creation for queries with multiple field filters. Without these, queries throw `FAILED_PRECONDITION` at runtime. The following indexes must be defined in `firestore.indexes.json` and deployed via `firebase deploy --only firestore:indexes` (or Terraform):
+
+```json
+{
+  "indexes": [
+    {
+      "collectionGroup": "escalation_state",
+      "fields": [
+        { "fieldPath": "originalThreadTs", "order": "ASCENDING" },
+        { "fieldPath": "pipelineState", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "clarification_state",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "response_context",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" }
+      ],
+      "queryScope": "COLLECTION"
+    },
+    {
+      "collectionGroup": "dbt_run_history",
+      "fields": [
+        { "fieldPath": "model", "order": "ASCENDING" },
+        { "fieldPath": "runStartedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feedback",
+      "fields": [
+        { "fieldPath": "thread_ts", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
+```
+
+**Single-field queries** (e.g., `processing_threads` by document ID, `response_context` by `threadTs` alone) are auto-indexed by Firestore and don't need explicit definitions. The indexes above cover only the composite queries used by `preflightChecks()`, escalation matching, run history lookups, and feedback retrieval.
 
 ### Per-User Rate Limiting
 
@@ -2140,10 +2337,21 @@ The LLM SDK (Google GenAI) and the pipeline metadata interface should be designe
 | Bot responds to unrelated messages | Wasted LLM calls, annoying unsolicited responses | Message trigger rules: only respond to @mentions, DMs, and thread replies where bot has participated |
 | dbt metadata goes stale silently | Queries generated against outdated schema | `lastMetadataRefresh` timestamp in Firestore; warnings at 24h, alerts at 48h; `/anna health` command |
 | Sparse dbt metadata (empty descriptions) | LLM generates low-quality SQL from undocumented tables | Per-table quality score injected into prompt; low-quality tables flagged to LLM and Clarification Agent |
-| Concurrent duplicate requests | Interleaved pipeline results in same thread | Per-thread processing lock in Firestore (60s TTL); second request gets "still working" message |
+| Concurrent duplicate requests | Interleaved pipeline results in same thread | Per-thread processing lock in Firestore (300s TTL); second request gets "still working" message; `/anna` uses channel:user:questionHash dedup key |
 | User posts during pending escalation | New pipeline launches on parked thread | Escalation state check before pipeline; user told "still waiting for data team" |
 | node-sql-parser false negatives | Valid BigQuery SQL rejected by Layer 2 | Layer 2 is advisory on parse failure, blocking only for DML/DDL; Layer 3 (dry run) is authority |
 | Multiple confidence signals confuse escalation logic | Clarification says HIGH, Supervisor says LOW — which drives decisions? | Confidence hierarchy: user-facing = min(supervisor, primary). Clarification confidence is routing-only, never surfaced. |
 | MEDIUM assumptions mislead users | User sees wrong answer before realizing wrong assumptions | Assumptions shown first (bold, above results) + one-click refine button for fast recovery |
 | Raw error messages shown to business users | User sees "RESOURCE_EXHAUSTED: Quota exceeded" | Error category mapping to friendly messages; traceId always included for debugging |
 | Slack chat.update rate limits | Progressive status updates fail silently at high concurrency | Update only after slow stages (3-4 calls per pipeline, not 7); stays within 50/min limit |
+| Thread identity vs status message identity confused | Follow-ups ignored, ResponseContext keyed wrong | `runPipeline` takes separate `threadTs` (for state) and `statusMsgTs` (for chat.update) parameters |
+| `/anna` bypasses safety guards | Duplicate pipelines, escalation state ignored | Shared `preflightChecks()` called from both entry points; `/anna` uses channel:user:questionHash dedup |
+| Teaching `models_referenced` format mismatch | Staleness detection flags all teachings as missing | `manifestBySchemaTable` lookup map bridges `schema.table` → dbt node ID formats |
+| Teaching summary map stale on long-lived instances | Clarification Agent uses outdated domain knowledge | 5-minute periodic refresh from Firestore with `lastUpdatedAt` timestamp comparison |
+| Firestore composite indexes missing | Guard queries throw FAILED_PRECONDITION at runtime | Explicit `firestore.indexes.json` with all composite queries; deployed via CI |
+| Auto-teaching extraction undefined | Escalation learning loop incomplete | Specified: Flash structured output call (~$0.002/escalation), assigned to Phase 2 |
+| PII in ResponseContext query results | Sensitive data persisted in Firestore for 30 days | Removed `sampleRows` from ResponseContext; diagnostic follow-ups re-query BigQuery (cached 24h) |
+| User edits message after pipeline starts | Bot answers stale question | `message_changed` handler sets cancellation flag; pipeline checks between stages and restarts with edited text |
+| Diagnostic queries shown to users without review | Incorrect diagnosis deepens mistrust | Lightweight Supervisor review added for diagnostic SQL |
+| Partitioned table sample rows assume `_PARTITIONDATE` | Sample row query fails or full-scans non-ingestion-time partitioned tables | Extract actual partition column from catalog.json; fall back to plain LIMIT 5 |
+| Summary override button not instant | User expects instant reformat, waits 2-3s for LLM | UX shows "Generating summary..." during Flash call; documented as the one non-instant override |
