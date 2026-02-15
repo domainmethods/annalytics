@@ -39,7 +39,7 @@ The accuracy layer, informed by Phase 0 usage:
 9. **Supervisor Agent**: Second LLM pass reviewing SQL, logic, and teaching compliance — with retry loop
 10. **Clarification Agent**: Smart intake with confidence classification, lightweight teaching context, and Block Kit follow-up questions
 11. **In-conversation learning**: Thumbs-down + rephrase feeds negative example into next attempt
-12. Embedding infrastructure (embedding model, hybrid retrieval index)
+12. Gemini File Search integration (managed teaching retrieval)
 13. Full 5-layer query validation pipeline
 14. Sample rows in prompts (cached at dbt refresh)
 
@@ -88,12 +88,12 @@ The learning flywheel:
                          |    +-- Post "thinking..." message            |
                          |    +-- async: Agent Pipeline                 |
                          |         |                                    |
-                         |         1. Clarification Agent (Haiku)       |
+                         |         1. Clarification Agent (Flash)       |
                          |         2. Knowledge Base RAG (teachings +   |
                          |            schema retrieval)                 |
-                         |         3. Primary Agent (Sonnet)            |
+                         |         3. Primary Agent (Pro)               |
                          |         4. Validation Pipeline (5-layer)     |
-                         |         5. Supervisor Agent (Sonnet)         |
+                         |         5. Supervisor Agent (Pro)             |
                          |            +-- retry loop (up to 2x)        |
                          |         5b. Escalation (if uncertain)        |
                          |            +-- post to data team channel/DM |
@@ -103,8 +103,8 @@ The learning flywheel:
                          +------+-----------+-----------+---------------+
                                 |           |           |
                                 v           v           v
-                          BigQuery    Vercel AI SDK   Firestore
-                       (read-only SA) (Claude/GPT)  (conversation
+                          BigQuery   Google GenAI SDK  Firestore
+                       (read-only SA) (Gemini 3.0)  (conversation
                                                      history, feedback,
                                                      + escalation state)
 ```
@@ -155,7 +155,7 @@ gcloud run deploy anna-lytics \
   --region=us-central1
 ```
 
-**Memory sizing rationale**: 1Gi accommodates Node.js runtime (~100MB), Bolt.js + deps (~50MB), in-memory schema index + teaching embeddings (~100-300MB depending on warehouse size), plus per-request overhead for up to 20 concurrent requests. Concurrency reduced from 80 to 20 because each request makes multiple LLM calls and holds state for the full pipeline duration (5-30s). The timeout is increased to 300s to accommodate escalation flows and supervisor retry loops. Monitor memory usage — if the schema index grows beyond ~500MB (large warehouse), migrate to an external vector store.
+**Memory sizing rationale**: 1Gi accommodates Node.js runtime (~100MB), Bolt.js + deps (~50MB), in-memory dbt schema cache (~10-50MB depending on warehouse size), plus per-request overhead for up to 20 concurrent requests. Teaching retrieval is handled by Gemini File Search (no in-memory vector index needed), significantly reducing memory requirements. Concurrency reduced from 80 to 20 because each request makes multiple LLM calls and holds state for the full pipeline duration (5-30s). The timeout is increased to 300s to accommodate escalation flows and supervisor retry loops.
 
 ### Observability & Tracing
 
@@ -311,7 +311,7 @@ User: "Show me revenue"
     +----------------+--------------------------+
                      v
     +--- 8. Format + Respond -------------------+
-    |   - Summarize large results (Haiku, only  |
+    |   - Summarize large results (Flash, only  |
     |     if >20 rows and summary format)       |
     |   - Adaptive formatting with override     |
     |     buttons: [Table] [Summary] [CSV]      |
@@ -327,48 +327,62 @@ User: "Show me revenue"
 
 ## 4. LLM Layer
 
-### Abstraction: Vercel AI SDK v5+
+### SDK: Google GenAI (`@google/genai`)
 
-The Vercel AI SDK is the TypeScript equivalent of Python's LiteLLM:
-- 25+ providers, one-line switching between Claude, GPT, Gemini, etc.
-- Structured output via Zod schemas (perfect for SQL + metadata extraction)
+The Google GenAI SDK is the official TypeScript client for the Gemini API:
+- Native Zod support for structured output (constrained decoding, not post-parse)
+- File Search tool built in (managed RAG — see section 6)
 - Streaming-first (update Slack messages progressively)
-- No framework lock-in (works on Cloud Run, no Next.js required)
+- Runs on Cloud Run with service account or API key auth
+- Single Google dependency — no separate embedding or vector DB SDKs
 
 ### Model Strategy
 
-| Task | Model | Rationale |
-|------|-------|-----------|
-| SQL generation (Primary Agent) | Claude Sonnet / GPT-4o | Best accuracy on text-to-SQL benchmarks |
-| Supervisor Agent | Claude Sonnet / GPT-4o | Needs strong reasoning to catch errors in generated SQL |
-| Clarification + routing | Claude Haiku / GPT-4o-mini | Combined: classify confidence level AND route to data query vs dbt status. Single cheap call. |
-| Result summarization | Claude Haiku / GPT-4o-mini | Turn tabular results into natural language |
+| Task | Model | Pricing (per 1M tokens) | Rationale |
+|------|-------|------------------------|-----------|
+| SQL generation (Primary Agent) | Gemini 3.0 Pro | $2.00 in / $12.00 out | Strong reasoning for text-to-SQL, native File Search integration |
+| Supervisor Agent | Gemini 3.0 Pro | $2.00 in / $12.00 out | Needs strong reasoning to catch errors in generated SQL |
+| Clarification + routing | Gemini 3.0 Flash | $0.50 in / $3.00 out | Fast, cheap classification. Single call for confidence + routing. |
+| Result summarization | Gemini 3.0 Flash | $0.50 in / $3.00 out | Turn tabular results into natural language |
 
 ### Structured Output Pattern
 
 ```typescript
-import { generateObject } from 'ai';
-import { anthropic } from '@ai-sdk/anthropic';
+import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 
-const { object } = await generateObject({
-  model: anthropic('claude-sonnet-4-5-20250929'),
-  schema: z.object({
-    sql: z.string().describe('The BigQuery SQL query'),
-    explanation: z.string().describe('Plain-English explanation'),
-    tables_used: z.array(z.string()),
-    confidence: z.enum(['high', 'medium', 'low']),
-    assumptions: z.array(z.string()).describe('Assumptions made about the question'),
-    reasoning_chain: z.string().describe('Step-by-step reasoning for how the SQL was derived'),
-  }),
-  system: systemPromptWithSchemaContext,
-  prompt: userQuestion,
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const response = await ai.models.generateContent({
+  model: 'gemini-3.0-pro',
+  contents: userQuestion,
+  systemInstruction: systemPromptWithSchemaContext,
+  config: {
+    responseMimeType: 'application/json',
+    responseSchema: z.object({
+      sql: z.string().describe('The BigQuery SQL query'),
+      explanation: z.string().describe('Plain-English explanation'),
+      tables_used: z.array(z.string()),
+      confidence: z.enum(['high', 'medium', 'low']),
+      assumptions: z.array(z.string()).describe('Assumptions made about the question'),
+      reasoning_chain: z.string().describe('Step-by-step reasoning for how the SQL was derived'),
+    }),
+    // File Search tool for teaching retrieval (see section 6)
+    tools: [{
+      fileSearch: {
+        fileSearchStoreNames: [teachingsStoreId],
+      },
+    }],
+  },
 });
+
+const result = JSON.parse(response.text);
+const citations = response.candidates[0].groundingMetadata?.groundingChunks;
 ```
 
 ### Accuracy Expectations
 
-State-of-the-art benchmarks (BIRD) show 71-77%. With a curated dbt semantic layer + few-shot examples + domain-specific tuning, expect 75-90% accuracy on common query patterns. The bot should clearly communicate confidence levels and gracefully handle cases where it cannot generate a reliable query.
+State-of-the-art benchmarks (BIRD) show 71-77%. With a curated dbt semantic layer + Gemini File Search for teaching retrieval + domain-specific tuning, expect 75-90% accuracy on common query patterns. Gemini 3.0 Pro's strong reasoning capabilities and native tool use make it well-suited for text-to-SQL with grounding. The bot should clearly communicate confidence levels and gracefully handle cases where it cannot generate a reliable query.
 
 ---
 
@@ -396,10 +410,11 @@ SAMPLE DATA:
 BUSINESS CONTEXT:
 {relevant_metric_definitions_from_dbt}
 
-TEACHINGS (sanctioned patterns and examples for similar questions):
-{retrieved_teachings_from_knowledge_base}
-(Teachings include both sanctioned SQL patterns and curated
-question/SQL examples — one content system, not two.)
+TEACHINGS:
+(Relevant teachings are automatically retrieved via Gemini File Search
+from the teachings store. The model receives sanctioned SQL patterns
+and reasoning instructions as grounded context with citations.
+See section 6 for details.)
 
 USER QUESTION: {question}
 ```
@@ -416,7 +431,7 @@ USER QUESTION: {question}
 ### Schema Retrieval Strategy
 
 - **<30 tables**: Include full schema in every prompt (no RAG needed)
-- **>30 tables**: Embed table descriptions into a vector store, retrieve top 5-15 relevant tables per query
+- **>30 tables**: Upload table descriptions to a second File Search store, retrieve top 5-15 relevant tables per query
 - **Sweet spot**: 5-15 relevant tables retrieved dynamically
 
 ### Sample Rows Strategy
@@ -436,7 +451,7 @@ Sample rows add +6 accuracy points on Spider benchmarks, making them one of the 
 - **Chain-of-thought**: For complex queries, ask the model to plan before generating SQL.
 - **Self-correction loops**: On execution failure, feed the error back and retry (up to 2 attempts).
 
-Note: Dynamic few-shot examples are folded into the Teachings system (section 6). Teachings with `sanctioned_sql` serve as few-shot examples. One content system, not two.
+Note: Teachings with `sanctioned_sql` serve as few-shot examples. One content system, not two. Teaching retrieval is handled by Gemini File Search (section 6) — no manual RAG pipeline needed.
 
 ---
 
@@ -520,50 +535,72 @@ anna_lytics/
 - Reasoning / instructions
 - Tags
 
-On submission, the bot auto-creates a PR in the repo via GitHub API. Once merged, CI rebuilds the RAG index.
+On submission, the bot auto-creates a PR in the repo via GitHub API. Once merged, CI syncs teachings to the File Search store.
 
-### Embedding Infrastructure
+### Teaching Retrieval via Gemini File Search
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| **Embedding model** | `text-embedding-3-small` (OpenAI) via Vercel AI SDK | 1536 dimensions, $0.02/M tokens, best cost/quality ratio for retrieval. Vercel AI SDK provides a unified `embed()` function — switch to Vertex AI or Cohere without code changes. |
-| **Index (Phase 0-1)** | In-memory (`hnswlib-node`) | <500 teachings + <30 table descriptions = <1,000 vectors. Fits in ~50MB RAM. No external infra needed. Rebuilt on startup from Firestore. |
-| **Index (scale)** | Vertex AI Vector Search or Pinecone | Migrate when index exceeds ~5,000 vectors or memory pressure triggers on Cloud Run. The retrieval interface stays the same — only the backend changes. |
-| **Keyword index** | In-memory BM25 (`wink-bm25-text-search`) | Lightweight JS BM25 implementation. Indexes `question_patterns` and `tags`. No external infra. |
+Instead of building a custom embedding + vector search + BM25 pipeline, teaching retrieval uses **Gemini File Search** — a fully managed RAG system built into the Gemini API. File Search handles chunking, embedding (via `gemini-embedding-001`), vector search, and context injection automatically.
 
-**Index lifecycle**:
-1. On deploy / teaching change: load all teachings + table descriptions from Firestore
-2. Generate embeddings for any new or changed documents (skip unchanged via content hash)
-3. Build HNSW index + BM25 index in memory
-4. Serve queries from memory for the lifetime of the Cloud Run instance
-5. Cold starts rebuild from Firestore (~2-5s for <1,000 documents)
+**How it works**:
 
-**Cost**: Embedding ~1,000 documents (teachings + synthetic questions + table descriptions) costs ~$0.001. Re-embedding on teaching changes is negligible.
+1. **Indexing** (CI, on teaching change):
+   - Teaching YAML files are uploaded to a Gemini File Search store
+   - Each teaching file includes the `reasoning` field (embeds well), `question_patterns`, `sanctioned_sql`, and `tags`
+   - Synthetic question expansion: before upload, a CI step uses Gemini Flash to generate 10-20 realistic question variants per teaching and appends them to the file — File Search embeds these alongside the original content, improving retrieval recall
+   - File Search automatically chunks, embeds, and indexes the content
+   - Initial indexing cost: $0.15/M tokens (~$0.01 for 50 teaching files)
 
-### RAG Retrieval at Query Time
+2. **Query time** (automatic, no code):
+   - The Primary Agent's Gemini call includes `fileSearch` as a tool pointing to the teachings store (see section 4 code example)
+   - Gemini automatically retrieves relevant teaching chunks and grounds its response
+   - The response includes `groundingMetadata` with citations linking back to specific teaching files and chunks
+   - Storage and query-time embeddings are **free** — no per-query retrieval cost
 
-**Embedding strategy**: Short `question_patterns` (2-4 words each) are too sparse for reliable vector similarity against verbose user questions. Instead, use a multi-signal approach:
+3. **Citations for transparency**:
+   - Each citation includes the source file, chunk text, and relevance score
+   - Citations are persisted in `ResponseContext` for meta-question handling (section 11)
+   - The Supervisor Agent receives the cited teaching chunks to verify compliance
 
-1. **Primary embedding**: The full `reasoning` field (natural-language paragraph) — embeds well against natural-language questions
-2. **Synthetic question expansion**: At index time, use an LLM to generate 10-20 realistic question variants per teaching from the `question_patterns` + `reasoning`. These synthetic questions are embedded alongside the reasoning, dramatically improving retrieval recall.
-3. **Keyword boost**: `question_patterns` and `tags` are used as a keyword filter (BM25 or exact match) to complement vector similarity — catches cases where embedding misses an exact term match
+```typescript
+// CI: Sync teachings to File Search store
+async function syncTeachingsToFileSearch(teachings: Teaching[]) {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-At query time:
-1. Embed the user's question
-2. Retrieve top 3-5 teachings by hybrid score (vector similarity + keyword boost)
-3. Inject into the prompt under a `TEACHINGS` section:
+  for (const teaching of teachings) {
+    // Generate synthetic questions for better retrieval
+    const syntheticQs = await generateSyntheticQuestions(teaching);
 
+    // Build enriched document content
+    const content = formatTeachingForFileSearch(teaching, syntheticQs);
+
+    // Upload to File Search store
+    await ai.fileSearchStores.uploadToFileSearchStore({
+      fileSearchStoreName: TEACHINGS_STORE_ID,
+      file: Buffer.from(content),
+      config: {
+        displayName: teaching.id,
+        customMetadata: {
+          tags: teaching.tags.join(','),
+          models: teaching.models_referenced.join(','),
+        },
+      },
+    });
+  }
+}
 ```
-TEACHINGS (sanctioned patterns for similar questions):
 
-Teaching: "Monthly Revenue"
-Sanctioned SQL:
-  SELECT DATE_TRUNC(order_date, MONTH) AS month, ...
-Reasoning: Revenue always uses fct_orders with order_status = 'completed'...
+**Why File Search over custom RAG**:
+- **Zero infrastructure**: No hnswlib, no BM25 index, no embedding model to manage, no vector DB
+- **Free at query time**: Storage and retrieval embeddings are free; only initial indexing costs ($0.15/M tokens)
+- **Built-in citations**: Grounding metadata comes back automatically — perfect for our transparency requirements
+- **Scales automatically**: No memory pressure on Cloud Run, no index rebuild on cold start
+- **Trade-off**: Less control over ranking/scoring than a custom pipeline, but for an MVP with <100 teachings this is a net win
 
-Teaching: "Churn Definition"
-Reasoning: A customer is "churned" if no completed orders in 90 days...
-```
+**File Search store lifecycle**:
+- One store: `anna-lytics-teachings`
+- Synced from Git on CI (GitHub Actions step after teaching PR merge)
+- Stale teachings (Level 1, model_missing) are removed from the store during sync
+- Schema-drift warnings (Level 2) are appended as metadata to the teaching file
 
 ### Staleness Protection
 
@@ -690,7 +727,7 @@ Maximum 2 retry rounds (3 total supervisor calls). If still failing after exhaus
 ### Cost Considerations
 
 The Supervisor adds 1-3 extra LLM calls per query. To manage costs:
-- Use the same model tier as the Primary Agent (Sonnet/GPT-4o) — the supervisor needs strong reasoning
+- Use the same model tier as the Primary Agent (Gemini 3.0 Pro) — the supervisor needs strong reasoning
 - The supervisor prompt is smaller than the primary prompt (no schema DDL, just the SQL + explanation to review)
 - Average case: 1 supervisor call (PASS on first try). Retries are the exception.
 - Consider making the supervisor optional per channel or per user preference for cost-sensitive deployments
@@ -862,22 +899,22 @@ User Question
     |
     v
 [Clarification Agent] -- "Do I understand the question?"
-    |                     Uses: Haiku/mini (cheap, fast classification)
+    |                     Uses: Gemini 3.0 Flash (cheap, fast)
     |                     Output: clarified question + assumptions
     v
-[Knowledge Base RAG] --- "What do we already know about this?"
-    |                     Retrieves: teachings, sanctioned SQL, definitions
-    v
 [Primary Agent] -------- "Generate the SQL"
-    |                     Uses: Sonnet/GPT-4o (best accuracy)
-    |                     Input: schema + teachings + clarified question
+    |                     Uses: Gemini 3.0 Pro + File Search tool
+    |                     File Search retrieves teachings automatically
+    |                     Input: schema + clarified question
     |                     Output: SQL + explanation + reasoning chain
+    |                             + grounding citations
     v
 [Validation Pipeline] -- "Is the SQL safe to run?"
     |                     5-layer technical validation
     v
 [Supervisor Agent] ----- "Is the answer correct and compliant?"
-    |                     Uses: Sonnet/GPT-4o (strong reasoning)
+    |                     Uses: Gemini 3.0 Pro
+    |                     Input: SQL + cited teachings from Primary
     |                     Checks: correctness, teaching compliance, logic
     |                     Can: retry Primary Agent up to 2x
     |
@@ -892,7 +929,7 @@ User Question
     |                     BigQuery execution with limits
     v
 [Format + Summarize] --- "Present the answer"
-    |                     Uses: Haiku/mini for large result summaries
+    |                     Uses: Gemini 3.0 Flash for large result summaries
     |                     Adaptive format (table/text/CSV)
     |                     User can override via buttons
     |                     Persist ResponseContext to Firestore
@@ -904,21 +941,23 @@ User Question
 
 ### Cost per Query (Estimated)
 
-**Token budget reality check**: The Primary Agent prompt includes schema DDL (500-2,000 tokens/table x 5-15 tables), sample rows, teachings, thread context, and instructions. Expect **15,000-50,000 input tokens** per Primary Agent call depending on warehouse size and retrieval count. At Sonnet pricing (~$3/M input, $15/M output), a single generation call costs ~$0.05-0.15 in input alone.
+**Token budget reality check**: The Primary Agent prompt includes schema DDL (500-2,000 tokens/table x 5-15 tables), sample rows, thread context, and instructions. Expect **15,000-50,000 input tokens** per Primary Agent call depending on warehouse size. Teachings are injected automatically by File Search (no additional prompt tokens managed by us). At Gemini 3.0 Pro pricing ($2.00/M input, $12.00/M output), a single generation call costs ~$0.03-0.10 in input + ~$0.01-0.05 in output.
 
 #### By Phase
 
 | Phase | Scenario | LLM Calls | Approx Cost | Monthly (50 users x 10 q/day) |
 |-------|----------|-----------|-------------|-------------------------------|
-| **0** | Single LLM call, no agents | 1 (generate only) | ~$0.05-0.15 | ~$750-2,250 |
-| **1** | Happy path (supervisor passes) | 3 (clarify + generate + supervise) | ~$0.10-0.25 | ~$1,500-3,750 |
-| **1** | Supervisor retry (1 round) | 5 (+ regen + supervise) | ~$0.20-0.40 | — |
-| **2** | + meta-question follow-up | 1 (Haiku, no SQL) | ~$0.001 | negligible |
-| **2** | + discrepancy investigation | 2-3 (diagnostic SQL) | ~$0.05-0.15 | — |
+| **0** | Single Pro call, no agents | 1 (Pro: generate only) | ~$0.04-0.15 | ~$600-2,250 |
+| **1** | Happy path (supervisor passes) | 1 Flash + 2 Pro (clarify + generate + supervise) | ~$0.08-0.25 | ~$1,200-3,750 |
+| **1** | Supervisor retry (1 round) | 1 Flash + 4 Pro | ~$0.15-0.40 | — |
+| **2** | + meta-question follow-up | 1 (Flash, no SQL) | ~$0.002 | negligible |
+| **2** | + discrepancy investigation | 2-3 Pro (diagnostic SQL) | ~$0.04-0.15 | — |
 
 **Cost management levers**:
 - Phase 0 keeps costs low by using a single LLM call — no supervisor or clarification overhead
-- Clarification and summarization use Haiku (~$0.001/call) — negligible
+- Gemini 3.0 Pro ($2/M in, $12/M out) is cost-effective for multi-call pipelines
+- Clarification and summarization use Flash (~$0.002/call) — negligible
+- File Search retrieval is free at query time — no per-query embedding cost
 - Supervisor is the biggest cost multiplier; consider making it optional per channel in cost-sensitive deployments
 - Prompt token budget: cap schema context at 15 tables max, truncate DDLs to essential columns
 - Monitor actual costs from Phase 0 before committing to Phase 1 agent architecture
@@ -1070,11 +1109,16 @@ interface ResponseContext {
   tablesUsed: string[];        // table names referenced in the SQL
   teachingsUsed: string[];     // IDs of teachings that influenced the answer
   // Full dbt context (persisted from the pipeline — not fetched again)
-  retrievedSchema: TableContext[];  // all 5-15 tables retrieved by RAG, with
+  retrievedSchema: TableContext[];  // all 5-15 tables in the prompt, with
                                     // descriptions, column definitions, lineage,
                                     // sample DDL — including tables considered
                                     // but not used in the final SQL
-  retrievedTeachings: Teaching[];   // full teaching objects, not just IDs
+  // File Search grounding (teachings retrieved by Gemini automatically)
+  groundingCitations: {
+    sourceFile: string;      // teaching file name in File Search store
+    chunkText: string;       // the relevant chunk Gemini retrieved
+    relevanceScore: number;
+  }[];                       // from response.groundingMetadata
   // What happened
   supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
   supervisorNotes: string;
@@ -1091,9 +1135,9 @@ interface ResponseContext {
 }
 ```
 
-**Key insight**: The pipeline already retrieves 5-15 tables (with full descriptions, column definitions, lineage, sample DDL) and 3-5 teachings for SQL generation. Instead of discarding this context after the response, persist it. This gives the agent everything it needs to answer most "sausage-making" questions without any new infrastructure — it just doesn't throw away what it already fetched.
+**Key insight**: The pipeline already has 5-15 tables in the prompt (with full descriptions, column definitions, lineage, sample DDL) and File Search automatically retrieves relevant teachings with citations. Instead of discarding this context after the response, persist it. This gives the agent everything it needs to answer most "sausage-making" questions without any new infrastructure — it just doesn't throw away what it already fetched.
 
-`retrievedSchema` includes tables the agent **considered but didn't use** — this is what lets it answer "why fct_orders and not fct_subscriptions?" (both were in the retrieved context, and the agent can explain why it chose one).
+`retrievedSchema` includes tables the agent **considered but didn't use** — this is what lets it answer "why fct_orders and not fct_subscriptions?" (both were in the prompt context, and the agent can explain why it chose one). `groundingCitations` captures which teachings File Search retrieved and what chunks were used — this lets the agent explain "I followed the Monthly Revenue teaching which says to use fct_orders with completed orders only."
 
 This context is keyed by `threadTs + messageTs`, making it retrievable for any follow-up in the same thread.
 
@@ -1167,8 +1211,8 @@ TABLES YOU CONSIDERED (from dbt metadata):
 {retrievedSchema — full descriptions, columns, lineage for all
  5-15 tables that were retrieved, including ones NOT used in SQL}
 
-TEACHINGS REFERENCED:
-{retrievedTeachings — full reasoning and sanctioned SQL}
+TEACHINGS REFERENCED (from File Search grounding):
+{groundingCitations — source file, chunk text, relevance score}
 
 USER FOLLOW-UP: {follow_up_question}
 
@@ -1181,7 +1225,7 @@ Explain your reasoning in plain language. Be specific about:
 If you made an assumption, flag it. Do not use jargon.
 ```
 
-This uses Haiku (cheap, fast) since it's reasoning over context that was already fetched — no new retrieval, no SQL generation. The dbt metadata is the key: it lets the agent explain decisions in terms of the data model ("I used fct_orders because its description says it contains all completed transactions, while fct_subscriptions only tracks recurring revenue") rather than vague generalities.
+This uses Flash (cheap, fast) since it's reasoning over context that was already fetched — no new retrieval, no SQL generation. The dbt metadata is the key: it lets the agent explain decisions in terms of the data model ("I used fct_orders because its description says it contains all completed transactions, while fct_subscriptions only tracks recurring revenue") rather than vague generalities.
 
 ### Handling Discrepancy Investigations
 
@@ -1201,7 +1245,7 @@ This uses Haiku (cheap, fast) since it's reasoning over context that was already
    haven't been loaded yet. The last data refresh was Oct 31."
 ```
 
-Diagnostic queries use the Primary Agent (Sonnet) but skip the Supervisor — they're investigative, not user-facing answers.
+Diagnostic queries use the Primary Agent (Gemini 3.0 Pro) but skip the Supervisor — they're investigative, not user-facing answers.
 
 ### Visible Reasoning in Responses
 
@@ -1693,19 +1737,18 @@ Firestore collection: `feedback`
 |-----------|-----------|-----------|
 | Runtime | Cloud Run (Node.js 20, distroless, 1Gi/2CPU) | Serverless, GCP-native, IAM integration |
 | Bot framework | Bolt.js (TypeScript, HTTP mode) | Official Slack SDK, first-class TS support |
-| LLM abstraction | Vercel AI SDK v5 | Provider-agnostic, Zod structured output, streaming |
+| LLM SDK | Google GenAI SDK (`@google/genai`) | Official Gemini API client, native Zod structured output, File Search built in |
+| LLM models | Gemini 3.0 Pro (generation, supervision) + Flash (classification, summarization) | GCP-native, strong text-to-SQL, cost-effective |
+| Teaching retrieval | Gemini File Search (managed RAG) | Zero-infra RAG: auto-chunking, embedding, retrieval, citations. Free at query time. |
 | Database client | @google-cloud/bigquery | Official Node.js client |
 | SQL validation | node-sql-parser | AST-level SELECT-only enforcement |
 | State store | Firestore | Conversation state, feedback, response context, escalation state, dbt run history, sample rows |
-| Embeddings | `text-embedding-3-small` (OpenAI) via Vercel AI SDK | 1536 dimensions, $0.02/M tokens, provider-swappable |
-| Vector index | `hnswlib-node` (in-memory) -> Vertex AI Vector Search later | <1,000 vectors fits in ~50MB; migrate at ~5,000 vectors |
-| Keyword index | `wink-bm25-text-search` (in-memory) | Lightweight BM25 for question_patterns + tags |
-| Observability | `pino` (structured JSON) -> Cloud Logging + Cloud Monitoring | Per-request trace IDs, stage-level metrics, dashboards + alerting |
+| Observability | `pino` (structured JSON) → Cloud Logging + Cloud Monitoring | Per-request trace IDs, stage-level metrics, dashboards + alerting |
 | dbt metadata | Custom parser (manifest.json + catalog.json) | Direct parsing, no external deps |
-| Knowledge base | YAML files in Git repo | Version-controlled, PR-reviewed teachings |
+| Knowledge base | YAML files in Git repo → synced to File Search store | Version-controlled, PR-reviewed teachings; File Search handles retrieval |
 | Access control | YAML channel-dataset config in repo | Channel-based dataset restrictions, PR-managed |
 | Infra-as-code | Terraform | Cloud Run + IAM + Firestore provisioning |
-| CI/CD | GitHub Actions | Build, test, deploy, rebuild RAG index, refresh sample rows |
+| CI/CD | GitHub Actions | Build, test, deploy, sync teachings to File Search, refresh sample rows |
 
 ---
 
@@ -1720,7 +1763,7 @@ Firestore collection: `feedback`
 | Future | Databricks | Same plugin interface, Databricks REST API for job status and SQL warehouse queries |
 | Future | Multi-tenant | Tenant isolation via separate BigQuery service accounts + Firestore namespacing |
 
-The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should be designed as pluggable from day one, even though only BigQuery + dbt are implemented in the MVP.
+The LLM SDK (Google GenAI) and the pipeline metadata interface should be designed as pluggable from day one, even though only BigQuery + dbt are implemented in the MVP.
 
 ---
 
@@ -1732,17 +1775,17 @@ The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should b
 | Runaway BigQuery costs | Unexpected charges | 5-layer validation, cost gate, maximumBytesBilled, per-user quotas |
 | Slack 3-second timeout exceeded | Bot appears broken | min-instances=1, CPU boost, immediate ack pattern |
 | Schema drift (dbt changes) | Stale metadata leads to bad SQL | Auto-refresh on dbt CI completion, fallback to INFORMATION_SCHEMA |
-| LLM API outage | Bot cannot respond | Graceful degradation message, multi-provider failover via AI SDK |
+| Gemini API outage | Bot cannot respond | Graceful degradation message; consider adding fallback provider via GenAI SDK |
 | PII exposure in query results | Compliance violation | Dataset-level permissions, column-level masking, no result data in logs |
 | Stale teachings | Governance rules reference dropped models | Staleness detection: compare teaching model_refs against manifest on CI |
 | Supervisor adds latency | Slower response times (extra 1-3 LLM calls) | Supervisor uses smaller context than primary; happy path adds ~2-3s |
 | Over-clarification | Bot asks too many questions, frustrates users | Smart threshold: only clarify on genuinely low confidence; thread context awareness |
-| LLM cost escalation (multi-agent) | 3-7 LLM calls per query vs 1 | Cheap models for classification; supervisor has smaller context; cost monitoring |
+| LLM cost escalation (multi-agent) | 3-7 LLM calls per query vs 1 | Flash for classification ($0.50/M); Pro supervisor has smaller context than Primary; cost monitoring |
 | Teachings drift from actual practice | Sanctioned SQL becomes outdated | PR review process, staleness flags, periodic audit by data team |
 | Escalation overload | Data team drowning in bot questions, negating self-serve goal | Track escalation rate (target <10% after 3 months); repeat escalations auto-flag missing teachings |
 | Escalation non-response | Human never replies, user left hanging | Configurable timeout (default 4h); reminder pings; fallback to best-effort with caveat after timeout |
 | Escalation rate stays flat | Bot is not learning from human responses | Alert on flat/rising escalation rate; auto-teaching conversion as primary mitigation |
 | ResponseContext storage growth | Firestore costs increase with every query | TTL on ResponseContext (30 days); archive older contexts; only persist full results for 7 days |
 | Diagnostic queries cause confusion | User asks "why?" and gets a second, different number | Clearly label diagnostic results as investigative, not authoritative; show alongside original |
-| In-memory index OOM | Cloud Run instance crashes on large warehouse | Monitor memory; 1Gi baseline; migrate to external vector store if index exceeds ~500MB |
+| File Search store sync failure | Teachings out of date, retrieval returns stale content | CI job validates sync success; alert on failure; teachings in Git remain source of truth |
 | Channel access misconfiguration | Users blocked from data they should access | Default datasets as fallback; admin audit log; easy YAML config in repo |
