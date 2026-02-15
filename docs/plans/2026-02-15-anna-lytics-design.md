@@ -23,6 +23,7 @@ Non-technical business stakeholders (<50 users) who currently ask the data team 
 6. **Knowledge Base (Teachings)**: Analyst-curated SQL examples and reasoning instructions injected via RAG to guide the agent on sanctioned query patterns — acts as pseudo-governance
 7. **Supervisor Agent**: A second LLM pass that reviews the generated SQL, the logic/explanation, and the answer before it reaches the user — with retry loop on rejection
 8. **Clarification Agent**: Smart intake that detects ambiguous questions and asks targeted follow-up questions before generating SQL, ensuring the bot answers the user's actual intent
+9. **Human-in-the-Loop Escalation**: When the agent is uncertain, it escalates specific questions to a configurable data team channel or analyst DM — responses bootstrap the Knowledge Base organically
 
 ### Out of Scope (MVP)
 
@@ -54,14 +55,18 @@ Non-technical business stakeholders (<50 users) who currently ask the data team 
                          |         4. Validation Pipeline (5-layer)     |
                          |         5. Supervisor Agent (Sonnet)         |
                          |            +-- retry loop (up to 2x)        |
+                         |         5b. Escalation (if uncertain)        |
+                         |            +-- post to data team channel/DM |
+                         |            +-- persist state to Firestore   |
+                         |            +-- resume on human response     |
                          |         6. Execute + format + respond        |
                          +------+-----------+-----------+---------------+
                                 |           |           |
                                 v           v           v
                           BigQuery    Vercel AI SDK   Firestore
                        (read-only SA) (Claude/GPT)  (conversation
-                                                     history +
-                                                     feedback)
+                                                     history, feedback,
+                                                     + escalation state)
 ```
 
 ### Production Evolution: Two-Service Pattern
@@ -177,8 +182,33 @@ User: "Show me revenue"
     |   - FAIL: send critique back to        |
     |     Primary Agent for regeneration     |
     |     (up to 2 retry rounds)             |
-    |   - EXHAUSTED: proceed with visible    |
-    |     low-confidence caveat              |
+    |   - EXHAUSTED: escalation decision     |
+    |     (see step 6b)                      |
+    +----------------+-----------------------+
+                     v
+    +--- 6b. Escalation Decision -----------+
+    |   Has a plausible answer?             |
+    |                                       |
+    |   YES (best-effort + verify):         |
+    |   - Show answer with visible caveat   |
+    |   - Escalate to data team for         |
+    |     verification (async)              |
+    |   - If data team corrects: update     |
+    |     original thread + auto-generate   |
+    |     teaching candidate                |
+    |                                       |
+    |   NO (park + escalate):               |
+    |   - Tell user: "I've asked the data   |
+    |     team — I'll reply here when I     |
+    |     have the answer"                  |
+    |   - Escalate with specific question   |
+    |   - On human response: resume         |
+    |     pipeline from step 4              |
+    |                                       |
+    |   Note: Also triggered mid-pipeline   |
+    |   when agent hits specific ambiguity  |
+    |   it can articulate (e.g., "two       |
+    |   revenue tables — which one?")       |
     +----------------+-----------------------+
                      v
     +--- 7. Execute + Respond ---------------+
@@ -406,7 +436,7 @@ Reasoning: A customer is "churned" if no completed orders in 90 days...
 
 ### Governance Effect
 
-Teachings act as soft governance: the agent is strongly guided toward sanctioned patterns but can still generate novel SQL for questions without teachings. The Supervisor Agent (section 7) checks whether the generated SQL aligns with relevant teachings when they exist.
+Teachings act as soft governance: the agent is strongly guided toward sanctioned patterns but can still generate novel SQL for questions without teachings. The Supervisor Agent (section 7) checks whether the generated SQL aligns with relevant teachings when they exist. When no teachings exist and the agent is uncertain, Human-in-the-Loop Escalation (section 10) kicks in — and the human response bootstraps new teachings organically.
 
 ---
 
@@ -624,6 +654,13 @@ User Question
     |                     Uses: Sonnet/GPT-4o (strong reasoning)
     |                     Checks: correctness, teaching compliance, logic
     |                     Can: retry Primary Agent up to 2x
+    |
+    +-- If exhausted or mid-pipeline ambiguity:
+    |
+[Escalation] ----------- "Ask a human"
+    |                     Posts specific question to data team
+    |                     Best-effort + verify OR park + wait
+    |                     Human response -> teaching candidate
     v
 [Execute + Respond] ---- "Deliver the answer"
 ```
@@ -636,12 +673,137 @@ User Question
 | Clarification needed | 4+ (clarify + wait + generate + supervise) | ~$0.03-0.06 |
 | Supervisor retry (1 round) | 5 (clarify + generate + supervise + regenerate + supervise) | ~$0.05-0.10 |
 | Worst case (2 retries) | 7 calls | ~$0.08-0.15 |
+| Escalation (park + wait) | 3-7 calls + human wait time | ~$0.02-0.15 + delay |
 
-Note: Clarification Agent uses cheap models (Haiku/mini at ~$0.001/call). The expensive calls are Primary + Supervisor (Sonnet/GPT-4o).
+Note: Clarification Agent uses cheap models (Haiku/mini at ~$0.001/call). The expensive calls are Primary + Supervisor (Sonnet/GPT-4o). Escalation adds no LLM cost — only human wait time.
 
 ---
 
-## 10. dbt Integration
+## 10. Human-in-the-Loop Escalation
+
+When the agent is uncertain — either mid-pipeline (ambiguous schema, conflicting tables) or after supervisor exhaustion — it escalates a **specific, answerable question** to a human expert rather than guessing.
+
+### Escalation Target (Configurable)
+
+The escalation target is set via environment config and can be changed at any time:
+
+```typescript
+interface EscalationConfig {
+  mode: 'channel' | 'dm';
+  // Channel mode: posts to a shared channel (e.g., #anna-lytics-escalations)
+  channelId?: string;
+  // DM mode: messages a specific analyst directly
+  analystUserId?: string;
+  // How long to wait before reminding (minutes)
+  reminderIntervalMinutes: number;  // default: 30
+  // How long before giving up and showing best-effort with caveat (hours)
+  timeoutHours: number;  // default: 4
+}
+```
+
+**Channel mode**: The data team joins a dedicated channel (e.g., `#data-team-escalations`). Any team member can respond. Best for teams where on-call rotates or multiple people can answer.
+
+**DM mode**: A specific analyst receives escalations as DMs from the bot. Best for small teams with a single point of contact.
+
+### When Escalation Triggers
+
+| Trigger | Behavior | Example |
+|---------|----------|---------|
+| **Mid-pipeline ambiguity** | Agent detects a specific decision it can't make | "There are two revenue tables: `fct_orders` and `fct_subscriptions`. Which one is canonical for 'total revenue'?" |
+| **Supervisor exhausted (has plausible answer)** | Best-effort + verify: show answer with caveat, escalate async for verification | "I used `fct_orders` but I'm not fully sure. Here's what I got — I've asked the data team to verify." |
+| **Supervisor exhausted (no plausible answer)** | Park + escalate: tell user the bot is checking with the data team | "I want to make sure I get this right. I've asked the data team — I'll reply here when I have the answer." |
+| **Unanswerable question** | Agent determines the question can't be answered with available data | "This looks like a forecasting question — I can only query historical data. I've flagged this for the data team." |
+
+### Escalation Message Format
+
+The bot posts to the escalation target with full context:
+
+```
+🔔 Anna Lytics needs help
+
+**User question**: "Show me total revenue by region"
+**Channel**: #sales (thread link)
+**What I'm stuck on**: There are two tables with revenue data:
+  - `analytics.fct_orders` (has `total_amount`, `region`)
+  - `analytics.fct_subscriptions` (has `mrr`, `region`)
+Which table should I use for "total revenue"?
+
+**My best guess**: `fct_orders.total_amount` — but no teaching exists for this.
+
+React with ✅ if my guess is correct, or reply with guidance.
+```
+
+### State Machine for Async Resumption
+
+Escalation requires suspending and resuming the pipeline across separate Slack events:
+
+```
+1. Pipeline hits escalation trigger
+2. Persist pipeline state to Firestore:
+   {
+     escalationId: string,
+     originalThreadTs: string,
+     originalChannel: string,
+     pipelineState: 'awaiting_human',
+     stageToResume: 'sql_generation' | 'supervisor_review',
+     context: { clarifiedQuestion, retrievedTeachings, ... },
+     escalationTs: string,  // ts of the message in escalation channel
+     createdAt: Date,
+   }
+3. Post escalation message to target channel/DM
+4. Return (Cloud Run request ends)
+
+--- human responds (minutes/hours later) ---
+
+5. Bolt.js receives message event in escalation channel
+6. Match response to escalationId via thread_ts
+7. Load pipeline state from Firestore
+8. Incorporate human guidance into context
+9. Resume pipeline at stageToResume
+10. Post result to original user thread
+11. Auto-generate teaching candidate (see below)
+```
+
+### Auto-Teaching from Escalations
+
+Every human response to an escalation is a teaching candidate:
+
+```
+Human responds: "Always use fct_orders for revenue.
+fct_subscriptions is only for MRR breakdowns."
+    |
+    v
+Bot extracts structured teaching:
+  - question_patterns: ["total revenue", "revenue by region"]
+  - reasoning: "Revenue = fct_orders.total_amount.
+    fct_subscriptions is MRR only."
+  - models_referenced: [analytics.fct_orders]
+    |
+    v
+Bot confirms with human: "I've drafted this as a teaching:
+  [preview]. Want me to open a PR?"
+    |
+    +-- Human approves -> auto-PR to teachings repo
+    +-- Human edits -> update draft, then PR
+    +-- Human declines -> store as one-off context only
+```
+
+This is how the Knowledge Base bootstraps organically. The data team never has to write YAML from scratch — they answer questions they'd answer anyway, and the bot turns their answers into durable teachings.
+
+### Escalation Rate as Health Metric
+
+The escalation rate should **decrease over time** as the Knowledge Base grows. Track:
+
+- **Escalation rate**: % of queries that trigger escalation (target: <10% after 3 months)
+- **Repeat escalations**: Same question type escalated twice = missing teaching (alert)
+- **Response time**: Median time for human to respond (tracks data team engagement)
+- **Teaching conversion rate**: % of escalations that become teachings
+
+If the escalation rate stays flat or increases, the system is failing — the bot is not learning from human responses.
+
+---
+
+## 11. dbt Integration
 
 ### Metadata Ingestion
 
@@ -757,7 +919,7 @@ Parse `run_results.json` from the most recent dbt run to answer:
 
 ---
 
-## 11. Query Validation Pipeline
+## 12. Query Validation Pipeline
 
 ### 5-Layer Defense
 
@@ -809,7 +971,7 @@ const bytesProcessed = parseInt(job.statistics.totalBytesProcessed, 10);
 
 ---
 
-## 12. Slack Integration
+## 13. Slack Integration
 
 ### Bolt.js Configuration
 
@@ -911,7 +1073,7 @@ app.command('/anna', async ({ command, ack, client }) => {
 
 ---
 
-## 13. Feedback and Learning
+## 14. Feedback and Learning
 
 ### Feedback Tiers
 
@@ -936,7 +1098,7 @@ app.command('/anna', async ({ command, ack, client }) => {
 
 ### Feedback-to-Teachings Promotion
 
-High-quality corrected SQL from the feedback loop can be promoted into the Knowledge Base (section 6):
+High-quality corrected SQL from the feedback loop can be promoted into the Knowledge Base (section 6). This complements the auto-teaching from escalations (section 10) — escalations capture *pre-answer* domain knowledge, while feedback promotion captures *post-answer* corrections:
 
 ```
 Feedback loop:
@@ -982,7 +1144,7 @@ Firestore collection: `feedback`
 
 ---
 
-## 14. Tech Stack
+## 15. Tech Stack
 
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
@@ -1000,7 +1162,7 @@ Firestore collection: `feedback`
 
 ---
 
-## 15. Extensibility Path
+## 16. Extensibility Path
 
 | Phase | Addition | Approach |
 |-------|----------|----------|
@@ -1014,7 +1176,7 @@ The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should b
 
 ---
 
-## 16. Risks and Mitigations
+## 17. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
@@ -1029,3 +1191,6 @@ The LLM abstraction (Vercel AI SDK) and the pipeline metadata interface should b
 | Over-clarification | Bot asks too many questions, frustrates users | Smart threshold: only clarify on genuinely low confidence; thread context awareness |
 | LLM cost escalation (multi-agent) | 3-7 LLM calls per query vs 1 | Cheap models for classification; supervisor has smaller context; cost monitoring |
 | Teachings drift from actual practice | Sanctioned SQL becomes outdated | PR review process, staleness flags, periodic audit by data team |
+| Escalation overload | Data team drowning in bot questions, negating self-serve goal | Track escalation rate (target <10% after 3 months); repeat escalations auto-flag missing teachings |
+| Escalation non-response | Human never replies, user left hanging | Configurable timeout (default 4h); reminder pings; fallback to best-effort with caveat after timeout |
+| Escalation rate stays flat | Bot is not learning from human responses | Alert on flat/rising escalation rate; auto-teaching conversion as primary mitigation |
