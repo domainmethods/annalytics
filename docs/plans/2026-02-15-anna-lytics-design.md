@@ -45,8 +45,16 @@ Non-technical business stakeholders (<50 users) who currently ask the data team 
   (HTTP POST)            |    |                                         |
                          |    +-- ack() immediately (<3s)               |
                          |    +-- Post "thinking..." message            |
-                         |    +-- async: generate SQL -> validate ->    |
-                         |         execute -> update Slack message      |
+                         |    +-- async: Agent Pipeline                 |
+                         |         |                                    |
+                         |         1. Clarification Agent (Haiku)       |
+                         |         2. Knowledge Base RAG (teachings +   |
+                         |            schema retrieval)                 |
+                         |         3. Primary Agent (Sonnet)            |
+                         |         4. Validation Pipeline (5-layer)     |
+                         |         5. Supervisor Agent (Sonnet)         |
+                         |            +-- retry loop (up to 2x)        |
+                         |         6. Execute + format + respond        |
                          +------+-----------+-----------+---------------+
                                 |           |           |
                                 v           v           v
@@ -201,8 +209,7 @@ The Vercel AI SDK is the TypeScript equivalent of Python's LiteLLM:
 |------|-------|-----------|
 | SQL generation (Primary Agent) | Claude Sonnet / GPT-4o | Best accuracy on text-to-SQL benchmarks |
 | Supervisor Agent | Claude Sonnet / GPT-4o | Needs strong reasoning to catch errors in generated SQL |
-| Clarification Agent | Claude Haiku / GPT-4o-mini | Classification task: is the question clear enough? Fast + cheap |
-| Question routing | Claude Haiku / GPT-4o-mini | "Is this a data question or a dbt status question?" |
+| Clarification + routing | Claude Haiku / GPT-4o-mini | Combined: classify confidence level AND route to data query vs dbt status. Single cheap call. |
 | Result summarization | Claude Haiku / GPT-4o-mini | Turn tabular results into natural language |
 
 ### Structured Output Pattern
@@ -219,6 +226,8 @@ const { object } = await generateObject({
     explanation: z.string().describe('Plain-English explanation'),
     tables_used: z.array(z.string()),
     confidence: z.enum(['high', 'medium', 'low']),
+    assumptions: z.array(z.string()).describe('Assumptions made about the question'),
+    reasoning_chain: z.string().describe('Step-by-step reasoning for how the SQL was derived'),
   }),
   system: systemPromptWithSchemaContext,
   prompt: userQuestion,
@@ -257,6 +266,9 @@ BUSINESS CONTEXT:
 
 EXAMPLES:
 {few_shot_examples_similar_to_current_question}
+
+TEACHINGS (sanctioned patterns for similar questions):
+{retrieved_teachings_from_knowledge_base}
 
 USER QUESTION: {question}
 ```
@@ -527,6 +539,7 @@ THREAD CONTEXT: {previous_messages_in_thread}
 
 Classify and respond:
 {
+  "route": "data_query" | "dbt_status",
   "confidence": "high" | "medium" | "low",
   "reasoning": "why this confidence level",
   "ambiguities": ["list of unclear aspects"],
@@ -685,6 +698,45 @@ function parseDbtArtifacts(manifest: any, catalog: any): TableContext[] {
   return tables;
 }
 ```
+
+### INFORMATION_SCHEMA Fallback
+
+When a table is referenced in a query but has no dbt metadata (e.g., raw source tables, ad-hoc tables outside dbt), fall back to BigQuery's `INFORMATION_SCHEMA`:
+
+```typescript
+async function getSchemaFallback(
+  projectId: string,
+  datasetId: string,
+  tableId: string
+): Promise<TableContext> {
+  const [columns] = await bigquery.query({
+    query: `
+      SELECT column_name, data_type, is_nullable, description
+      FROM \`${projectId}.${datasetId}.INFORMATION_SCHEMA.COLUMN_FIELD_PATHS\`
+      WHERE table_name = @tableId
+    `,
+    params: { tableId },
+  });
+
+  return {
+    name: `${datasetId}.${tableId}`,
+    schema: datasetId,
+    description: '', // No business description available
+    materialization: 'unknown',
+    columns: columns.map(c => ({
+      name: c.column_name,
+      description: c.description || '',
+      dataType: c.data_type,
+      meta: {},
+    })),
+    sampleDDL: generateDDLFromColumns(columns),
+    dependsOn: [],
+    tags: ['no-dbt-metadata'],
+  };
+}
+```
+
+**When the fallback triggers**: During schema retrieval, if a table appears in RAG results or user question but has no matching entry in the parsed dbt artifacts, the system queries `INFORMATION_SCHEMA` to build a minimal `TableContext`. These fallback entries lack business descriptions and lineage, so the LLM receives a lower-context schema — the prompt notes this explicitly so the model knows to be more cautious.
 
 ### Focus on Mart/Gold Layer
 
@@ -881,6 +933,32 @@ app.command('/anna', async ({ command, ack, client }) => {
 **Tier 4 - Auto-correction**:
 - On execution failure, retry with error context (up to 2 attempts)
 - On validation failure, feed error back to LLM for self-correction
+
+### Feedback-to-Teachings Promotion
+
+High-quality corrected SQL from the feedback loop can be promoted into the Knowledge Base (section 6):
+
+```
+Feedback loop:
+  1. User gives thumbs-down
+  2. Analyst corrects SQL in review queue (Tier 3)
+  3. Corrected (question, SQL) pair stored in Firestore
+         |
+         v
+Promotion candidates:
+  - Corrected SQL that receives subsequent thumbs-up when reused
+  - Patterns that appear 3+ times across different users
+  - Analyst explicitly marks a correction as "promote to teaching"
+         |
+         v
+Auto-generate teaching PR:
+  - Bot creates a YAML teaching entry from the corrected pair
+  - Opens a PR in the teachings repo via GitHub API
+  - Data team reviews and merges
+  - CI rebuilds RAG index
+```
+
+This closes the loop: user feedback improves accuracy immediately (as few-shot examples in Firestore) and, once promoted, becomes durable governance via the Knowledge Base.
 
 ### Feedback Storage
 
