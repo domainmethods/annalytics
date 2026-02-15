@@ -17,7 +17,7 @@ Non-technical business stakeholders (<50 users) who currently ask the data team 
 
 The system is delivered in phases, each adding standalone value. Phase 0 gets the bot answering questions in Slack. Each subsequent phase is informed by real usage data from the prior phase.
 
-#### Phase 0 — "It works" (2-3 weeks)
+#### Phase 0 — "It works" (4-6 weeks)
 
 The minimum to get a question answered:
 
@@ -541,7 +541,7 @@ anna_lytics/
 
 **Why Git**: Version control, PR review, blame history, audit trail. Teachings are governance artifacts — they should be reviewed the same way data model changes are.
 
-### Authoring via Slack (Convenience Layer)
+### Authoring via Slack (Convenience Layer — Phase 1)
 
 `/anna teach` opens a Slack modal with fields for:
 - Business question (natural language)
@@ -791,7 +791,7 @@ The agent classifies each incoming question into one of three confidence levels:
 | Confidence | Action | Example |
 |------------|--------|---------|
 | **HIGH** | Answer immediately, no clarification needed | "How many orders were placed yesterday?" |
-| **MEDIUM** | Answer with explicitly stated assumptions | "Show me revenue" -> "Showing monthly revenue for all regions, last 12 months (assuming completed orders only)" |
+| **MEDIUM** | Answer with prominently stated assumptions + quick-recovery button | "Show me revenue" → assumptions shown as **first line of response, bold, above results**: "**Assuming: all regions, completed orders only, last 12 months**" + `[Wrong assumptions? Click to refine]` button that pre-populates a refinement. No confirmation gate before execution — the recovery path (one click + one sentence) is fast enough, and asking "are you sure?" on 60%+ of queries would kill adoption. |
 | **LOW** | Ask 1-2 targeted clarifying questions before proceeding | "How are we doing?" -> "Could you clarify: are you asking about revenue, customer growth, or something else?" |
 
 ### Lightweight Teaching Context
@@ -996,6 +996,20 @@ User Question
     |                     Post to Slack with reasoning + override buttons
     |                     [📋 Table] [📝 Summary] [⬇️ CSV] [👍] [👎]
 ```
+
+### Confidence Reconciliation
+
+Three agents independently assess confidence, each measuring something different:
+
+| Agent | Measures | Values | Used For |
+|-------|----------|--------|----------|
+| Clarification Agent | **Question clarity** — is the question specific enough? | HIGH / MEDIUM / LOW | Internal routing only (proceed / assume / ask). Never shown to user. |
+| Primary Agent | **Answer certainty** — how confident is the model in its SQL? | high / medium / low | Input to user-facing confidence |
+| Supervisor Agent | **Correctness assurance** — does the SQL pass review? | high / medium / low | Input to user-facing confidence |
+
+**User-facing confidence** (stored as `ResponseContext.confidence`): `min(supervisor, primaryAgent)`. If the Primary Agent is confident but the Supervisor is uncertain, the user sees the lower value. The Clarification Agent's confidence is never surfaced — it's a routing decision, not a quality signal.
+
+All three values are stored in `ResponseContext` for debugging and observability, but the response and escalation logic use only the reconciled value.
 
 ### Cost per Query (Estimated)
 
@@ -1335,12 +1349,13 @@ Diagnostic queries use the Primary Agent (Gemini 3.0 Pro) but skip the Superviso
 Every response includes the generated SQL inline (not hidden behind a button) so the user immediately sees what ran. Since the bot auto-executes queries, SQL visibility is the user's primary sanity check — hiding it behind a click means the user only discovers mistakes after the fact.
 
 ```
+**Assuming: all regions, completed orders only, last 12 months**
+[Wrong assumptions? Click to refine]
+
 Total revenue last quarter: $5.2M
 
-📊 *Assumptions*: All regions, completed orders only, fct_orders table
-
-*Query*:
-```SELECT DATE_TRUNC(order_date, MONTH), SUM(total_amount) FROM ...```
+Query:
+  SELECT DATE_TRUNC(order_date, MONTH), SUM(total_amount) FROM ...
 
 🔍 *Show reasoning* (click to expand)
 
@@ -1349,6 +1364,8 @@ Total revenue last quarter: $5.2M
   Guided by: "Monthly Revenue" teaching
   Confidence: high ✓
 ```
+
+The assumptions line appears **first, above the results**, because the user needs to validate assumptions before trusting the answer. The `[Wrong assumptions? Click to refine]` button triggers a refinement flow (section 11) pre-populated with the original question and stated assumptions, so the user can correct with minimal effort ("I meant net revenue, not total").
 
 **Implementation note**: Block Kit has no native client-side toggle/expand widget. "Show reasoning" is implemented as a **button action** that updates the message:
 
@@ -1415,10 +1432,18 @@ function parseDbtArtifacts(manifest: any, catalog: any): TableContext[] {
   for (const [nodeId, node] of Object.entries(manifest.nodes)) {
     if (node.resource_type !== 'model') continue;
     const catalogNode = catalog.nodes[nodeId];
+    // Normalize catalog column keys to lowercase — BigQuery's catalog.json
+    // reports column names in UPPERCASE while manifest.json uses lowercase.
+    // Without this, every column lookup misses and falls through to 'UNKNOWN'.
+    const catalogColumns = catalogNode?.columns
+      ? Object.fromEntries(
+          Object.entries(catalogNode.columns).map(([k, v]) => [k.toLowerCase(), v])
+        )
+      : {};
     const columns = Object.values(node.columns).map(col => ({
       name: col.name,
       description: col.description || '',
-      dataType: catalogNode?.columns?.[col.name]?.type || 'UNKNOWN',
+      dataType: catalogColumns[col.name.toLowerCase()]?.type || 'UNKNOWN',
       meta: col.meta || {},
     }));
     tables.push({
@@ -1618,7 +1643,7 @@ const bytesProcessed = parseInt(job.statistics.totalBytesProcessed, 10);
 
 **Layer 4 - Cost Gate**: Compare dry run's `bytesProcessed` against a configurable threshold. Default: 10GB (~$0.05 at on-demand pricing).
 
-**Layer 5 - Execution**: Run with `maximumBytesBilled` (hard cap), `jobTimeoutMs: 30000`, and `maxResults: 1000`. **When results hit the 1K row cap**, the bot appends `LIMIT 1000` explicitly and runs a secondary `SELECT COUNT(*) FROM ({original_sql})` to get the true row count. The response always tells the user when results are truncated: "Showing 1,000 of approximately {n} rows. [Download full CSV]" (see adaptive response format, section 14).
+**Layer 5 - Execution**: Run with `maximumBytesBilled` (hard cap), `jobTimeoutMs: 30000`, and `maxResults: 1000`. **When results hit the 1K row cap**, the bot reads the total row count from BigQuery's job metadata (`job.metadata.statistics.query.totalRows`) — this is free, requires no additional query, and is available on every completed job. No secondary `COUNT(*)` query needed (wrapping the original query as a subquery would scan all data a second time, doubling the cost). The response always tells the user when results are truncated: "Showing 1,000 of {totalRows} rows. [Download full CSV]" (see adaptive response format, section 14).
 
 ### Infrastructure-Level Safety
 
@@ -1691,6 +1716,8 @@ const app = new App({
 | `users:read` | Display user names |
 | `reactions:read` | Detect thumbs-up/down feedback |
 | `files:write` | Upload CSV exports |
+| `views:open` | Open `/anna teach` modal (Phase 1) |
+| `views:publish` | Update modal views (Phase 1) |
 
 ### Event Subscriptions
 
@@ -1731,13 +1758,24 @@ function shouldRespond(event: MessageEvent): boolean {
 }
 ```
 
+**`botHasRepliedInThread` implementation**: Do NOT call `conversations.replies()` — this would be a Slack API call on every thread message in every channel, quickly hitting Slack's rate limits (~50/min). Instead, check Firestore: the bot already writes `ResponseContext` documents keyed by `threadTs`. A single Firestore read (~5ms) replaces a Slack API call (~200ms + rate limit risk):
+
+```typescript
+async function botHasRepliedInThread(channel: string, threadTs: string): Promise<boolean> {
+  const doc = await db.collection('response_context')
+    .where('threadTs', '==', threadTs)
+    .limit(1).select().get();  // select() fetches no fields — existence check only
+  return !doc.empty;
+}
+```
+
 This filter runs before any LLM calls — zero cost for ignored messages.
 
 ### Per-Thread Processing Lock
 
 With 10-30 second pipeline runs, duplicate events are inevitable — double-clicks, rapid follow-ups, or Slack retrying a webhook. Without deduplication, the bot launches parallel pipelines for the same thread and posts interleaved results.
 
-**Implementation**: Before starting a pipeline, attempt to create a Firestore document (`processing_threads/{threadTs}`) with a 60-second TTL. If the document already exists, the pipeline is already running — respond with "I'm still working on your previous question" and exit.
+**Implementation**: Before starting a pipeline, attempt to create a Firestore document (`processing_threads/{threadTs}`) with a 300-second TTL (matching the Cloud Run timeout). If the document already exists and hasn't expired, the pipeline is already running — respond with "I'm still working on your previous question" and exit.
 
 ```typescript
 async function acquireThreadLock(threadTs: string): Promise<boolean> {
@@ -1745,17 +1783,25 @@ async function acquireThreadLock(threadTs: string): Promise<boolean> {
   try {
     await ref.create({
       startedAt: FieldValue.serverTimestamp(),
-      expiresAt: new Date(Date.now() + 60_000),
+      expiresAt: new Date(Date.now() + 300_000), // 300s = Cloud Run timeout
     });
     return true; // lock acquired
   } catch (e) {
-    if (e.code === 6) return false; // ALREADY_EXISTS — pipeline in progress
+    if (e.code === 6) {
+      // ALREADY_EXISTS — check if expired (Firestore TTL is eventually consistent)
+      const doc = await ref.get();
+      if (doc.exists && doc.data()!.expiresAt.toDate() < new Date()) {
+        await ref.delete();
+        return acquireThreadLock(threadTs); // retry after cleaning up
+      }
+      return false; // pipeline genuinely in progress
+    }
     throw e;
   }
 }
 ```
 
-The lock is deleted when the pipeline completes (success or failure). The 60-second TTL is a safety net for crashed pipelines — Firestore TTL will eventually clean it up, but the application also checks `expiresAt` explicitly to avoid relying on eventual TTL deletion.
+The lock is eagerly deleted when the pipeline completes (success or failure). The 300-second TTL matches the Cloud Run timeout — the worst case for a pipeline that hits escalation, supervisor retries, and execution. Firestore TTL is used only as a background cleanup mechanism for crashed pipelines, not as a correctness guarantee (same `expiresAt` check pattern as clarification state, section 8).
 
 ### Multi-Turn Threading
 
@@ -1780,7 +1826,7 @@ const conversationHistory = thread.messages!.map((m) => ({
 | Small table (<20 rows, ≤6 columns) | Block Kit section blocks formatted as table |
 | Wide table (>6 columns) | CSV file upload or monospaced code block (Block Kit has no real table component — section blocks become unreadable beyond 6 columns, especially on mobile) |
 | Large result (>20 rows) | Natural language summary + CSV file upload |
-| **Zero rows** | "Your query ran successfully but returned no results." + Flash-generated hypothesis about why (e.g., "This might be because the date range covers a weekend" or "No orders match status='completed' in this range") + offer to broaden: "Want me to try without the date filter?" |
+| **Zero rows** | "Your query ran successfully but returned no results." + deterministic filter summary extracted from the structured output's assumptions and SQL (e.g., "Filters applied: order_status = 'completed', order_date between 2026-01-01 and 2026-01-31") + offer to broaden: "Want me to try without the date filter?" No LLM speculation about *why* — the bot doesn't have access to the data distribution and a wrong guess ("maybe it's a weekend") is worse than honest transparency about what filters were applied. |
 | **Truncated result (hit 1K row cap)** | Show first 1,000 rows + explicit notice: "Showing 1,000 of approximately {n} rows. [Download full CSV]" (see section 13, Layer 5) |
 
 ### Block Kit Constraints
@@ -1799,19 +1845,22 @@ const conversationHistory = thread.messages!.map((m) => ({
 app.command('/anna', async ({ command, ack, client }) => {
   await ack(); // ephemeral ack — user sees nothing
 
-  // Post a visible status message in the channel (non-ephemeral)
+  // Post a visible status message in the channel (creates a thread root)
   const statusMsg = await client.chat.postMessage({
     channel: command.channel_id,
     text: 'Understanding your question...',
   });
 
+  // All subsequent messages (including final response) reply in this thread
+  const threadTs = statusMsg.ts!;
+
   try {
-    await runPipeline(command.text, command.channel_id, statusMsg.ts!, client);
+    await runPipeline(command.text, command.channel_id, threadTs, client);
   } catch (error) {
     await client.chat.update({
       channel: command.channel_id,
-      ts: statusMsg.ts!,
-      text: `Something went wrong: ${error.message}`,
+      ts: threadTs,
+      text: friendlyErrorMessage(error, traceId),
     });
   }
 });
@@ -1819,30 +1868,62 @@ app.command('/anna', async ({ command, ack, client }) => {
 // @mention entry point (channels) + DM entry point
 // Both use the message trigger rules (see above) to filter
 app.event('app_mention', async ({ event, client }) => {
+  // Use existing thread if mention is inside one, otherwise start a new thread
+  const threadTs = event.thread_ts || event.ts;
+
   const statusMsg = await client.chat.postMessage({
     channel: event.channel,
-    thread_ts: event.ts,
+    thread_ts: threadTs,
     text: 'Understanding your question...',
   });
   await runPipeline(event.text, event.channel, statusMsg.ts!, client);
 });
 ```
 
+### Error Handling
+
+Pipeline errors must be mapped to user-friendly messages. Business users should never see raw technical errors like "RESOURCE_EXHAUSTED: Quota exceeded for aiplatform.googleapis.com."
+
+```typescript
+function friendlyErrorMessage(error: Error, traceId: string): string {
+  // BigQuery errors
+  if (error.message.includes('NOT_FOUND'))
+    return "I couldn't find one of the tables I need. The data model may have changed recently.";
+  if (error.message.includes('ACCESS_DENIED') || error.message.includes('FORBIDDEN'))
+    return "I don't have access to query this data from this channel.";
+  if (error.message.includes('DEADLINE_EXCEEDED') || error.message.includes('timeout'))
+    return "This query took too long. Try asking for a smaller time range or fewer dimensions.";
+
+  // Gemini errors
+  if (error.message.includes('RESOURCE_EXHAUSTED'))
+    return "I'm experiencing high demand — please try again in a moment.";
+  if (error.message.includes('SAFETY'))
+    return "I wasn't able to process that question. Try rephrasing it.";
+
+  // Default — always include traceId so the data team can investigate
+  return `Something went wrong. I've logged the details for the data team. (trace: ${traceId})`;
+}
+```
+
+The `traceId` is always logged regardless of error type. The friendly message is what the user sees; the full error is in Cloud Logging under the trace ID.
+
 ### Progressive Status Updates
 
 The Phase 1 pipeline takes 10-30 seconds (clarification + schema + generation + validation + supervision + execution + formatting). A static "Thinking..." message for that duration feels broken. Instead, the bot updates a single message in-place via `chat.update()` after each pipeline stage completes:
 
+Only update after stages that take >1 second — skip fast stages (static analysis, dry run, cost gate) to stay well within Slack's `chat.update` rate limit (~50/min per workspace). With `concurrency=20`, that's 3-4 updates x 20 = 60-80 calls per batch, manageable with minor queuing.
+
 ```
-Stage 1 (Clarification):    "Understanding your question..."
-Stage 2 (Schema):           "Finding relevant tables..."
-Stage 3 (Primary Agent):    "Generating SQL..."
-Stage 4 (Validation):       "Validating query..."
-Stage 5 (Supervisor):       "Reviewing answer..."
-Stage 6 (Execution):        "Running query..."
-Stage 7 (Format):           Final answer replaces the message entirely
+Stage 1 (Clarification):    "Understanding your question..."     ← update
+Stage 2 (Schema):            (skip — <500ms)
+Stage 3 (Primary Agent):    "Generating SQL..."                  ← update
+Stage 4 (Validation):        (skip — <1s total for L1-L4)
+Stage 5 (Supervisor):       "Reviewing answer..."                ← update
+Stage 6 (Execution):         (skip — folded into final update)
+Stage 7 (Format):           Final answer replaces the message    ← update
 ```
 
-**Implementation**: `chat.postMessage()` returns a `ts` (message timestamp) that acts as the message ID. Each pipeline stage calls `chat.update({ channel, ts, text })` with the current status. The final stage replaces the status text with the full response (blocks, buttons, reasoning toggle). One message, updated in-place — no dead "Thinking..." artifacts, no duplicate posts.
+**Implementation**: `chat.postMessage()` returns a `ts` (message timestamp) that acts as the message ID. The pipeline calls `chat.update()` only 3-4 times total. The final stage replaces the status text with the full response (blocks, buttons, reasoning toggle). One message, updated in-place — no dead "Thinking..." artifacts, no duplicate posts.
 
 ```typescript
 const statusMsg = await client.chat.postMessage({
@@ -1856,13 +1937,12 @@ const updateStatus = async (text: string) => {
   });
 };
 
-// Pipeline stages call updateStatus() as they complete
-await updateStatus('Finding relevant tables...');
-// ... schema retrieval ...
+// Only update after slow stages (>1s)
+// ... clarification agent ...
 await updateStatus('Generating SQL...');
-// ... primary agent ...
+// ... schema retrieval + primary agent ...
 await updateStatus('Reviewing answer...');
-// ... supervisor ...
+// ... validation + supervisor ...
 
 // Final response replaces the message entirely
 await client.chat.update({
@@ -2063,3 +2143,7 @@ The LLM SDK (Google GenAI) and the pipeline metadata interface should be designe
 | Concurrent duplicate requests | Interleaved pipeline results in same thread | Per-thread processing lock in Firestore (60s TTL); second request gets "still working" message |
 | User posts during pending escalation | New pipeline launches on parked thread | Escalation state check before pipeline; user told "still waiting for data team" |
 | node-sql-parser false negatives | Valid BigQuery SQL rejected by Layer 2 | Layer 2 is advisory on parse failure, blocking only for DML/DDL; Layer 3 (dry run) is authority |
+| Multiple confidence signals confuse escalation logic | Clarification says HIGH, Supervisor says LOW — which drives decisions? | Confidence hierarchy: user-facing = min(supervisor, primary). Clarification confidence is routing-only, never surfaced. |
+| MEDIUM assumptions mislead users | User sees wrong answer before realizing wrong assumptions | Assumptions shown first (bold, above results) + one-click refine button for fast recovery |
+| Raw error messages shown to business users | User sees "RESOURCE_EXHAUSTED: Quota exceeded" | Error category mapping to friendly messages; traceId always included for debugging |
+| Slack chat.update rate limits | Progressive status updates fail silently at high concurrency | Update only after slow stages (3-4 calls per pipeline, not 7); stays within 50/min limit |
