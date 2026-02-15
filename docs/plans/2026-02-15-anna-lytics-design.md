@@ -85,8 +85,9 @@ The learning flywheel:
   Slack Events API ----> |  Bolt.js (HTTP mode, ExpressReceiver)        |
   (HTTP POST)            |    |                                         |
                          |    +-- ack() immediately (<3s)               |
-                         |    +-- Post "thinking..." message            |
+                         |    +-- Post status message (chat.postMessage)|
                          |    +-- async: Agent Pipeline                 |
+                         |         (chat.update() after each stage)     |
                          |         |                                    |
                          |         1. Clarification Agent (Flash)       |
                          |         2. Schema retrieval (dbt metadata)   |
@@ -219,7 +220,10 @@ User: "Show me revenue"
     +--- 1. Receive + Ack ------------------+
     |   - Bolt.js receives Slack event       |
     |   - ack() immediately                  |
-    |   - Post "Thinking..." message         |
+    |   - Post status message via            |
+    |     chat.postMessage (captures msg ts) |
+    |   - All subsequent stages update this  |
+    |     message in-place via chat.update() |
     +----------------+-----------------------+
                      v
     +--- 2. Clarification Agent -------------+
@@ -311,12 +315,15 @@ User: "Show me revenue"
     +--- 8. Format + Respond -------------------+
     |   - Summarize large results (Flash, only  |
     |     if >20 rows and summary format)       |
+    |   - SQL shown inline (not hidden)         |
     |   - Adaptive formatting with override     |
     |     buttons: [Table] [Summary] [CSV]      |
-    |     [Show SQL] [👍] [👎]                  |
+    |     [👍] [👎]                             |
     |   - Collapsible reasoning section         |
     |   - Include supervisor caveat if low      |
     |     confidence                            |
+    |   - Zero rows: hypothesis + broaden offer |
+    |   - Truncated: show count + CSV download  |
     |   - Log to feedback store                 |
     +-------------------------------------------+
 ```
@@ -330,7 +337,7 @@ User: "Show me revenue"
 The Google GenAI SDK is the official TypeScript client for the Gemini API:
 - Native Zod support for structured output (constrained decoding, not post-parse)
 - File Search tool built in (managed RAG — see section 6)
-- Streaming-first (update Slack messages progressively)
+- Progressive status updates via `chat.update()` (see section 14)
 - Single Google dependency — no separate embedding or vector DB SDKs
 
 **Auth note**: File Search stores require the Gemini Developer API with an API key — not Vertex AI, not service account ADC. The API key is managed via Secret Manager and injected as `GEMINI_API_KEY` env var on Cloud Run. All other GCP services (BigQuery, Firestore) use service account ADC as normal. This is a Google-side limitation of File Search, not an architectural choice.
@@ -890,7 +897,19 @@ When the Clarification Agent classifies a question as LOW confidence and posts f
 10. Resume pipeline at step 3 (Schema Retrieval → Primary Agent)
 ```
 
-**Timeout**: If the user doesn't reply within 1 hour, the clarification state expires (Firestore TTL). If the user sends a new message in the thread after expiry, it's treated as a fresh question.
+**Timeout**: If the user doesn't reply within 1 hour, the clarification state is treated as expired. **Important**: Firestore TTL deletion is eventually consistent (Google's SLA is "within 24 hours"), so the application must NOT rely on document absence to mean expiration. Instead, the handler always checks `expiresAt` explicitly:
+
+```typescript
+const state = clarificationDoc.data();
+if (state.expiresAt.toDate() < new Date()) {
+  // Expired — treat as fresh question, ignore stale state
+  await clarificationDoc.ref.delete(); // clean up eagerly
+  return handleFreshQuestion(event);
+}
+// Not expired — resume pipeline with clarification
+```
+
+Firestore TTL is used only as a background cleanup mechanism for documents the application missed, not as a correctness guarantee.
 
 **Button responses**: Block Kit button clicks arrive as `block_actions` events, not messages. The handler matches the `action_id` to the `clarificationId` and resumes the pipeline with the selected option.
 
@@ -975,7 +994,7 @@ User Question
     v
 [Respond] -------------- "Deliver to user"
     |                     Post to Slack with reasoning + override buttons
-    |                     [📋 Table] [📝 Summary] [⬇️ CSV] [🔍 SQL] [👍] [👎]
+    |                     [📋 Table] [📝 Summary] [⬇️ CSV] [👍] [👎]
 ```
 
 ### Cost per Query (Estimated)
@@ -1087,6 +1106,31 @@ Escalation requires suspending and resuming the pipeline across separate Slack e
 10. Post result to original user thread
 11. Auto-generate teaching candidate (see below)
 ```
+
+### Thread Re-Entry During Pending Escalation
+
+While waiting for a human response to an escalation, the user may post additional messages in the original thread. The bot must not launch a new pipeline for a thread that is parked pending escalation.
+
+**Implementation**: The message filter (section 14) checks for pending escalation state before invoking the pipeline, using the same pattern as the clarification state check:
+
+```typescript
+// In the message handler, after shouldRespond() passes:
+const pendingEscalation = await db.collection('escalation_state')
+  .where('originalThreadTs', '==', event.thread_ts)
+  .where('pipelineState', '==', 'awaiting_human')
+  .limit(1).get();
+
+if (!pendingEscalation.empty) {
+  await client.chat.postMessage({
+    channel: event.channel,
+    thread_ts: event.thread_ts,
+    text: "I'm still waiting for the data team on your previous question. I'll reply here when I have an answer.",
+  });
+  return;
+}
+```
+
+This runs alongside the clarification state check and the thread processing lock — three guards that prevent the pipeline from launching when it shouldn't.
 
 ### Auto-Teaching from Escalations
 
@@ -1288,19 +1332,22 @@ Diagnostic queries use the Primary Agent (Gemini 3.0 Pro) but skip the Superviso
 
 ### Visible Reasoning in Responses
 
-Every response includes a collapsible reasoning summary so users can see the sausage without asking:
+Every response includes the generated SQL inline (not hidden behind a button) so the user immediately sees what ran. Since the bot auto-executes queries, SQL visibility is the user's primary sanity check — hiding it behind a click means the user only discovers mistakes after the fact.
 
 ```
 Total revenue last quarter: $5.2M
 
 📊 *Assumptions*: All regions, completed orders only, fct_orders table
+
+*Query*:
+```SELECT DATE_TRUNC(order_date, MONTH), SUM(total_amount) FROM ...```
+
 🔍 *Show reasoning* (click to expand)
 
   Tables: analytics.fct_orders
   Filter: order_status = 'completed' AND order_date >= '2025-10-01'
   Guided by: "Monthly Revenue" teaching
   Confidence: high ✓
-  SQL: [Show query]
 ```
 
 **Implementation note**: Block Kit has no native client-side toggle/expand widget. "Show reasoning" is implemented as a **button action** that updates the message:
@@ -1317,14 +1364,15 @@ This is the standard Slack pattern for expandable content. The update is instant
 Every response includes action buttons for format control and investigation:
 
 ```
-[📋 Show as table] [📝 Summary] [⬇️ CSV] [🔍 Show SQL] [👍] [👎]
+[📋 Show as table] [📝 Summary] [⬇️ CSV] [👍] [👎]
 ```
 
-- **Show as table**: Re-render the same results as a Block Kit table
+- **Show as table**: Re-render the same results as a Block Kit table (≤6 columns) or code block (>6 columns)
 - **Summary**: Re-render as natural language summary
 - **CSV**: Upload results as a CSV file
-- **Show SQL**: Show the generated SQL in a code block
 - **Thumbs up/down**: Existing feedback mechanism
+
+Note: "Show SQL" is no longer a button — SQL is always visible inline in the response (see Visible Reasoning below).
 
 These override the bot's adaptive formatting choice without re-running the query — the results are already in `ResponseContext.queryResults`.
 
@@ -1427,6 +1475,38 @@ async function getSchemaFallback(
 
 **When the fallback triggers**: During schema retrieval, if a table appears in the user question but has no matching entry in the parsed dbt artifacts, the system queries `INFORMATION_SCHEMA` to build a minimal `TableContext`. These fallback entries lack business descriptions and lineage, so the LLM receives a lower-context schema — the prompt notes this explicitly so the model knows to be more cautious.
 
+### Metadata Quality Awareness
+
+Most real-world dbt projects have sparse metadata — many models lack descriptions, most columns have empty `description` fields, and tags are inconsistently applied. The design must account for this rather than assuming high-quality metadata.
+
+**During ingestion**, compute a quality score per table:
+
+```typescript
+interface TableQuality {
+  descriptionPresent: boolean;          // model has a non-empty description
+  columnDescriptionCoverage: number;    // % of columns with descriptions (0-1)
+  qualityTier: 'high' | 'medium' | 'low';
+}
+
+function assessQuality(table: TableContext): TableQuality {
+  const described = table.columns.filter(c => c.description.trim().length > 0);
+  const coverage = described.length / table.columns.length;
+  return {
+    descriptionPresent: table.description.trim().length > 0,
+    columnDescriptionCoverage: coverage,
+    qualityTier: coverage > 0.7 ? 'high' : coverage > 0.3 ? 'medium' : 'low',
+  };
+}
+```
+
+**In the prompt**, low-quality tables include a note so the LLM calibrates confidence appropriately:
+
+```
+Table: raw_events (⚠️ minimal documentation — 2/47 columns described)
+```
+
+Tables with `qualityTier: 'low'` should bias the Clarification Agent toward MEDIUM confidence (state assumptions explicitly) rather than HIGH. The Supervisor treats queries against poorly-documented tables as a review flag.
+
 ### Focus on Mart/Gold Layer
 
 Only expose mart/gold layer models to the LLM (not staging or intermediate). These are the business-facing tables that users think about.
@@ -1436,6 +1516,33 @@ Only expose mart/gold layer models to the LLM (not staging or intermediate). The
 Refresh the metadata index on dbt CI completion via:
 - GitHub Actions webhook after `dbt build` completes
 - Periodic poll of artifacts from dbt Cloud API or GitHub repo
+
+### Metadata Freshness Check
+
+Teaching staleness has three detection levels (section 6), but the metadata itself can also go stale — if the webhook fails, dbt CI stops running, or someone redeploys without triggering a refresh. The bot would silently serve queries against outdated schema.
+
+**Implementation**: Every metadata refresh writes a timestamp to Firestore (`config/metadata_state`):
+
+```typescript
+interface MetadataState {
+  lastRefreshAt: Date;
+  manifestVersion: string;   // hash of manifest.json for change detection
+  tableCount: number;
+  refreshSource: 'webhook' | 'poll' | 'manual';
+}
+```
+
+At the top of every pipeline run, check the timestamp:
+
+| Staleness | Action |
+|-----------|--------|
+| **<24h** | Normal operation |
+| **24-48h** | Append warning to response: "Note: schema info was last updated {X} hours ago and may be outdated." |
+| **>48h** | Alert data team via escalation channel; continue responding with visible warning |
+
+The `/anna health` command (data team only) reports metadata age, table count, and last refresh source.
+
+**Alerting**: Cloud Monitoring alert if `lastRefreshAt` exceeds 48 hours. This catches silent webhook failures before they cause bad answers.
 
 ### Run Status (MVP)
 
@@ -1496,7 +1603,7 @@ Layer 5: Execution with Limits (30s timeout, 1K row limit, maximumBytesBilled)
 
 **Layer 1 - Static Analysis**: Regex-based blocking of `DROP`, `ALTER`, `DELETE`, `INSERT`, `UPDATE`, `CREATE`, `GRANT`, `REVOKE`, SQL comments, multi-statement queries.
 
-**Layer 2 - AST Validation**: Parse with `node-sql-parser` (BigQuery dialect). Walk the AST to verify only `SELECT` statements exist. Check referenced tables against an allowlist.
+**Layer 2 - AST Validation (advisory for parse, blocking for DML)**: Parse with `node-sql-parser` (BigQuery dialect). If the parser successfully parses the SQL, walk the AST to verify only `SELECT` statements exist and check referenced tables against an allowlist — DML/DDL detection is a **hard block**. However, if the parser *fails to parse* the SQL (returns a parse error), this is **advisory only** — log a warning and pass through to Layer 3 (dry run). `node-sql-parser`'s BigQuery dialect has known gaps (`QUALIFY`, `SAFE_DIVIDE`, nested `UNNEST`, some window functions), so a parse failure does not mean the SQL is invalid. Layer 3 (BigQuery dry run) is the authoritative validator for syntax and semantics.
 
 **Layer 3 - BigQuery Dry Run**: The most important layer. Free (no slot usage, no charges). Provides full syntax validation, semantic validation (table/column existence, data types, permissions), and estimated bytes to process.
 
@@ -1511,7 +1618,7 @@ const bytesProcessed = parseInt(job.statistics.totalBytesProcessed, 10);
 
 **Layer 4 - Cost Gate**: Compare dry run's `bytesProcessed` against a configurable threshold. Default: 10GB (~$0.05 at on-demand pricing).
 
-**Layer 5 - Execution**: Run with `maximumBytesBilled` (hard cap), `jobTimeoutMs: 30000`, and `maxResults: 1000`.
+**Layer 5 - Execution**: Run with `maximumBytesBilled` (hard cap), `jobTimeoutMs: 30000`, and `maxResults: 1000`. **When results hit the 1K row cap**, the bot appends `LIMIT 1000` explicitly and runs a secondary `SELECT COUNT(*) FROM ({original_sql})` to get the true row count. The response always tells the user when results are truncated: "Showing 1,000 of approximately {n} rows. [Download full CSV]" (see adaptive response format, section 14).
 
 ### Infrastructure-Level Safety
 
@@ -1590,9 +1697,65 @@ const app = new App({
 | Event | Purpose |
 |-------|---------|
 | `app_mention` | Respond when @mentioned |
-| `message.channels` | Listen for thread replies |
-| `message.groups` | Listen for private channel threads |
+| `message.channels` | Listen for thread replies in public channels |
+| `message.groups` | Listen for thread replies in private channels |
 | `message.im` | Listen for DMs |
+
+### Message Trigger Rules
+
+The bot receives every message in channels it has joined, but it must NOT respond to all of them. A message filter at the top of the event handler determines whether to invoke the pipeline:
+
+| Trigger | Action | Why |
+|---------|--------|-----|
+| **@mention in channel** | Respond | Explicit invocation |
+| **DM (any message)** | Respond | Every DM is directed at the bot |
+| **Thread reply where bot previously responded** | Respond | Refinement, meta-question, or follow-up |
+| **Channel message without @mention** | Ignore | Side conversation, not directed at bot |
+| **Thread reply where bot has NOT responded** | Ignore | Someone else's thread |
+
+```typescript
+function shouldRespond(event: MessageEvent): boolean {
+  // Always respond in DMs
+  if (event.channel_type === 'im') return true;
+
+  // Always respond to @mentions (handled by app_mention event)
+  if (event.type === 'app_mention') return true;
+
+  // For channel messages: only respond in threads where bot has participated
+  if (event.thread_ts) {
+    return botHasRepliedInThread(event.channel, event.thread_ts);
+  }
+
+  // Bare channel message without @mention: ignore
+  return false;
+}
+```
+
+This filter runs before any LLM calls — zero cost for ignored messages.
+
+### Per-Thread Processing Lock
+
+With 10-30 second pipeline runs, duplicate events are inevitable — double-clicks, rapid follow-ups, or Slack retrying a webhook. Without deduplication, the bot launches parallel pipelines for the same thread and posts interleaved results.
+
+**Implementation**: Before starting a pipeline, attempt to create a Firestore document (`processing_threads/{threadTs}`) with a 60-second TTL. If the document already exists, the pipeline is already running — respond with "I'm still working on your previous question" and exit.
+
+```typescript
+async function acquireThreadLock(threadTs: string): Promise<boolean> {
+  const ref = db.collection('processing_threads').doc(threadTs);
+  try {
+    await ref.create({
+      startedAt: FieldValue.serverTimestamp(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    return true; // lock acquired
+  } catch (e) {
+    if (e.code === 6) return false; // ALREADY_EXISTS — pipeline in progress
+    throw e;
+  }
+}
+```
+
+The lock is deleted when the pipeline completes (success or failure). The 60-second TTL is a safety net for crashed pipelines — Firestore TTL will eventually clean it up, but the application also checks `expiresAt` explicitly to avoid relying on eventual TTL deletion.
 
 ### Multi-Turn Threading
 
@@ -1614,8 +1777,11 @@ const conversationHistory = thread.messages!.map((m) => ({
 | Question Type | Response Format |
 |--------------|-----------------|
 | Single value ("how many...") | Plain text with explanation |
-| Small table (<20 rows) | Block Kit section blocks formatted as table |
+| Small table (<20 rows, ≤6 columns) | Block Kit section blocks formatted as table |
+| Wide table (>6 columns) | CSV file upload or monospaced code block (Block Kit has no real table component — section blocks become unreadable beyond 6 columns, especially on mobile) |
 | Large result (>20 rows) | Natural language summary + CSV file upload |
+| **Zero rows** | "Your query ran successfully but returned no results." + Flash-generated hypothesis about why (e.g., "This might be because the date range covers a weekend" or "No orders match status='completed' in this range") + offer to broaden: "Want me to try without the date filter?" |
+| **Truncated result (hit 1K row cap)** | Show first 1,000 rows + explicit notice: "Showing 1,000 of approximately {n} rows. [Download full CSV]" (see section 13, Layer 5) |
 
 ### Block Kit Constraints
 
@@ -1625,26 +1791,88 @@ const conversationHistory = thread.messages!.map((m) => ({
 
 ### Handling the 3-Second Timeout
 
-```typescript
-app.command('/anna', async ({ command, ack, client }) => {
-  await ack('Thinking...');
+**Primary entry points**: @mention is the main trigger in channels. `/anna` is a convenience alias. DMs respond to all messages. Both entry points funnel into the same pipeline.
 
-  // Background work continues (Cloud Run keeps process alive)
+```typescript
+// Slash command entry point (/anna <question>)
+// Note: slash command ack() is ephemeral (only invoker sees it)
+app.command('/anna', async ({ command, ack, client }) => {
+  await ack(); // ephemeral ack — user sees nothing
+
+  // Post a visible status message in the channel (non-ephemeral)
+  const statusMsg = await client.chat.postMessage({
+    channel: command.channel_id,
+    text: 'Understanding your question...',
+  });
+
   try {
-    const results = await processQuery(command.text);
-    await client.chat.postMessage({
-      channel: command.channel_id,
-      text: results.formatted,
-      blocks: results.blocks,
-    });
+    await runPipeline(command.text, command.channel_id, statusMsg.ts!, client);
   } catch (error) {
-    await client.chat.postMessage({
+    await client.chat.update({
       channel: command.channel_id,
+      ts: statusMsg.ts!,
       text: `Something went wrong: ${error.message}`,
     });
   }
 });
+
+// @mention entry point (channels) + DM entry point
+// Both use the message trigger rules (see above) to filter
+app.event('app_mention', async ({ event, client }) => {
+  const statusMsg = await client.chat.postMessage({
+    channel: event.channel,
+    thread_ts: event.ts,
+    text: 'Understanding your question...',
+  });
+  await runPipeline(event.text, event.channel, statusMsg.ts!, client);
+});
 ```
+
+### Progressive Status Updates
+
+The Phase 1 pipeline takes 10-30 seconds (clarification + schema + generation + validation + supervision + execution + formatting). A static "Thinking..." message for that duration feels broken. Instead, the bot updates a single message in-place via `chat.update()` after each pipeline stage completes:
+
+```
+Stage 1 (Clarification):    "Understanding your question..."
+Stage 2 (Schema):           "Finding relevant tables..."
+Stage 3 (Primary Agent):    "Generating SQL..."
+Stage 4 (Validation):       "Validating query..."
+Stage 5 (Supervisor):       "Reviewing answer..."
+Stage 6 (Execution):        "Running query..."
+Stage 7 (Format):           Final answer replaces the message entirely
+```
+
+**Implementation**: `chat.postMessage()` returns a `ts` (message timestamp) that acts as the message ID. Each pipeline stage calls `chat.update({ channel, ts, text })` with the current status. The final stage replaces the status text with the full response (blocks, buttons, reasoning toggle). One message, updated in-place — no dead "Thinking..." artifacts, no duplicate posts.
+
+```typescript
+const statusMsg = await client.chat.postMessage({
+  channel, thread_ts,
+  text: 'Understanding your question...',
+});
+
+const updateStatus = async (text: string) => {
+  await client.chat.update({
+    channel, ts: statusMsg.ts!, text,
+  });
+};
+
+// Pipeline stages call updateStatus() as they complete
+await updateStatus('Finding relevant tables...');
+// ... schema retrieval ...
+await updateStatus('Generating SQL...');
+// ... primary agent ...
+await updateStatus('Reviewing answer...');
+// ... supervisor ...
+
+// Final response replaces the message entirely
+await client.chat.update({
+  channel, ts: statusMsg.ts!,
+  text: results.formatted,
+  blocks: results.blocks,
+});
+```
+
+**Why not streaming**: The pipeline architecture prevents meaningful streaming — nothing can stream to the user until the supervisor approves. Progressive stage updates give the user a sense of movement (every 2-5 seconds) without requiring streaming support.
 
 ### Per-User Rate Limiting
 
@@ -1780,7 +2008,7 @@ Firestore collection: `feedback`
 | LLM models | Gemini 3.0 Pro (generation, supervision) + Flash (classification, summarization) | GCP-native, strong text-to-SQL, cost-effective |
 | Teaching retrieval | Gemini File Search (managed RAG) | Zero-infra RAG: auto-chunking, embedding, retrieval, citations. Free at query time. |
 | Database client | @google-cloud/bigquery | Official Node.js client |
-| SQL validation | node-sql-parser | AST-level SELECT-only enforcement |
+| SQL validation | node-sql-parser | AST-level DML/DDL blocking (advisory on parse failure — BigQuery dry run is authority) |
 | State store | Firestore | Conversation state, feedback, response context, escalation state, dbt run history, sample rows |
 | Observability | `pino` (structured JSON) → Cloud Logging + Cloud Monitoring | Per-request trace IDs, stage-level metrics, dashboards + alerting |
 | dbt metadata | Custom parser (manifest.json + catalog.json) | Direct parsing, no external deps |
@@ -1828,3 +2056,10 @@ The LLM SDK (Google GenAI) and the pipeline metadata interface should be designe
 | Diagnostic queries cause confusion | User asks "why?" and gets a second, different number | Clearly label diagnostic results as investigative, not authoritative; show alongside original |
 | File Search store sync failure | Teachings out of date, retrieval returns stale content | CI job validates sync success; alert on failure; teachings in Git remain source of truth |
 | Channel access misconfiguration | Users blocked from data they should access | Default datasets as fallback; admin audit log; easy YAML config in repo |
+| Pipeline latency (10-30s) | User thinks bot is broken | Progressive status updates via `chat.update()` after each stage; user sees movement every 2-5s |
+| Bot responds to unrelated messages | Wasted LLM calls, annoying unsolicited responses | Message trigger rules: only respond to @mentions, DMs, and thread replies where bot has participated |
+| dbt metadata goes stale silently | Queries generated against outdated schema | `lastMetadataRefresh` timestamp in Firestore; warnings at 24h, alerts at 48h; `/anna health` command |
+| Sparse dbt metadata (empty descriptions) | LLM generates low-quality SQL from undocumented tables | Per-table quality score injected into prompt; low-quality tables flagged to LLM and Clarification Agent |
+| Concurrent duplicate requests | Interleaved pipeline results in same thread | Per-thread processing lock in Firestore (60s TTL); second request gets "still working" message |
+| User posts during pending escalation | New pipeline launches on parked thread | Escalation state check before pipeline; user told "still waiting for data team" |
+| node-sql-parser false negatives | Valid BigQuery SQL rejected by Layer 2 | Layer 2 is advisory on parse failure, blocking only for DML/DDL; Layer 3 (dry run) is authority |
