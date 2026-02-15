@@ -35,7 +35,7 @@ The minimum to get a question answered:
 
 The accuracy layer, informed by Phase 0 usage:
 
-8. **Knowledge Base (Teachings)**: Analyst-curated SQL examples and reasoning instructions, retrieved via hybrid RAG (vector + keyword) to guide sanctioned query patterns
+8. **Knowledge Base (Teachings)**: Analyst-curated SQL examples and reasoning instructions, retrieved via Gemini File Search to guide sanctioned query patterns
 9. **Supervisor Agent**: Second LLM pass reviewing SQL, logic, and teaching compliance — with retry loop
 10. **Clarification Agent**: Smart intake with confidence classification, lightweight teaching context, and Block Kit follow-up questions
 11. **In-conversation learning**: Thumbs-down + rephrase feeds negative example into next attempt
@@ -89,9 +89,9 @@ The learning flywheel:
                          |    +-- async: Agent Pipeline                 |
                          |         |                                    |
                          |         1. Clarification Agent (Flash)       |
-                         |         2. Knowledge Base RAG (teachings +   |
-                         |            schema retrieval)                 |
-                         |         3. Primary Agent (Pro)               |
+                         |         2. Schema retrieval (dbt metadata)   |
+                         |         3. Primary Agent (Pro + File Search) |
+                         |            (teachings retrieved automatically)|
                          |         4. Validation Pipeline (5-layer)     |
                          |         5. Supervisor Agent (Pro)             |
                          |            +-- retry loop (up to 2x)        |
@@ -235,24 +235,22 @@ User: "Show me revenue"
     |   - Wait for user response if needed   |
     +----------------+-----------------------+
                      v
-    +--- 3. Schema + Knowledge Retrieval ----+
-    |   - Embed the (clarified) question     |
-    |   - Retrieve top 5-15 relevant tables  |
-    |     from dbt metadata index            |
-    |   - Retrieve top 3-5 relevant          |
-    |     Teachings from knowledge base      |
-    |     (sanctioned SQL, reasoning notes,  |
-    |     business definitions)              |
+    +--- 3. Schema Retrieval ----------------+
+    |   - Load dbt metadata for relevant     |
+    |     tables (full schema for <30 tables,|
+    |     or top 5-15 via File Search)       |
+    |   - Load sample rows from Firestore    |
     +----------------+-----------------------+
                      v
     +--- 4. SQL Generation (Primary Agent) --+
+    |   - Gemini 3.0 Pro + File Search tool  |
     |   - System prompt with:                |
     |     - BigQuery SQL rules               |
-    |     - Retrieved table DDLs             |
-    |     - Column descriptions from dbt     |
+    |     - Table DDLs + column descriptions |
     |     - Sample rows                      |
-    |     - Teachings (sanctioned patterns   |
-    |       and examples)                    |
+    |   - File Search auto-retrieves         |
+    |     relevant teachings and grounds     |
+    |     the response with citations        |
     |   - Structured output via Zod:         |
     |     { sql, explanation, confidence,    |
     |       assumptions, reasoning_chain }   |
@@ -333,8 +331,9 @@ The Google GenAI SDK is the official TypeScript client for the Gemini API:
 - Native Zod support for structured output (constrained decoding, not post-parse)
 - File Search tool built in (managed RAG — see section 6)
 - Streaming-first (update Slack messages progressively)
-- Runs on Cloud Run with service account or API key auth
 - Single Google dependency — no separate embedding or vector DB SDKs
+
+**Auth note**: File Search stores require the Gemini Developer API with an API key — not Vertex AI, not service account ADC. The API key is managed via Secret Manager and injected as `GEMINI_API_KEY` env var on Cloud Run. All other GCP services (BigQuery, Firestore) use service account ADC as normal. This is a Google-side limitation of File Search, not an architectural choice.
 
 ### Model Strategy
 
@@ -379,6 +378,14 @@ const response = await ai.models.generateContent({
 const result = JSON.parse(response.text);
 const citations = response.candidates[0].groundingMetadata?.groundingChunks;
 ```
+
+**Spike required**: The composition of `responseSchema` (structured JSON output) and `tools: [{ fileSearch }]` in a single `generateContent` call must be validated before Phase 1 implementation. If they don't compose, use a **two-call fallback**:
+
+1. Call Gemini with File Search only (no structured output) — retrieve relevant teaching chunks
+2. Extract `groundingMetadata` citations from the response
+3. Call Gemini with structured output only (no File Search) — inject teaching chunks as text in the system prompt, generate SQL
+
+The two-call pattern costs ~$0.004 extra per query (one additional Flash call for retrieval) and adds ~500ms latency. The pipeline logic is identical — only the LLM call site changes.
 
 ### Accuracy Expectations
 
@@ -544,8 +551,29 @@ Instead of building a custom embedding + vector search + BM25 pipeline, teaching
 **How it works**:
 
 1. **Indexing** (CI, on teaching change):
-   - Teaching YAML files are uploaded to a Gemini File Search store
-   - Each teaching file includes the `reasoning` field (embeds well), `question_patterns`, `sanctioned_sql`, and `tags`
+   - Each teaching is converted from YAML to a **standalone markdown document** before upload — one file per teaching, not one YAML file per category. Markdown embeds better for semantic search and avoids File Search chunking splitting a SQL block mid-query:
+     ```markdown
+     # Teaching: revenue-monthly
+     Tags: revenue, finance | Models: analytics.fct_orders
+
+     ## Question Patterns
+     - monthly revenue
+     - revenue by month
+     - MRR
+
+     ## Sanctioned SQL
+     SELECT DATE_TRUNC(order_date, MONTH) AS month,
+       SUM(total_amount) AS revenue
+     FROM `analytics.fct_orders`
+     WHERE order_status = 'completed'
+     GROUP BY 1 ORDER BY 1 DESC
+
+     ## Reasoning
+     Revenue always uses fct_orders with order_status = 'completed'.
+     Never include cancelled or refunded orders.
+     The canonical revenue metric is total_amount, not subtotal.
+     ```
+   - Each teaching file is ~100-300 tokens — small enough that File Search keeps it in a single chunk, eliminating the risk of split SQL
    - Synthetic question expansion: before upload, a CI step uses Gemini Flash to generate 10-20 realistic question variants per teaching and appends them to the file — File Search embeds these alongside the original content, improving retrieval recall
    - File Search automatically chunks, embeds, and indexes the content
    - Initial indexing cost: $0.15/M tokens (~$0.01 for 50 teaching files)
@@ -596,11 +624,16 @@ async function syncTeachingsToFileSearch(teachings: Teaching[]) {
 - **Scales automatically**: No memory pressure on Cloud Run, no index rebuild on cold start
 - **Trade-off**: Less control over ranking/scoring than a custom pipeline, but for an MVP with <100 teachings this is a net win
 
+**Graceful degradation**: If File Search fails (API error, empty store, indexing incomplete), the pipeline retries the Primary Agent call without the `tools` config — generating SQL from schema context alone, same as Phase 0. The failure is logged with the trace ID for alerting. Teaching-less responses are marked `confidence: medium` at most, since they lack governance grounding.
+
 **File Search store lifecycle**:
 - One store: `anna-lytics-teachings`
 - Synced from Git on CI (GitHub Actions step after teaching PR merge)
 - Stale teachings (Level 1, model_missing) are removed from the store during sync
 - Schema-drift warnings (Level 2) are appended as metadata to the teaching file
+- **Phase 0**: No teachings exist, File Search `tools` config is omitted from the Gemini call. Primary Agent generates SQL from schema context alone.
+
+**Teaching summary map** (for Clarification Agent, section 8): During the same CI sync step that uploads to File Search, the pipeline also reads the raw YAML files from Git and writes a `TeachingSummary[]` array to a Firestore document (`config/teaching_summaries`). The Clarification Agent loads this on startup — it's a flat list of terms + definitions, not a retrieval index.
 
 ### Staleness Protection
 
@@ -658,8 +691,8 @@ You are a senior data analyst reviewing a generated SQL query.
 ORIGINAL QUESTION: {user_question}
 CLARIFIED QUESTION: {clarified_question_with_assumptions}
 
-RELEVANT TEACHINGS:
-{retrieved_teachings}
+RELEVANT TEACHINGS (from Primary Agent's File Search citations):
+{grounding_citation_chunks}
 
 GENERATED SQL:
 {primary_agent_sql}
@@ -724,11 +757,17 @@ Maximum 2 retry rounds (3 total supervisor calls). If still failing after exhaus
 
 > "I'm not fully confident in this answer. [Supervisor note: The query may be using the wrong revenue metric. Consider verifying with the data team.]"
 
+### Teaching Context for the Supervisor
+
+The Supervisor doesn't use File Search — it receives teaching context extracted from the Primary Agent's response. After the Primary Agent generates SQL, the pipeline extracts `groundingMetadata.groundingChunks` (the teaching chunks File Search retrieved) and injects them into the Supervisor prompt as `RELEVANT TEACHINGS`.
+
+Since each teaching is uploaded as a standalone markdown document (~100-300 tokens), each grounding chunk is a complete teaching — not a truncated fragment. The Supervisor sees the full sanctioned SQL, reasoning, and question patterns for every teaching the Primary Agent used.
+
 ### Cost Considerations
 
 The Supervisor adds 1-3 extra LLM calls per query. To manage costs:
 - Use the same model tier as the Primary Agent (Gemini 3.0 Pro) — the supervisor needs strong reasoning
-- The supervisor prompt is smaller than the primary prompt (no schema DDL, just the SQL + explanation to review)
+- The supervisor prompt is smaller than the primary prompt (no schema DDL, just the SQL + explanation + cited teachings to review)
 - Average case: 1 supervisor call (PASS on first try). Retries are the exception.
 - Consider making the supervisor optional per channel or per user preference for cost-sensitive deployments
 
@@ -750,7 +789,7 @@ The agent classifies each incoming question into one of three confidence levels:
 
 ### Lightweight Teaching Context
 
-The Clarification Agent runs *before* full Knowledge Base RAG (step 3 in the pipeline), so it cannot access full teachings. To avoid making assumptions blind, it receives a **teaching summary map** — a flat lookup of canonical definitions built at index time:
+The Clarification Agent runs *before* the Primary Agent (which has File Search for teaching retrieval), so it cannot access full teachings. To avoid making assumptions blind, it receives a **teaching summary map** — a flat lookup of canonical definitions loaded from Firestore at startup (populated by CI — see section 6):
 
 ```typescript
 // Built once when teachings are indexed, updated on CI
@@ -768,7 +807,7 @@ const teachingSummaries: TeachingSummary[] = teachings.map(t => ({
 }));
 ```
 
-This gives the Clarification Agent enough domain knowledge to make informed assumptions ("Assuming 'revenue' means total_amount from fct_orders, completed orders only") without duplicating full RAG retrieval. The full teachings with sanctioned SQL are still retrieved in step 3 for the Primary Agent.
+This gives the Clarification Agent enough domain knowledge to make informed assumptions ("Assuming 'revenue' means total_amount from fct_orders, completed orders only") without duplicating full RAG retrieval. The full teachings with sanctioned SQL are retrieved automatically by File Search during the Primary Agent call (step 4).
 
 ### Classification Prompt
 
@@ -848,7 +887,7 @@ When the Clarification Agent classifies a question as LOW confidence and posts f
 7. Load clarification state
 8. Merge user's reply into clarified question
 9. Delete clarification state from Firestore
-10. Resume pipeline at step 3 (Schema + Knowledge Retrieval)
+10. Resume pipeline at step 3 (Schema Retrieval → Primary Agent)
 ```
 
 **Timeout**: If the user doesn't reply within 1 hour, the clarification state expires (Firestore TTL). If the user sends a new message in the thread after expiry, it's treated as a fresh question.
@@ -892,7 +931,7 @@ const threadContext = buildThreadContext(thread.messages!, {
 
 ## 9. Agent Pipeline Summary
 
-The three agents form a pipeline with distinct roles:
+The agents form a pipeline with distinct roles. Teaching retrieval is not a separate step — it happens automatically inside the Primary Agent via File Search:
 
 ```
 User Question
@@ -941,7 +980,7 @@ User Question
 
 ### Cost per Query (Estimated)
 
-**Token budget reality check**: The Primary Agent prompt includes schema DDL (500-2,000 tokens/table x 5-15 tables), sample rows, thread context, and instructions. Expect **15,000-50,000 input tokens** per Primary Agent call depending on warehouse size. Teachings are injected automatically by File Search (no additional prompt tokens managed by us). At Gemini 3.0 Pro pricing ($2.00/M input, $12.00/M output), a single generation call costs ~$0.03-0.10 in input + ~$0.01-0.05 in output.
+**Token budget reality check**: The Primary Agent prompt includes schema DDL (500-2,000 tokens/table x 5-15 tables), sample rows, thread context, and instructions. Expect **15,000-50,000 input tokens** of schema context per Primary Agent call depending on warehouse size. File Search injects an additional **~2,000-5,000 input tokens** of teaching context (3-5 retrieved teachings at ~300-1,000 tokens each) — these count toward the input token cost. Total input per call: ~17,000-55,000 tokens. At Gemini 3.0 Pro pricing ($2.00/M input, $12.00/M output), a single generation call costs ~$0.03-0.11 in input + ~$0.01-0.05 in output.
 
 #### By Phase
 
@@ -1031,7 +1070,7 @@ Escalation requires suspending and resuming the pipeline across separate Slack e
      originalChannel: string,
      pipelineState: 'awaiting_human',
      stageToResume: 'sql_generation' | 'supervisor_review',
-     context: { clarifiedQuestion, retrievedTeachings, ... },
+     context: { clarifiedQuestion, groundingCitations, ... },
      escalationTs: string,  // ts of the message in escalation channel
      createdAt: Date,
    }
@@ -1386,7 +1425,7 @@ async function getSchemaFallback(
 }
 ```
 
-**When the fallback triggers**: During schema retrieval, if a table appears in RAG results or user question but has no matching entry in the parsed dbt artifacts, the system queries `INFORMATION_SCHEMA` to build a minimal `TableContext`. These fallback entries lack business descriptions and lineage, so the LLM receives a lower-context schema — the prompt notes this explicitly so the model knows to be more cautious.
+**When the fallback triggers**: During schema retrieval, if a table appears in the user question but has no matching entry in the parsed dbt artifacts, the system queries `INFORMATION_SCHEMA` to build a minimal `TableContext`. These fallback entries lack business descriptions and lineage, so the LLM receives a lower-context schema — the prompt notes this explicitly so the model knows to be more cautious.
 
 ### Focus on Mart/Gold Layer
 
@@ -1704,7 +1743,7 @@ Auto-generate teaching PR:
   - Bot creates a YAML teaching entry from the corrected pair
   - Opens a PR in the teachings repo via GitHub API
   - Data team reviews and merges
-  - CI rebuilds RAG index
+  - CI syncs to File Search store
 ```
 
 This closes the loop: user feedback improves accuracy immediately (as few-shot examples in Firestore) and, once promoted, becomes durable governance via the Knowledge Base.
