@@ -11,7 +11,7 @@ export function teachingToMarkdown(teaching: Teaching): string {
   ];
 
   if (teaching.sanctioned_sql) {
-    lines.push('## Sanctioned SQL', teaching.sanctioned_sql.trim(), '');
+    lines.push('## Sanctioned SQL', '```sql', teaching.sanctioned_sql.trim(), '```', '');
   }
 
   lines.push('## Reasoning', teaching.reasoning.trim());

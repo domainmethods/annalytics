@@ -37,6 +37,7 @@ describe('teachingToMarkdown', () => {
     expect(md).toContain('# Teaching: revenue-monthly');
     expect(md).toContain('## Question Patterns');
     expect(md).toContain('## Sanctioned SQL');
+    expect(md).toContain('```sql');
     expect(md).toContain('## Reasoning');
     expect(md).toContain('SUM(total_amount)');
   });

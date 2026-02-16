@@ -37,7 +37,7 @@ export function formatSampleRowsForPrompt(
   const header = columns.join(' | ');
   const separator = columns.map(() => '---').join(' | ');
   const dataRows = rows.map(
-    row => columns.map(col => String(row[col] ?? 'NULL')).join(' | '),
+    row => columns.map(col => String(row[col] ?? 'NULL').replace(/\|/g, '\\|')).join(' | '),
   );
 
   const staleWarning = stale

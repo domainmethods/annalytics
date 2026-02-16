@@ -20,6 +20,9 @@
   "lint-staged": {
     "*.ts": "eslint --fix"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

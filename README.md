@@ -1,6 +1,6 @@
 # Anna Lytics
 
-A Slack bot that answers business questions by translating natural language into BigQuery SQL. Uses dbt metadata as a semantic layer and Gemini 3.0 Pro for SQL generation.
+A Slack bot that answers business questions by translating natural language into BigQuery SQL. Uses dbt metadata as a semantic layer, Gemini 3.0 Pro for SQL generation, and RAG via Gemini File Search for domain-specific knowledge.
 
 ## Architecture
 
@@ -8,61 +8,71 @@ A Slack bot that answers business questions by translating natural language into
 
 Users ask questions in Slack via `@Anna Lytics`, `/anna`, DMs, or thread replies. Each question flows through a 7-stage pipeline (`src/pipeline.ts`):
 
-1. **Clarification** — Classifies the question confidence as high/medium/low. Low-confidence questions suspend the pipeline and post clarifying questions back to the user. Medium/high proceed with any assumptions noted.
-2. **Retrieval** — Loads cached sample rows for relevant tables to give the SQL generator concrete data examples.
-3. **SQL Generation + Supervisor Loop** — The primary agent generates BigQuery SQL, then a supervisor agent reviews it. If the supervisor rejects, the primary agent retries with the critique (up to 2 retries). Verdicts: `pass`, `fail_then_pass`, or `exhausted`.
-4. **Validation (L1–L4)** — Four sequential validation layers:
-   - **L1 Static Analysis** — Regex-based blocking of DML/DDL keywords, multi-statement queries, and SQL comments
-   - **L2 AST Validation** — Parses the SQL into an AST to verify it's a valid single SELECT
-   - **L3 Dry Run** — BigQuery dry run to catch syntax errors and estimate bytes scanned
-   - **L4 Cost Gate** — Rejects queries exceeding the configured byte scan limit
-5. **Execution** — Runs the query against BigQuery with timeout and row limits.
-6. **Format + Respond** — Chooses a response format (single value, table, zero rows) and posts Slack blocks with the SQL, explanation, and feedback buttons.
+1. **Clarification** — Classifies question confidence as high/medium/low. Low-confidence questions suspend the pipeline and post clarifying questions. Medium/high proceed with assumptions noted.
+2. **Retrieval** — Loads two context sources for the SQL generator: cached sample rows (concrete data examples per table) and teaching summaries from the knowledge base (business definitions, metric formulas, sanctioned SQL patterns).
+3. **SQL Generation + Supervisor Loop** — The primary agent generates BigQuery SQL using dbt schema, sample rows, and RAG-retrieved teachings as context. A supervisor agent then reviews it; on rejection, the primary agent retries with the critique (up to 2 retries). If File Search is unavailable, the agent falls back to generation without RAG and caps confidence at `medium`.
+4. **Validation (L1-L4)** — Four sequential validation layers:
+   - **L1 Static Analysis** — Blocks DML/DDL, multi-statement queries, and SQL comments
+   - **L2 AST Validation** — Parses SQL into an AST to verify it's a single SELECT
+   - **L3 Dry Run** — BigQuery dry run for syntax errors and byte-scan estimation
+   - **L4 Cost Gate** — Rejects queries exceeding the configured scan limit
+   If validation fails, the pipeline retries SQL generation once with the error as a self-correction prompt.
+5. **Execution** — Runs the validated query against BigQuery with timeout and row limits.
+6. **Format + Respond** — Posts Slack blocks with the result (single value, table, or zero-row message), the SQL, an explanation, and feedback buttons.
 7. **Persist** — Saves the full response context (SQL, explanation, confidence, reasoning chain, trace ID) to Firestore.
 
 All queries are read-only. The bot cannot modify data.
 
-### Confidence Reconciliation
+### dbt as a Semantic Layer
 
-Final confidence is the minimum of the primary agent's confidence and the supervisor's confidence (`src/agents/confidence.ts`). This ensures that disagreement between the two agents always results in a more conservative confidence level.
+The bot uses dbt's `manifest.json` and `catalog.json` as its understanding of the data warehouse. At startup, `src/dbt/parser.ts` merges both artifacts into an in-memory array of `TableContext` objects (one per dbt model) containing:
 
-### Teachings (Knowledge Base)
+- **Table and column names** with descriptions from dbt YAML schema files
+- **Column data types** from `catalog.json` (e.g. `STRING`, `INT64`, `TIMESTAMP`)
+- **Materialization type** (`table`, `view`, `incremental`) and DAG dependencies
+- **Synthetic DDL** (`CREATE TABLE ...`) with column descriptions as inline comments, injected into the SQL generator's system prompt
 
-The bot can be taught domain-specific knowledge (business definitions, metric formulas, table relationships) via YAML files in `teachings/`. The sync script parses these files, uploads them to Gemini File Search for RAG retrieval, and writes summary embeddings to Firestore.
+Tables with less than 30% of columns described are flagged in the prompt so the LLM is cautious with poorly documented schema (`src/dbt/quality.ts`).
 
-Teaching summaries are cached in memory and refreshed every 5 minutes. The SQL generator uses them as grounding context alongside the dbt schema.
+The bot can only query tables in the dbt project. Schema changes in BigQuery have no effect until dbt artifacts are regenerated and redeployed.
 
-To sync teachings after editing YAML files:
+### Teachings (RAG Knowledge Base)
+
+Domain-specific knowledge (business definitions, metric formulas, sanctioned SQL patterns) is authored as YAML files in `teachings/`. The sync script converts each teaching to markdown and uploads it to a Gemini File Search store. During SQL generation, Gemini automatically retrieves relevant teachings via RAG, grounding its output in domain knowledge.
+
+Teaching summaries are also written to Firestore and cached in memory (refreshed every 5 minutes) for use by the clarification agent.
 
 ```bash
-npx tsx scripts/sync-teachings.ts
+npx tsx scripts/sync-teachings.ts   # manual sync
 ```
 
-This is also run automatically by the `sync-teachings` GitHub Actions workflow.
+This also runs automatically via the `sync-teachings` GitHub Actions workflow.
+
+### Confidence Reconciliation
+
+Final confidence = `min(primary agent, supervisor)` (`src/agents/confidence.ts`). Disagreement always produces a more conservative result.
 
 ### Feedback Loop
 
-Responses include thumbs up/down buttons. Feedback is recorded in Firestore. On negative feedback, the user can reply in the thread — the bot detects this as a follow-up, loads the previous (rejected) SQL as a negative example, and re-runs the pipeline to generate a corrected query.
-
-The "Wrong assumptions?" button prompts the user to correct the bot's assumptions in-thread, triggering the same re-run flow.
+Responses include thumbs up/down buttons. Negative feedback is recorded in Firestore. When the user replies in a thread after negative feedback, the bot loads the rejected SQL as a negative example and re-runs the pipeline to generate a corrected query. The "Wrong assumptions?" button prompts the user to provide corrections in-thread, triggering the same re-run flow.
 
 ### Clarification Flow
 
-When the clarification agent classifies a question as low-confidence, the pipeline:
+When the clarification agent classifies a question as low-confidence:
 
 1. Posts clarifying questions with interactive buttons
-2. Saves the clarification state (original question, ambiguities) to Firestore
-3. Suspends — no SQL is generated
+2. Saves clarification state to Firestore
+3. Suspends the pipeline (no SQL generated)
 
-When the user replies in the thread, `checkClarificationReply` detects the pending state and resumes the pipeline with the clarified question.
+When the user replies, `checkClarificationReply` detects the pending state and resumes the pipeline with the clarified question.
 
 ## Prerequisites
 
 - **Node.js 20+**
 - **GCP project** with BigQuery, Firestore, Secret Manager, Cloud Run, and Artifact Registry APIs enabled
-- **Slack app** with Bot Token and Signing Secret ([Slack app setup guide](https://api.slack.com/start))
+- **Slack app** with Bot Token and Signing Secret ([setup guide](https://api.slack.com/start))
 - **Gemini API key** from [Google AI Studio](https://aistudio.google.com/apikey)
-- **dbt artifacts** (`manifest.json` and `catalog.json`) generated from your dbt project
+- **dbt artifacts** (`manifest.json` and `catalog.json`) from your dbt project
 
 ### Slack App Configuration
 
@@ -73,7 +83,7 @@ The Slack app needs these features enabled:
 
 **Slash Commands:** `/anna` pointing to `https://<your-cloud-run-url>/slack/events`
 
-**Bot Token Scopes** (derived from the features above):
+**Bot Token Scopes:**
 `app_mentions:read`, `channels:history`, `chat:write`, `commands`, `groups:history`, `im:history`, `mpim:history`
 
 ## Local Development
@@ -126,11 +136,11 @@ src/
     clarificationAgent.ts # Question classification (high/medium/low)
     sqlGenerator.ts       # Primary SQL generation agent
     supervisorAgent.ts    # SQL review agent
-    supervisorLoop.ts     # Generate → review → retry loop
+    supervisorLoop.ts     # Generate -> review -> retry loop
     confidence.ts         # Confidence reconciliation logic
     followUpClassifier.ts # Thread follow-up detection
   validation/             # 4-layer SQL validation
-    pipeline.ts           # L1→L2→L3→L4 orchestrator
+    pipeline.ts           # L1->L2->L3->L4 orchestrator
     staticAnalysis.ts     # L1: Regex keyword blocking
     astValidation.ts      # L2: SQL AST parse check
     dryRun.ts             # L3: BigQuery dry run
@@ -140,12 +150,14 @@ src/
     formatter.ts          # Response format chooser
   dbt/                    # dbt metadata
     parser.ts             # manifest.json + catalog.json parser
+    quality.ts            # Table documentation quality assessment
     sampleRowCache.ts     # Cached sample rows for prompt context
+    sampleRows.ts         # BigQuery sample row fetcher
   teachings/              # Knowledge base system
     parser.ts             # YAML teaching file parser
     summaryMap.ts         # In-memory summary cache + Firestore sync
     fileSearchSync.ts     # Gemini File Search upload
-    markdownConverter.ts  # Teaching → markdown for File Search
+    markdownConverter.ts  # Teaching -> markdown for File Search
   slack/                  # Slack message builders
     blocks.ts             # Response blocks (table, single value, etc.)
     clarificationBlocks.ts# Clarification question blocks
@@ -161,7 +173,7 @@ src/
     mentions.ts           # @Anna Lytics mentions
     messages.ts           # DMs and thread replies
 scripts/
-  sync-teachings.ts       # Teaching YAML → File Search + Firestore sync
+  sync-teachings.ts       # Teaching YAML -> File Search + Firestore sync
 teachings/                # Teaching YAML files (domain knowledge)
 infra/                    # Terraform (Cloud Run, Firestore, etc.)
 ```
@@ -256,5 +268,5 @@ All configuration is via environment variables. See `.env.example` for the full 
 ## Health Check
 
 ```
-GET /health → 200 OK
+GET /health -> 200 OK
 ```

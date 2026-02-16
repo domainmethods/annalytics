@@ -4,7 +4,6 @@ import type { TableContext } from './dbt/types.js';
 import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
 import { generateWithSupervision } from './agents/supervisorLoop.js';
-import { generateSql } from './agents/sqlGenerator.js';
 import { reconcileConfidence } from './agents/confidence.js';
 import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { validateSql } from './validation/pipeline.js';
@@ -118,13 +117,16 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     const resolvedQuestion = clarification.resolved_question || question;
     const assumptions = clarification.assumptions;
 
-    // Stage 2: Load sample rows
+    // Stage 2: Load sample rows (parallel fetch)
     const sampleRowsMap = new Map<string, { rows: Record<string, unknown>[]; stale: boolean }>();
-    for (const table of tables) {
-      const cached = await getSampleRows(table.name);
-      if (cached) {
-        sampleRowsMap.set(table.name, cached);
-      }
+    const sampleResults = await Promise.all(
+      tables.map(async (table) => {
+        const cached = await getSampleRows(table.name);
+        return cached ? { name: table.name, data: cached } : null;
+      }),
+    );
+    for (const r of sampleResults) {
+      if (r) sampleRowsMap.set(r.name, r.data);
     }
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
@@ -162,19 +164,24 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: validation.bytesProcessed, error: validation.error });
 
     if (!validation.valid) {
-      // Self-correction: retry once with validation error in prompt
+      // Self-correction: retry once through full supervision with validation error
       await updateStatus('Correcting query...');
-      const correctedResult = await generateSql({
-        question: resolvedQuestion,
-        tables,
-        threadContext,
-        apiKey: config.geminiApiKey,
-        model: config.geminiModel,
-        fileSearchStoreId: config.fileSearchStoreId,
-        previousAttempt: { sql: sqlToExecute, error: validation.error || 'Validation failed' },
-      });
-      sqlToExecute = correctedResult.sql;
-      supervisedResult.sqlResult = correctedResult;
+      const correctedSupervised = await generateWithSupervision(
+        {
+          question: resolvedQuestion,
+          tables,
+          threadContext,
+          apiKey: config.geminiApiKey,
+          model: config.geminiModel,
+          fileSearchStoreId: config.fileSearchStoreId,
+          sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
+          previousAttempt: { sql: sqlToExecute, error: validation.error || 'Validation failed' },
+        },
+        config.geminiApiKey,
+        resolvedQuestion,
+      );
+      sqlToExecute = correctedSupervised.sqlResult.sql;
+      Object.assign(supervisedResult, correctedSupervised);
 
       validation = await validateSql(sqlToExecute, config.maxBytesProcessed);
       logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: validation.bytesProcessed, error: validation.error });

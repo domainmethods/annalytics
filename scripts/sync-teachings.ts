@@ -55,7 +55,9 @@ async function main() {
   console.log(`Updated teaching summary map: ${summaries.length} entries`);
 }
 
-main().catch(err => {
+main().then(() => {
+  process.exit(0); // Force exit to close Firestore handles
+}).catch(err => {
   console.error('Teaching sync failed:', err);
   process.exit(1);
 });

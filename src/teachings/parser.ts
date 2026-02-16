@@ -22,9 +22,14 @@ function validateTeaching(raw: Record<string, unknown>, index: number): Teaching
     }
   }
 
+  const questionPatterns = asStringArray(raw.question_patterns) ?? [];
+  if (questionPatterns.length === 0) {
+    console.warn(`Teaching "${String(raw.id)}" has no question_patterns — it may not be retrievable via RAG`);
+  }
+
   return {
     id: String(raw.id),
-    question_patterns: asStringArray(raw.question_patterns) ?? [],
+    question_patterns: questionPatterns,
     sanctioned_sql: raw.sanctioned_sql != null ? String(raw.sanctioned_sql) : null,
     reasoning: String(raw.reasoning),
     models_referenced: asStringArray(raw.models_referenced) ?? [],

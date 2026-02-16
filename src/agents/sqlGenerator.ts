@@ -173,8 +173,10 @@ Fix the error and generate a corrected query.`;
   // Runtime validation — LLM output is untrusted
   if (typeof parsed.sql !== 'string') throw new Error('LLM response missing or invalid "sql" field');
   if (typeof parsed.explanation !== 'string') throw new Error('LLM response missing or invalid "explanation" field');
-  if (!Array.isArray(parsed.tables_used)) throw new Error('LLM response missing "tables_used" array');
-  if (!Array.isArray(parsed.assumptions)) throw new Error('LLM response missing "assumptions" array');
+  if (!Array.isArray(parsed.tables_used) || !parsed.tables_used.every((t: unknown) => typeof t === 'string'))
+    throw new Error('LLM response missing or invalid "tables_used" array');
+  if (!Array.isArray(parsed.assumptions) || !parsed.assumptions.every((a: unknown) => typeof a === 'string'))
+    throw new Error('LLM response missing or invalid "assumptions" array');
   if (typeof parsed.reasoning_chain !== 'string') throw new Error('LLM response missing or invalid "reasoning_chain" field');
 
   const rawConfidence = parsed.confidence;
