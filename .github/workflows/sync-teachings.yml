@@ -1,0 +1,27 @@
+name: Sync Teachings
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'teachings/**/*.yml'
+      - 'teachings/**/*.yaml'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Sync teachings to File Search
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY_CI }}
+          FILE_SEARCH_STORE_ID: ${{ secrets.FILE_SEARCH_STORE_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: npx tsx scripts/sync-teachings.ts

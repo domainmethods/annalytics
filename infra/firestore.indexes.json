@@ -1,0 +1,37 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "response_context",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "response_context",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "response_context",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" },
+        { "fieldPath": "negativeFeedback", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "clarification_state",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadTs", "order": "ASCENDING" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

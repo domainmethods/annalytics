@@ -1,0 +1,38 @@
+teachings:
+  - id: revenue-monthly
+    question_patterns:
+      - "monthly revenue"
+      - "revenue by month"
+      - "MRR"
+    sanctioned_sql: |
+      SELECT
+        DATE_TRUNC(order_date, MONTH) AS month,
+        SUM(total_amount) AS revenue
+      FROM `analytics.fct_orders`
+      WHERE order_status = 'completed'
+      GROUP BY 1
+      ORDER BY 1 DESC
+    reasoning: |
+      Revenue always uses fct_orders with order_status = 'completed'.
+      Never include cancelled or refunded orders.
+      The canonical revenue metric is total_amount, not subtotal.
+    models_referenced:
+      - analytics.fct_orders
+    tags: [revenue, finance]
+    author: jane@company.com
+    updated: "2026-02-10"
+
+  - id: churn-definition
+    question_patterns:
+      - "churn"
+      - "churned customers"
+    sanctioned_sql: null
+    reasoning: |
+      A customer is considered "churned" if they have had no completed
+      orders in the last 90 days.
+    models_referenced:
+      - analytics.dim_customers
+      - analytics.fct_orders
+    tags: [churn, customers]
+    author: jane@company.com
+    updated: "2026-02-10"

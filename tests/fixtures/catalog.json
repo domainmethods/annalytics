@@ -1,0 +1,31 @@
+{
+  "metadata": { "dbt_schema_version": "https://schemas.getdbt.com/dbt/catalog/v1.json" },
+  "nodes": {
+    "model.my_project.fct_orders": {
+      "columns": {
+        "ORDER_ID": { "type": "STRING", "index": 1 },
+        "CUSTOMER_ID": { "type": "STRING", "index": 2 },
+        "ORDER_DATE": { "type": "DATE", "index": 3 },
+        "TOTAL_AMOUNT": { "type": "FLOAT64", "index": 4 },
+        "ORDER_STATUS": { "type": "STRING", "index": 5 }
+      },
+      "stats": { "row_count": { "value": 50000 } }
+    },
+    "model.my_project.dim_customers": {
+      "columns": {
+        "CUSTOMER_ID": { "type": "STRING", "index": 1 },
+        "NAME": { "type": "STRING", "index": 2 },
+        "EMAIL": { "type": "STRING", "index": 3 },
+        "REGION": { "type": "STRING", "index": 4 },
+        "LAST_ORDER_DATE": { "type": "DATE", "index": 5 }
+      },
+      "stats": { "row_count": { "value": 5000 } }
+    },
+    "model.my_project.stg_orders": {
+      "columns": {
+        "ID": { "type": "STRING", "index": 1 }
+      },
+      "stats": {}
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "metadata": { "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v11.json" },
+  "nodes": {
+    "model.my_project.fct_orders": {
+      "resource_type": "model",
+      "name": "fct_orders",
+      "schema": "analytics",
+      "description": "All completed customer orders",
+      "columns": {
+        "order_id": { "name": "order_id", "description": "Primary key", "meta": {} },
+        "customer_id": { "name": "customer_id", "description": "FK to dim_customers", "meta": {} },
+        "order_date": { "name": "order_date", "description": "Date the order was placed", "meta": {} },
+        "total_amount": { "name": "total_amount", "description": "Total order value in USD", "meta": {} },
+        "order_status": { "name": "order_status", "description": "completed, cancelled, refunded", "meta": {} }
+      },
+      "config": { "materialized": "table" },
+      "depends_on": { "nodes": ["model.my_project.stg_orders"] },
+      "tags": ["finance"]
+    },
+    "model.my_project.dim_customers": {
+      "resource_type": "model",
+      "name": "dim_customers",
+      "schema": "analytics",
+      "description": "Customer dimension table",
+      "columns": {
+        "customer_id": { "name": "customer_id", "description": "Primary key", "meta": {} },
+        "name": { "name": "name", "description": "", "meta": {} },
+        "email": { "name": "email", "description": "", "meta": {} },
+        "region": { "name": "region", "description": "Geographic region", "meta": {} },
+        "last_order_date": { "name": "last_order_date", "description": "", "meta": {} }
+      },
+      "config": { "materialized": "table" },
+      "depends_on": { "nodes": [] },
+      "tags": ["customers"]
+    },
+    "model.my_project.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "schema": "staging",
+      "description": "Staging orders",
+      "columns": {
+        "id": { "name": "id", "description": "", "meta": {} }
+      },
+      "config": { "materialized": "view" },
+      "depends_on": { "nodes": [] },
+      "tags": ["staging"]
+    },
+    "source.my_project.raw.events": {
+      "resource_type": "source",
+      "name": "events",
+      "schema": "raw",
+      "description": "Raw events",
+      "columns": {}
+    }
+  }
+}
