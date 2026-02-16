@@ -367,7 +367,7 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(clarificationResponse())
       // 1st SQL gen attempt
       .mockResolvedValueOnce(sqlGenResponse())
-      // Supervisor FAIL
+      // Supervisor FAIL (after dry run passes)
       .mockResolvedValueOnce(
         supervisorResponse({
           verdict: 'FAIL',
@@ -380,16 +380,18 @@ describe('Pipeline — Integration', () => {
       // Supervisor PASS
       .mockResolvedValueOnce(supervisorResponse());
 
+    // Unified quality loop: dry run per attempt + final execution
     mockCreateQueryJob
-      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())   // L3 dry run attempt 1
+      .mockResolvedValueOnce(dryRunResult())   // L3 dry run attempt 2
       .mockResolvedValueOnce(executionResult([{ order_count: 15 }]));
 
     await runPipeline(makeInput());
 
     // 5 Gemini calls: clarify + gen1 + supervisor(FAIL) + gen2 + supervisor(PASS)
     expect(mockGenerateContent).toHaveBeenCalledTimes(5);
-    // 2 BigQuery calls (runs only after final supervisor approval)
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    // 3 BigQuery calls: 2 dry runs (one per attempt) + 1 execution
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // ResponseContext saved with fail_then_pass verdict
     const savedKeys = [...firestoreStore.keys()].filter(k =>
@@ -411,7 +413,7 @@ describe('Pipeline — Integration', () => {
       },
     };
 
-    // clarification(HIGH) → gen1(low) → sup(FAIL) → gen2(low) → sup(FAIL) → gen3(low) → sup(FAIL)
+    // clarification(HIGH) → quality loop: gen1(low)→dryrun→sup(FAIL) → gen2(low)→dryrun→sup(FAIL) → gen3(low)→dryrun→sup(FAIL)
     mockGenerateContent
       .mockResolvedValueOnce(clarificationResponse())
       .mockResolvedValueOnce(sqlGenResponse({ confidence: 'low' }))
@@ -421,14 +423,20 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(sqlGenResponse({ confidence: 'low' }))
       .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Exhausted'] }));
 
+    // Dry runs happen inside quality loop (one per attempt)
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult());
+
     mockClient.chat.postMessage.mockResolvedValue({ ts: 'esc-msg-ts' });
 
     await runPipeline({ ...makeInput(), config: escalationConfig });
 
     // 7 Gemini calls (clarify + 3 gen + 3 supervisor)
     expect(mockGenerateContent).toHaveBeenCalledTimes(7);
-    // No BigQuery calls — pipeline suspended before validation
-    expect(mockCreateQueryJob).not.toHaveBeenCalled();
+    // 3 BigQuery calls — dry run per attempt (no execution, pipeline suspended)
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // Escalation state saved
     const escKeys = [...firestoreStore.keys()].filter(k => k.startsWith('escalation_state/'));
@@ -463,7 +471,7 @@ describe('Pipeline — Integration', () => {
       },
     };
 
-    // clarification(HIGH) → gen1(medium) → sup(FAIL) → gen2(medium) → sup(FAIL) → gen3(medium) → sup(FAIL)
+    // clarification(HIGH) → quality loop: gen1(medium)→dryrun→sup(FAIL) → gen2→dryrun→sup(FAIL) → gen3→dryrun→sup(FAIL)
     mockGenerateContent
       .mockResolvedValueOnce(clarificationResponse())
       .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
@@ -473,8 +481,10 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
       .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Exhausted'] }));
 
-    // BigQuery: dry run → execution
+    // BigQuery: 3 dry runs (one per attempt) + 1 execution
     mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
 
@@ -484,8 +494,8 @@ describe('Pipeline — Integration', () => {
 
     // 7 Gemini calls (clarify + 3 gen + 3 supervisor)
     expect(mockGenerateContent).toHaveBeenCalledTimes(7);
-    // 2 BigQuery calls — pipeline continues to execution
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    // 4 BigQuery calls — 3 dry runs + 1 execution (best_effort_verify proceeds)
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(4);
 
     // Response shown with caveat
     const updateCalls = mockClient.chat.update.mock.calls;

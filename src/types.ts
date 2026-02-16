@@ -1,4 +1,5 @@
 import type { GroundingCitation } from './agents/types.js';
+import type { FailureRecord } from './qualityLoop.js';
 
 export interface SqlGenerationResult {
   sql: string;
@@ -52,6 +53,7 @@ export interface ResponseContext {
   teachingsUsed: string[];
   supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
   supervisorNotes: string;
+  failureHistory?: FailureRecord[];
   negativeFeedback?: boolean;
   retrievedSchema?: {
     name: string;
@@ -65,7 +67,7 @@ export interface EscalationState {
   originalThreadTs: string;
   originalChannel: string;
   pipelineState: 'awaiting_human' | 'resolved' | 'timed_out';
-  trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity';
+  trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity' | 'quality_loop_exhausted';
   behavior: 'best_effort_verify' | 'park_wait';
   stageToResume: 'sql_generation' | 'supervisor_review';
   context: {

@@ -4,10 +4,9 @@ import type { TableContext } from './dbt/types.js';
 import type { AppConfig } from './config.js';
 import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
-import { generateWithSupervision } from './agents/supervisorLoop.js';
+import { qualityLoop } from './qualityLoop.js';
 import { reconcileConfidence } from './agents/confidence.js';
 import { classifyFollowUp } from './agents/followUpClassifier.js';
-import { validateSql } from './validation/pipeline.js';
 import { executeQuery } from './execution/runner.js';
 import { chooseFormat } from './execution/formatter.js';
 import { buildThreadContext } from './slack/threadContext.js';
@@ -231,11 +230,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     }
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
-    // Stage 3: SQL Generation + Supervisor Loop
-    await updateStatus('Generating SQL...');
+    // Stage 3: Unified Quality Loop (generate + validate + supervise)
     const negativeExample = await getLatestNegativeFeedback(threadTs);
 
-    const supervisedResult = await generateWithSupervision(
+    const qualityResult = await qualityLoop(
       {
         question: resolvedQuestion,
         tables: pipelineTables,
@@ -255,23 +253,43 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       },
       config.geminiApiKey,
       resolvedQuestion,
+      config.maxBytesProcessed,
+      {
+        onGenerate: () => updateStatus('Generating SQL...'),
+        onValidate: () => updateStatus('Validating query...'),
+        onReview: () => updateStatus('Reviewing answer...'),
+        onRetry: (n) => updateStatus(`Retrying (attempt ${n + 1}/3)...`),
+      },
     );
-    logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: supervisedResult.sqlResult.confidence });
+    logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
+    logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: qualityResult.bytesProcessed });
 
-    // Stage 3b: Supervisor review status
-    await updateStatus('Reviewing answer...');
-    logStage(logger, { traceId, stage: 'supervise', durationMs: Date.now() - startTime });
+    // Stage 3b: Cost gate exceeded — non-retryable policy boundary
+    if (qualityResult.verdict === 'cost_exceeded') {
+      const gb = (qualityResult.bytesProcessed ?? 0) / (1024 * 1024 * 1024);
+      const limitGb = config.maxBytesProcessed / (1024 * 1024 * 1024);
+      await updateStatus(
+        `This query would scan ${gb.toFixed(1)} GB (limit: ${limitGb.toFixed(1)} GB). Try narrowing with a date range or specific filter. (trace: ${traceId})`,
+      );
+      return;
+    }
 
-    // Escalation decision
+    // Stage 3c: Escalation decision
     const escalationDecision = decideEscalation(
-      supervisedResult.verdict,
-      supervisedResult.sqlResult.confidence,
+      qualityResult.verdict,
+      qualityResult.sqlResult.confidence,
+      qualityResult.failureHistory,
     );
     const escalationTarget = resolveEscalationTarget(config.escalation);
 
     if (escalationDecision.shouldEscalate) {
-      logger.info({ trigger: escalationDecision.trigger, behavior: escalationDecision.behavior, traceId }, 'escalation.triggered');
+      logger.info({ trigger: escalationDecision.trigger, behavior: escalationDecision.behavior, dominantFailureType: escalationDecision.dominantFailureType, traceId }, 'escalation.triggered');
     }
+
+    // Build failure diagnostics for escalation messages
+    const failureDiagnostics = qualityResult.failureHistory.length > 0
+      ? qualityResult.failureHistory.map(f => `Attempt ${f.attempt + 1}: [${f.failureType}] ${f.detail}`).join('\n')
+      : '';
 
     if (escalationDecision.shouldEscalate && escalationDecision.behavior === 'park_wait' && escalationTarget) {
       const waitingBlocks = buildUserWaitingBlocks();
@@ -282,6 +300,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         blocks: waitingBlocks as unknown as KnownBlock[],
       });
 
+      const stuckDescription = failureDiagnostics || qualityResult.supervisorNotes || 'Could not generate a confident answer';
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
         text: `Anna Lytics needs help with: "${question}"`,
@@ -289,8 +308,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           userQuestion: question,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
-          stuckDescription: supervisedResult.supervisorNotes || 'Could not generate a confident answer',
-          bestGuessSql: supervisedResult.sqlResult.sql,
+          stuckDescription,
+          bestGuessSql: qualityResult.sqlResult.sql,
         }) as unknown as KnownBlock[],
       });
 
@@ -304,14 +323,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         context: {
           clarifiedQuestion: resolvedQuestion,
           userQuestion: question,
-          groundingCitations: supervisedResult.sqlResult.groundingCitations,
-          previousSql: supervisedResult.sqlResult.sql,
-          supervisorNotes: supervisedResult.supervisorNotes,
+          groundingCitations: qualityResult.sqlResult.groundingCitations,
+          previousSql: qualityResult.sqlResult.sql,
+          supervisorNotes: qualityResult.supervisorNotes,
         },
         escalationChannel: escalationTarget,
         escalationTs: escalationMsg.ts!,
         statusMsgTs,
-        bestEffortSql: supervisedResult.sqlResult.sql,
+        bestEffortSql: qualityResult.sqlResult.sql,
         traceId,
       }, config.escalation?.timeoutHours ?? 4);
 
@@ -322,36 +341,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       && escalationDecision.behavior === 'best_effort_verify'
       && !!escalationTarget;
 
-    // Stage 4: Validation (L1-L4) with self-correction retry
-    let sqlToExecute = supervisedResult.sqlResult.sql;
-    let validation = await validateSql(sqlToExecute, config.maxBytesProcessed);
-    logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: validation.bytesProcessed, error: validation.error });
-
-    if (!validation.valid) {
-      // Self-correction: retry once through full supervision with validation error
-      await updateStatus('Correcting query...');
-      const correctedSupervised = await generateWithSupervision(
-        {
-          question: resolvedQuestion,
-          tables: pipelineTables,
-          threadContext,
-          apiKey: config.geminiApiKey,
-          model: config.geminiModel,
-          fileSearchStoreId: config.fileSearchStoreId,
-          sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
-          previousAttempt: { sql: sqlToExecute, error: validation.error || 'Validation failed' },
-        },
-        config.geminiApiKey,
-        resolvedQuestion,
-      );
-      sqlToExecute = correctedSupervised.sqlResult.sql;
-      Object.assign(supervisedResult, correctedSupervised);
-
-      validation = await validateSql(sqlToExecute, config.maxBytesProcessed);
-      logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: validation.bytesProcessed, error: validation.error });
-    }
-
-    if (!validation.valid) {
+    // Exhausted but not escalatable — abort
+    if (qualityResult.verdict === 'exhausted' && !shouldEscalateAsync) {
       await updateStatus(
         `I wasn't able to generate a valid query for that question. (trace: ${traceId})`,
       );
@@ -360,7 +351,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // Stage 5: Execution
     await updateStatus('Running query...');
-    const queryResult = await executeQuery(sqlToExecute, {
+    const queryResult = await executeQuery(qualityResult.sqlResult.sql, {
       maxRows: config.maxResultRows,
       timeoutMs: config.queryTimeoutMs,
       maxBytes: config.maxBytesProcessed,
@@ -369,22 +360,22 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // Stage 6: Format + Respond
     const confidence = reconcileConfidence(
-      supervisedResult.sqlResult.confidence,
-      supervisedResult.finalConfidence,
+      qualityResult.sqlResult.confidence,
+      qualityResult.finalConfidence,
     );
 
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, supervisedResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, assumptions);
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, assumptions);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
-      blocks.unshift(...buildBestEffortCaveatBlocks(supervisedResult.supervisorNotes));
+      blocks.unshift(...buildBestEffortCaveatBlocks(qualityResult.supervisorNotes));
     }
 
     await client.chat.update({
       channel,
       ts: statusMsgTs,
-      text: supervisedResult.sqlResult.explanation,
+      text: qualityResult.sqlResult.explanation,
       blocks,
     });
     logStage(logger, { traceId, stage: 'format', durationMs: Date.now() - startTime });
@@ -396,14 +387,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
       assumptions,
-      reasoningChain: supervisedResult.sqlResult.reasoningChain,
-      generatedSql: supervisedResult.sqlResult.sql,
-      explanation: supervisedResult.sqlResult.explanation,
-      tablesUsed: supervisedResult.sqlResult.tablesUsed,
+      reasoningChain: qualityResult.sqlResult.reasoningChain,
+      generatedSql: qualityResult.sqlResult.sql,
+      explanation: qualityResult.sqlResult.explanation,
+      tablesUsed: qualityResult.sqlResult.tablesUsed,
       confidence,
       clarificationConfidence: clarification.confidence,
-      primaryAgentConfidence: supervisedResult.sqlResult.confidence,
-      supervisorConfidence: supervisedResult.finalConfidence,
+      primaryAgentConfidence: qualityResult.sqlResult.confidence,
+      supervisorConfidence: qualityResult.finalConfidence,
       queryResults: {
         rowCount: queryResult.totalRows,
         columnNames: queryResult.columnNames,
@@ -412,10 +403,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       pipelineDurationMs: Date.now() - startTime,
       traceId,
       createdAt: new Date(),
-      groundingCitations: supervisedResult.sqlResult.groundingCitations,
-      teachingsUsed: supervisedResult.sqlResult.groundingCitations.map(c => c.sourceFile),
-      supervisorVerdict: supervisedResult.verdict,
-      supervisorNotes: supervisedResult.supervisorNotes,
+      groundingCitations: qualityResult.sqlResult.groundingCitations,
+      teachingsUsed: qualityResult.sqlResult.groundingCitations.map(c => c.sourceFile),
+      supervisorVerdict: qualityResult.verdict as 'pass' | 'fail_then_pass' | 'exhausted',
+      supervisorNotes: qualityResult.supervisorNotes,
+      failureHistory: qualityResult.failureHistory,
       retrievedSchema: pipelineTables.map(table => ({
         name: table.name,
         description: table.description,
@@ -436,8 +428,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           userQuestion: question,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
-          stuckDescription: supervisedResult.supervisorNotes || 'Answer needs verification',
-          bestGuessSql: sqlToExecute,
+          stuckDescription: qualityResult.supervisorNotes || 'Answer needs verification',
+          bestGuessSql: qualityResult.sqlResult.sql,
         }) as unknown as KnownBlock[],
       });
 
@@ -451,14 +443,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         context: {
           clarifiedQuestion: resolvedQuestion,
           userQuestion: question,
-          groundingCitations: supervisedResult.sqlResult.groundingCitations,
-          previousSql: supervisedResult.sqlResult.sql,
-          supervisorNotes: supervisedResult.supervisorNotes,
+          groundingCitations: qualityResult.sqlResult.groundingCitations,
+          previousSql: qualityResult.sqlResult.sql,
+          supervisorNotes: qualityResult.supervisorNotes,
         },
         escalationChannel: escalationTarget,
         escalationTs: escalationMsg.ts!,
         statusMsgTs,
-        bestEffortSql: sqlToExecute,
+        bestEffortSql: qualityResult.sqlResult.sql,
         traceId,
       }, config.escalation?.timeoutHours ?? 4);
     }

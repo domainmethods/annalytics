@@ -38,13 +38,15 @@ describe('validateSql', () => {
     expect(dryRunValidation).not.toHaveBeenCalled();
   });
 
-  it('short-circuits on L2 failure', async () => {
+  it('L2 failure is advisory — continues to L3', async () => {
     vi.mocked(staticAnalysis).mockReturnValue({ valid: true, layer: 'L1-static' });
     vi.mocked(astValidation).mockReturnValue({ valid: false, layer: 'L2-ast', error: 'L2 failed' });
+    vi.mocked(dryRunValidation).mockResolvedValue({ valid: true, layer: 'L3-dryrun', bytesProcessed: 100 });
+    vi.mocked(costGate).mockReturnValue({ valid: true, layer: 'L4-cost', bytesProcessed: 100 });
 
     const result = await validateSql('SELECT *', 1000);
-    expect(result).toEqual({ valid: false, layer: 'L2-ast', error: 'L2 failed' });
-    expect(dryRunValidation).not.toHaveBeenCalled();
+    expect(result).toEqual({ valid: true, layer: 'all', bytesProcessed: 100 });
+    expect(dryRunValidation).toHaveBeenCalled();
   });
 
   it('passes dry run bytes to cost gate', async () => {

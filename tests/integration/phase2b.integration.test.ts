@@ -150,12 +150,12 @@ vi.mock('../../src/state/teachingCandidates.js', () => ({
   saveTeachingCandidate: mockSaveTeachingCandidate,
 }));
 
-// Spy on generateWithSupervision to inspect arguments while keeping real implementation
-vi.mock('../../src/agents/supervisorLoop.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/agents/supervisorLoop.js')>();
+// Spy on qualityLoop to inspect arguments while keeping real implementation
+vi.mock('../../src/qualityLoop.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/qualityLoop.js')>();
   return {
     ...actual,
-    generateWithSupervision: vi.fn(actual.generateWithSupervision),
+    qualityLoop: vi.fn(actual.qualityLoop),
   };
 });
 
@@ -166,7 +166,7 @@ import { parseDbtArtifacts } from '../../src/dbt/parser.js';
 import { initBigQuery } from '../../src/validation/dryRun.js';
 import { initBigQueryClient } from '../../src/execution/runner.js';
 import { _resetCache } from '../../src/teachings/summaryMap.js';
-import { generateWithSupervision } from '../../src/agents/supervisorLoop.js';
+import { qualityLoop } from '../../src/qualityLoop.js';
 import { resolveEscalation as _resolveEscalation } from '../../src/state/escalationState.js';
 import { buildEscalationResolvedBlocks as _buildEscalationResolvedBlocks } from '../../src/slack/escalationBlocks.js';
 import type { TableContext } from '../../src/dbt/types.js';
@@ -313,7 +313,7 @@ describe('Phase 2b Features — Integration', () => {
     mockClient.chat.update.mockResolvedValue({});
     mockClient.chat.postMessage.mockResolvedValue({});
 
-    vi.mocked(generateWithSupervision).mockReset();
+    vi.mocked(qualityLoop).mockReset();
   });
 
   it('INFORMATION_SCHEMA fallback provides schema for non-dbt tables', async () => {
@@ -331,9 +331,9 @@ describe('Phase 2b Features — Integration', () => {
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ event_count: 100 }]));
 
-    // Spy on generateWithSupervision: capture tables argument, then delegate to real impl
-    vi.mocked(generateWithSupervision).mockImplementation(
-      async (options, _apiKey, _question) => {
+    // Spy on qualityLoop: capture tables argument, then return mock result
+    vi.mocked(qualityLoop).mockImplementation(
+      async (options) => {
         // The tables passed should include the fallback table with warning description
         const fb = options.tables.find(
           (t) => t.name === 'raw_dataset.raw_events' && t.tags.includes('no-dbt-metadata'),
@@ -355,6 +355,8 @@ describe('Phase 2b Features — Integration', () => {
           supervisorNotes: '',
           finalConfidence: 'high' as const,
           retryCount: 0,
+          failureHistory: [],
+          bytesProcessed: 5000,
         };
       },
     );
@@ -376,8 +378,8 @@ describe('Phase 2b Features — Integration', () => {
       'raw_events',
     );
 
-    // generateWithSupervision was called (assertions above verified fallback inclusion)
-    expect(generateWithSupervision).toHaveBeenCalled();
+    // qualityLoop was called (assertions above verified fallback inclusion)
+    expect(qualityLoop).toHaveBeenCalled();
 
     // Pipeline completed with result posted to Slack
     const updateCalls = mockClient.chat.update.mock.calls;
@@ -423,8 +425,8 @@ describe('Phase 2b Features — Integration', () => {
     // Only 1 Gemini call (clarification) -- no SQL generation or supervisor
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
 
-    // generateWithSupervision was NOT called (dbt_status bypasses SQL generation)
-    expect(generateWithSupervision).not.toHaveBeenCalled();
+    // qualityLoop was NOT called (dbt_status bypasses SQL generation)
+    expect(qualityLoop).not.toHaveBeenCalled();
 
     // No BigQuery calls -- pipeline bypassed SQL generation entirely
     expect(mockCreateQueryJob).not.toHaveBeenCalled();

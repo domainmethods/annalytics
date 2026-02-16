@@ -141,4 +141,70 @@ describe('reviewSql — Supervisor Agent', () => {
     const call = mockGenerateContent.mock.calls[0][0];
     expect(call.model).toBe('gemini-3.0-pro');
   });
+
+  // ── New: dry-run metadata tests ─────────────────────────────────────
+
+  it('includes VALIDATION CONTEXT in prompt when dryRunMetadata provided', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'PASS',
+        confidence: 'high',
+        issues: [],
+        suggestions: [],
+        teaching_compliance: 'compliant',
+      }),
+    });
+
+    await reviewSql({
+      ...baseInput,
+      dryRunMetadata: { bytesProcessed: 5_368_709_120 }, // 5 GB
+    });
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const prompt = call.contents[0].parts[0].text;
+    expect(prompt).toContain('VALIDATION CONTEXT');
+    expect(prompt).toContain('BigQuery dry-run confirmed');
+    expect(prompt).toContain('5.00 GB');
+  });
+
+  it('does NOT include VALIDATION CONTEXT when dryRunMetadata absent', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'PASS',
+        confidence: 'high',
+        issues: [],
+        suggestions: [],
+        teaching_compliance: 'compliant',
+      }),
+    });
+
+    await reviewSql(baseInput);
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const prompt = call.contents[0].parts[0].text;
+    expect(prompt).not.toContain('VALIDATION CONTEXT');
+  });
+
+  it('formats large bytesProcessed values correctly', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'PASS',
+        confidence: 'high',
+        issues: [],
+        suggestions: [],
+        teaching_compliance: 'compliant',
+      }),
+    });
+
+    await reviewSql({
+      ...baseInput,
+      dryRunMetadata: { bytesProcessed: 50_000_000_000_000 }, // ~46566 GB
+    });
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const prompt = call.contents[0].parts[0].text;
+    expect(prompt).toContain('VALIDATION CONTEXT');
+    // Should format without crashing — exact value: 46566.13 GB
+    expect(prompt).toMatch(/\d+\.\d{2} GB/);
+  });
 });

@@ -9,9 +9,8 @@ export async function validateSql(sql: string, maxBytes: number): Promise<Valida
   const l1 = staticAnalysis(sql);
   if (!l1.valid) return l1;
 
-  // L2: AST Validation
-  const l2 = astValidation(sql);
-  if (!l2.valid) return l2;
+  // L2: AST Validation (advisory — parse failures pass through to L3)
+  astValidation(sql);
 
   // L3: Dry Run
   const l3 = await dryRunValidation(sql);

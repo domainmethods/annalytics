@@ -19,6 +19,9 @@ export interface SupervisorInput {
   reasoningChain: string;
   groundingCitations: GroundingCitation[];
   apiKey: string;
+  dryRunMetadata?: {
+    bytesProcessed: number;
+  };
 }
 
 export async function reviewSql(input: SupervisorInput): Promise<SupervisorVerdict> {
@@ -81,5 +84,21 @@ REVIEW CHECKLIST:
 7. Are the stated assumptions reasonable and valid?
 8. Is the query safe (no DML/DDL, no unbounded scans, no sensitive data exposure)?
 
-Respond with your verdict.`;
+${buildValidationContext(input)}Respond with your verdict.`;
+}
+
+function formatBytesAsGb(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return `${gb.toFixed(2)} GB`;
+}
+
+function buildValidationContext(input: SupervisorInput): string {
+  if (!input.dryRunMetadata) return '\n';
+
+  return `
+VALIDATION CONTEXT:
+- BigQuery dry-run confirmed this query is syntactically valid
+- Estimated scan size: ${formatBytesAsGb(input.dryRunMetadata.bytesProcessed)}
+
+`;
 }

@@ -2,9 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all domain modules
 vi.mock('../src/agents/clarificationAgent.js');
-vi.mock('../src/agents/supervisorLoop.js');
+vi.mock('../src/qualityLoop.js');
 vi.mock('../src/agents/confidence.js');
-vi.mock('../src/validation/pipeline.js');
 vi.mock('../src/execution/runner.js');
 vi.mock('../src/execution/formatter.js');
 vi.mock('../src/slack/threadContext.js');
@@ -26,9 +25,8 @@ vi.mock('../src/logging.js', () => ({
 
 import { runPipeline } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
-import { generateWithSupervision } from '../src/agents/supervisorLoop.js';
+import { qualityLoop } from '../src/qualityLoop.js';
 import { reconcileConfidence } from '../src/agents/confidence.js';
-import { validateSql } from '../src/validation/pipeline.js';
 import { executeQuery } from '../src/execution/runner.js';
 import { chooseFormat } from '../src/execution/formatter.js';
 import { buildThreadContext } from '../src/slack/threadContext.js';
@@ -42,11 +40,11 @@ import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
 import { saveEscalationState } from '../src/state/escalationState.js';
 import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlocks } from '../src/slack/escalationBlocks.js';
+import type { QualityResult } from '../src/qualityLoop.js';
 
 const mockClassify = vi.mocked(classifyQuestion);
-const mockSupervise = vi.mocked(generateWithSupervision);
+const mockQualityLoop = vi.mocked(qualityLoop);
 const mockReconcile = vi.mocked(reconcileConfidence);
-const mockValidate = vi.mocked(validateSql);
 const mockExecute = vi.mocked(executeQuery);
 const mockFormat = vi.mocked(chooseFormat);
 const mockBuildThread = vi.mocked(buildThreadContext);
@@ -96,20 +94,22 @@ const highClarification = {
   resolved_question: 'What is total revenue from all orders?',
 };
 
-const baseSupervisedResult = {
+const baseQualityResult: QualityResult = {
   sqlResult: {
     sql: 'SELECT SUM(total_amount) FROM `analytics.fct_orders`',
     explanation: 'Sums total amount',
     tablesUsed: ['analytics.fct_orders'],
-    confidence: 'high' as const,
+    confidence: 'high',
     assumptions: [],
     reasoningChain: 'Simple sum',
     groundingCitations: [],
   },
-  verdict: 'pass' as const,
+  verdict: 'pass',
   supervisorNotes: 'Approved',
-  finalConfidence: 'high' as const,
+  finalConfidence: 'high',
   retryCount: 0,
+  failureHistory: [],
+  bytesProcessed: 100,
 };
 
 function setupHappyPath() {
@@ -119,9 +119,8 @@ function setupHappyPath() {
   mockGetSampleRows.mockResolvedValue(null);
   mockGetNegative.mockResolvedValue(null);
   mockClassify.mockResolvedValue(highClarification);
-  mockSupervise.mockResolvedValue(baseSupervisedResult);
+  mockQualityLoop.mockResolvedValue(baseQualityResult);
   mockReconcile.mockReturnValue('high');
-  mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 100 });
   mockExecute.mockResolvedValue({
     rows: [{ total: 5000000 }],
     columnNames: ['total'],
@@ -146,7 +145,7 @@ function setupHappyPath() {
 
 describe('runPipeline', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupHappyPath();
   });
 
@@ -154,8 +153,7 @@ describe('runPipeline', () => {
     await runPipeline(baseInput);
 
     expect(mockClassify).toHaveBeenCalledTimes(1);
-    expect(mockSupervise).toHaveBeenCalledTimes(1);
-    expect(mockValidate).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
@@ -170,8 +168,7 @@ describe('runPipeline', () => {
 
     await runPipeline(baseInput);
 
-    // Should still proceed to generation
-    expect(mockSupervise).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
     expect(mockExecute).toHaveBeenCalledTimes(1);
   });
 
@@ -184,20 +181,18 @@ describe('runPipeline', () => {
 
     await runPipeline(baseInput);
 
-    // Should NOT proceed to generation
-    expect(mockSupervise).not.toHaveBeenCalled();
+    expect(mockQualityLoop).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
-    // Should save clarification state
     expect(mockSaveClarification).toHaveBeenCalledTimes(1);
-    // Should still release lock
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 
-  it('supervisor retry then pass', async () => {
-    mockSupervise.mockResolvedValue({
-      ...baseSupervisedResult,
+  it('quality loop fail_then_pass: proceeds to execution', async () => {
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
       verdict: 'fail_then_pass',
       retryCount: 1,
+      failureHistory: [{ attempt: 0, failureType: 'semantic', detail: 'Missing filter' }],
     });
 
     await runPipeline(baseInput);
@@ -206,20 +201,21 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
   });
 
-  it('supervisor exhaustion: proceeds with low confidence caveat', async () => {
-    mockSupervise.mockResolvedValue({
-      ...baseSupervisedResult,
-      verdict: 'exhausted',
-      finalConfidence: 'low',
-      supervisorNotes: 'Could not approve after 3 attempts',
+  it('cost_exceeded: shows actionable message, no execution', async () => {
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
+      verdict: 'cost_exceeded',
+      bytesProcessed: 20e9, // 20 GB
     });
-    mockReconcile.mockReturnValue('low');
 
     await runPipeline(baseInput);
 
-    // Should still execute
-    expect(mockExecute).toHaveBeenCalledTimes(1);
-    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockSaveCtx).not.toHaveBeenCalled();
+    const updateCalls = mockClient.chat.update.mock.calls;
+    const finalUpdate = updateCalls[updateCalls.length - 1][0];
+    expect(finalUpdate.text).toContain('GB');
+    expect(finalUpdate.text).toContain('narrowing');
   });
 
   it('injects negative example when thread has thumbs-down', async () => {
@@ -231,32 +227,35 @@ describe('runPipeline', () => {
 
     await runPipeline(baseInput);
 
-    const superviseCall = mockSupervise.mock.calls[0][0];
-    expect(superviseCall.negativeExample).toBeDefined();
-    expect(superviseCall.negativeExample!.sql).toBe('SELECT bad FROM table');
+    const qualityCall = mockQualityLoop.mock.calls[0][0];
+    expect(qualityCall.negativeExample).toBeDefined();
+    expect(qualityCall.negativeExample!.sql).toBe('SELECT bad FROM table');
   });
 
   it('progressive status updates at correct stages', async () => {
     await runPipeline(baseInput);
 
     const updateCalls = mockClient.chat.update.mock.calls.map(c => c[0].text);
-    // Should have at least: "Understanding...", "Generating SQL...", "Reviewing answer...", then final
     expect(updateCalls.some((t: string) => t?.includes('Understanding'))).toBe(true);
-    expect(updateCalls.some((t: string) => t?.includes('Generating SQL'))).toBe(true);
   });
 
   it('park_wait escalation: no execution, state saved, user notified', async () => {
-    mockSupervise.mockResolvedValue({
-      ...baseSupervisedResult,
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
       verdict: 'exhausted',
-      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'low' },
+      sqlResult: { ...baseQualityResult.sqlResult, confidence: 'low' },
       finalConfidence: 'low',
       supervisorNotes: 'Could not approve after 3 attempts',
+      failureHistory: [
+        { attempt: 0, failureType: 'semantic', detail: 'Bad query' },
+        { attempt: 1, failureType: 'semantic', detail: 'Still bad' },
+        { attempt: 2, failureType: 'semantic', detail: 'Exhausted' },
+      ],
     });
     mockDecideEscalation.mockReturnValue({
       shouldEscalate: true,
       behavior: 'park_wait',
-      trigger: 'supervisor_exhausted',
+      trigger: 'quality_loop_exhausted',
     });
 
     const inputWithEscalation = {
@@ -273,19 +272,15 @@ describe('runPipeline', () => {
 
     await runPipeline(inputWithEscalation);
 
-    // Should NOT execute query
     expect(mockExecute).not.toHaveBeenCalled();
-    // Should update status with waiting message
     expect(mockClient.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining('data team'),
       }),
     );
-    // Should post to escalation channel
     expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'C-ESCALATION' }),
     );
-    // Should save escalation state
     expect(mockSaveEscalation).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: 'park_wait',
@@ -294,22 +289,36 @@ describe('runPipeline', () => {
       }),
       4,
     );
-    // Should still release lock (via finally)
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+
+    // Verify escalation message includes per-attempt failure diagnostics
+    expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stuckDescription: expect.stringContaining('Attempt 1:'),
+      }),
+    );
+    expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stuckDescription: expect.stringContaining('[semantic]'),
+      }),
+    );
   });
 
   it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {
-    mockSupervise.mockResolvedValue({
-      ...baseSupervisedResult,
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
       verdict: 'exhausted',
-      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'medium' },
+      sqlResult: { ...baseQualityResult.sqlResult, confidence: 'medium' },
       finalConfidence: 'medium',
       supervisorNotes: 'Uncertain about join logic',
+      failureHistory: [
+        { attempt: 0, failureType: 'semantic', detail: 'Uncertain' },
+      ],
     });
     mockDecideEscalation.mockReturnValue({
       shouldEscalate: true,
       behavior: 'best_effort_verify',
-      trigger: 'supervisor_exhausted',
+      trigger: 'quality_loop_exhausted',
     });
     mockReconcile.mockReturnValue('medium');
 
@@ -327,13 +336,9 @@ describe('runPipeline', () => {
 
     await runPipeline(inputWithEscalation);
 
-    // Should execute query (best effort)
     expect(mockExecute).toHaveBeenCalledTimes(1);
-    // Should show caveat blocks
     expect(mockBuildCaveat).toHaveBeenCalledWith('Uncertain about join logic');
-    // Should save response context
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
-    // Should save escalation state with best_effort_verify
     expect(mockSaveEscalation).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: 'best_effort_verify',
@@ -341,37 +346,82 @@ describe('runPipeline', () => {
       }),
       4,
     );
-    // Should post to escalation channel
     expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ channel: 'C-ESCALATION' }),
     );
   });
 
-  it('escalation without channelId configured: falls through to normal flow', async () => {
-    mockSupervise.mockResolvedValue({
-      ...baseSupervisedResult,
+  it('exhausted without escalation config: aborts with error message', async () => {
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
       verdict: 'exhausted',
-      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'low' },
       finalConfidence: 'low',
       supervisorNotes: 'Could not approve',
+      failureHistory: [{ attempt: 0, failureType: 'semantic', detail: 'Bad' }],
     });
     mockDecideEscalation.mockReturnValue({
       shouldEscalate: true,
       behavior: 'park_wait',
-      trigger: 'supervisor_exhausted',
+      trigger: 'quality_loop_exhausted',
     });
-    mockReconcile.mockReturnValue('low');
 
-    // No escalation config (or no channelId) — use baseInput which has no escalation
     await runPipeline(baseInput);
 
-    // Should NOT post waiting message or escalation
+    // No escalation channel → no park_wait, falls through to abort
     expect(mockSaveEscalation).not.toHaveBeenCalled();
-    // Should fall through to execution (no park_wait without channel)
-    expect(mockExecute).toHaveBeenCalledTimes(1);
-    // Should NOT show caveat (best_effort_verify also gated on channelId)
-    expect(mockBuildCaveat).not.toHaveBeenCalled();
-    // Should still save response context normally
-    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockSaveCtx).not.toHaveBeenCalled();
+    const updateCalls = mockClient.chat.update.mock.calls;
+    const finalUpdate = updateCalls[updateCalls.length - 1][0];
+    expect(finalUpdate.text).toContain('wasn\'t able to generate');
+    expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes failureHistory to decideEscalation', async () => {
+    const failureHistory = [
+      { attempt: 0, failureType: 'structural' as const, detail: 'DML' },
+      { attempt: 1, failureType: 'dry_run' as const, detail: 'Table not found' },
+    ];
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
+      verdict: 'exhausted',
+      failureHistory,
+    });
+
+    await runPipeline(baseInput);
+
+    expect(mockDecideEscalation).toHaveBeenCalledWith(
+      'exhausted',
+      baseQualityResult.sqlResult.confidence,
+      failureHistory,
+    );
+  });
+
+  it('persists failureHistory in ResponseContext', async () => {
+    const failureHistory = [
+      { attempt: 0, failureType: 'semantic' as const, detail: 'Missing filter' },
+    ];
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
+      verdict: 'fail_then_pass',
+      failureHistory,
+    });
+
+    await runPipeline(baseInput);
+
+    expect(mockSaveCtx).toHaveBeenCalledWith(
+      expect.objectContaining({ failureHistory }),
+    );
+  });
+
+  it('passes status callbacks to qualityLoop', async () => {
+    await runPipeline(baseInput);
+
+    const callbacksArg = mockQualityLoop.mock.calls[0][4];
+    expect(callbacksArg).toBeDefined();
+    expect(callbacksArg!.onGenerate).toBeDefined();
+    expect(callbacksArg!.onValidate).toBeDefined();
+    expect(callbacksArg!.onReview).toBeDefined();
+    expect(callbacksArg!.onRetry).toBeDefined();
   });
 });

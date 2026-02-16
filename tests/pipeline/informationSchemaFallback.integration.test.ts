@@ -119,15 +119,15 @@ import { parseDbtArtifacts } from '../../src/dbt/parser.js';
 import { initBigQuery } from '../../src/validation/dryRun.js';
 import { initBigQueryClient } from '../../src/execution/runner.js';
 import { _resetCache } from '../../src/teachings/summaryMap.js';
-import { generateWithSupervision } from '../../src/agents/supervisorLoop.js';
+import { qualityLoop } from '../../src/qualityLoop.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
-// Spy on generateWithSupervision to inspect its arguments
-vi.mock('../../src/agents/supervisorLoop.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/agents/supervisorLoop.js')>();
+// Spy on qualityLoop to inspect its arguments
+vi.mock('../../src/qualityLoop.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/qualityLoop.js')>();
   return {
     ...actual,
-    generateWithSupervision: vi.fn(actual.generateWithSupervision),
+    qualityLoop: vi.fn(actual.qualityLoop),
   };
 });
 
@@ -278,7 +278,7 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
     mockClient.chat.update.mockResolvedValue({});
     mockClient.chat.postMessage.mockResolvedValue({});
 
-    vi.mocked(generateWithSupervision).mockReset();
+    vi.mocked(qualityLoop).mockReset();
   });
 
   it('includes fallback table when question references non-dbt table', async () => {
@@ -296,9 +296,9 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ event_count: 100 }]));
 
-    // Let generateWithSupervision run through to the real implementation
-    vi.mocked(generateWithSupervision).mockImplementation(
-      async (options, _apiKey, _question) => {
+    // Spy on qualityLoop to inspect its arguments
+    vi.mocked(qualityLoop).mockImplementation(
+      async (options) => {
         // Capture the tables passed to verify fallback was included
         const tablesReceived = options.tables;
         const hasFallback = tablesReceived.some(
@@ -323,6 +323,8 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
           supervisorNotes: '',
           finalConfidence: 'high' as const,
           retryCount: 0,
+          failureHistory: [],
+          bytesProcessed: 5000,
         };
       },
     );
@@ -336,8 +338,8 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
       'raw_events',
     );
 
-    // generateWithSupervision was called (assertions above verified fallback table was included)
-    expect(generateWithSupervision).toHaveBeenCalled();
+    // qualityLoop was called (assertions above verified fallback table was included)
+    expect(qualityLoop).toHaveBeenCalled();
   });
 
   it('ignores numeric-segment refs like v1.0 in question text', async () => {
@@ -355,7 +357,7 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ event_count: 50 }]));
 
-    vi.mocked(generateWithSupervision).mockImplementation(
+    vi.mocked(qualityLoop).mockImplementation(
       async () => ({
         sqlResult: {
           sql: VALID_SQL,
@@ -370,6 +372,8 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
         supervisorNotes: '',
         finalConfidence: 'high' as const,
         retryCount: 0,
+        failureHistory: [],
+        bytesProcessed: 5000,
       }),
     );
 
@@ -397,9 +401,9 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ event_count: 100 }]));
 
-    // Capture the tables passed to generateWithSupervision
-    vi.mocked(generateWithSupervision).mockImplementation(
-      async (options, _apiKey, _question) => {
+    // Capture the tables passed to qualityLoop
+    vi.mocked(qualityLoop).mockImplementation(
+      async (options) => {
         // Should receive only original tables — no fallback
         const hasNonDbtTable = options.tables.some(
           (t) => t.tags.includes('no-dbt-metadata'),
@@ -422,6 +426,8 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
           supervisorNotes: '',
           finalConfidence: 'high' as const,
           retryCount: 0,
+          failureHistory: [],
+          bytesProcessed: 5000,
         };
       },
     );
@@ -429,7 +435,7 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
     await runPipeline(makeInput());
 
     // Pipeline completed without throwing
-    expect(generateWithSupervision).toHaveBeenCalled();
+    expect(qualityLoop).toHaveBeenCalled();
 
     // The pipeline still executed (chat.update was called for status messages)
     expect(mockClient.chat.update).toHaveBeenCalled();
