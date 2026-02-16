@@ -14,6 +14,7 @@ export interface AppConfig {
   dbt: {
     manifestPath: string;
     catalogPath: string;
+    webhookSecret?: string;
   };
   limits: {
     costGateMaxBytes: number;
@@ -68,6 +69,7 @@ export function loadConfig(): AppConfig {
     dbt: {
       manifestPath: process.env.DBT_MANIFEST_PATH || './dbt/manifest.json',
       catalogPath: process.env.DBT_CATALOG_PATH || './dbt/catalog.json',
+      webhookSecret: process.env.DBT_WEBHOOK_SECRET || undefined,
     },
     limits: {
       costGateMaxBytes: parseEnvInt('COST_GATE_MAX_BYTES', 10_737_418_240),

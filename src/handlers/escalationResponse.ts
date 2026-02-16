@@ -6,6 +6,9 @@ import type { EscalationState } from '../types.js';
 import { getEscalationByEscalationThread, resolveEscalation } from '../state/escalationState.js';
 import { buildEscalationResolvedBlocks } from '../slack/escalationBlocks.js';
 import { runPipeline } from '../pipeline.js';
+import { generateTeachingCandidate } from '../teachings/candidateGenerator.js';
+import type { EscalationTeachingContext } from '../teachings/candidateGenerator.js';
+import { saveTeachingCandidate } from '../state/teachingCandidates.js';
 
 export interface EscalationResumeContext {
   escalationId: string;
@@ -75,4 +78,22 @@ export async function resumeFromEscalation(
   }
 
   await resolveEscalation(ctx.escalationId);
+
+  // Fire-and-forget: generate teaching candidate from escalation
+  const teachingCtx: EscalationTeachingContext = {
+    escalationId: ctx.escalationId,
+    originalQuestion: ctx.context.userQuestion,
+    clarifiedQuestion: ctx.context.clarifiedQuestion,
+    humanResponse: ctx.humanGuidance,
+    finalSql: ctx.context.previousSql,
+    supervisorNotes: ctx.context.supervisorNotes,
+    apiKey: config.geminiApiKey,
+  };
+
+  generateTeachingCandidate(teachingCtx)
+    .then(candidate => saveTeachingCandidate(candidate))
+    .catch(err => {
+      // Log and swallow — never block escalation resolution
+      console.error(`Teaching candidate generation failed for ${ctx.escalationId}:`, err);
+    });
 }

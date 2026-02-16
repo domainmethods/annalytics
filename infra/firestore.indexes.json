@@ -47,6 +47,22 @@
         { "fieldPath": "escalationTs", "order": "ASCENDING" },
         { "fieldPath": "pipelineState", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "dbt_run_history",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "model", "order": "ASCENDING" },
+        { "fieldPath": "runStartedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dbt_run_history",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "runStartedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

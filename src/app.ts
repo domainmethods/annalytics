@@ -21,6 +21,7 @@ import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from '.
 import { runPipeline, toPipelineConfig } from './pipeline.js';
 import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { routeFollowUp } from './handlers/followUpRouter.js';
+import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
 import { buildThreadContext } from './slack/threadContext.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
@@ -77,6 +78,10 @@ receiver.router.post('/refresh-metadata', async (_req, res) => {
   res.status(200).send('OK');
   rootLogger.info('Metadata refresh triggered');
 });
+
+if (config.dbt.webhookSecret) {
+  registerDbtRunIngestion(receiver.router, config.dbt.webhookSecret);
+}
 
 const app = new App({
   token: config.slack.botToken,

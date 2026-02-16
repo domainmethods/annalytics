@@ -29,6 +29,9 @@ import { friendlyErrorMessage } from './errors.js';
 import { decideEscalation } from './agents/escalationDecision.js';
 import { saveEscalationState } from './state/escalationState.js';
 import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlocks } from './slack/escalationBlocks.js';
+import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
+import { handleDbtStatus } from './agents/dbtStatusAgent.js';
+import { getRunHistoryForModel, getLatestRun } from './state/dbtRunHistory.js';
 
 export interface PipelineConfig {
   geminiApiKey: string;
@@ -37,6 +40,7 @@ export interface PipelineConfig {
   maxBytesProcessed: number;
   queryTimeoutMs: number;
   maxResultRows: number;
+  gcpProjectId?: string;
   escalation?: {
     mode: 'channel' | 'dm';
     channelId?: string;
@@ -64,6 +68,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
     maxBytesProcessed: config.limits.costGateMaxBytes,
     queryTimeoutMs: config.limits.queryTimeoutMs,
     maxResultRows: config.limits.maxResultRows,
+    gcpProjectId: config.gcp.projectId,
     escalation: {
       mode: config.escalation.mode,
       channelId: config.escalation.channelId,
@@ -145,6 +150,74 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     const resolvedQuestion = clarification.resolved_question || question;
     const assumptions = clarification.assumptions;
 
+    // dbt_status route → bypass SQL generation entirely
+    if (clarification.route === 'dbt_status') {
+      await updateStatus('Checking build history...');
+      const modelName = extractModelName(resolvedQuestion);
+      const runHistory = modelName
+        ? await getRunHistoryForModel(modelName)
+        : await getLatestRun();
+      const statusAnswer = await handleDbtStatus(resolvedQuestion, runHistory, config.geminiApiKey);
+
+      await client.chat.update({
+        channel,
+        ts: statusMsgTs,
+        text: statusAnswer,
+      });
+
+      // Persist minimal ResponseContext for observability
+      await saveResponseContext({
+        responseId: traceId,
+        threadTs,
+        statusMsgTs,
+        clarifiedQuestion: resolvedQuestion,
+        assumptions: assumptions || [],
+        reasoningChain: 'dbt_status route — no SQL generation',
+        generatedSql: '',
+        explanation: statusAnswer,
+        tablesUsed: [],
+        confidence: 'high',
+        clarificationConfidence: clarification.confidence,
+        primaryAgentConfidence: 'high',
+        queryResults: { rowCount: 0, columnNames: [], bytesProcessed: 0 },
+        pipelineDurationMs: Date.now() - startTime,
+        traceId,
+        createdAt: new Date(),
+        groundingCitations: [],
+        teachingsUsed: [],
+        supervisorVerdict: 'pass',
+        supervisorNotes: 'dbt_status route — no supervisor',
+      });
+
+      logStage(logger, { traceId, stage: 'format', durationMs: Date.now() - startTime });
+      return;
+    }
+
+    // Stage 1b: INFORMATION_SCHEMA fallback for non-dbt tables
+    let pipelineTables: TableContext[] = [...tables];
+    if (config.gcpProjectId) {
+      try {
+        const sqlRefs = [...resolvedQuestion.matchAll(/(?:from|join|table)\s+`?(\w+\.\w+)`?/gi)].map(m => m[1]);
+        const bareRefs = [...resolvedQuestion.matchAll(/\b([a-zA-Z]\w*\.[a-zA-Z]\w*)\b/g)].map(m => m[1]);
+        const FALSE_POSITIVES = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
+        const refs = [...new Set([...sqlRefs, ...bareRefs])]
+          .filter((ref) => !FALSE_POSITIVES.has(ref.toLowerCase()));
+        const unknown = refs
+          .filter((ref) => !tables.some((t) => t.name === ref || t.name.endsWith(`.${ref}`)))
+          .filter((ref) => ref.includes('.'))
+          .filter((ref) => ref.split('.').every((seg) => !/^\d+$/.test(seg)));
+        const fallbacks = await Promise.all(unknown.map(async (ref) => {
+          const [dataset, table] = ref.split('.');
+          const result = await getSchemaFallback(config.gcpProjectId!, dataset, table);
+          if (!result) return null;
+          return { ...result, description: `${result.description} \u26a0\ufe0f minimal documentation \u2014 no dbt metadata`.trim() };
+        }));
+        for (const fb of fallbacks) { if (fb) pipelineTables.push(fb); }
+      } catch {
+        pipelineTables = [...tables]; // Non-critical — continue with original tables
+      }
+    }
+
     // Stage 2: Load sample rows (parallel fetch)
     const sampleRowsMap = new Map<string, { rows: Record<string, unknown>[]; stale: boolean }>();
     const sampleResults = await Promise.all(
@@ -165,7 +238,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     const supervisedResult = await generateWithSupervision(
       {
         question: resolvedQuestion,
-        tables,
+        tables: pipelineTables,
         threadContext,
         apiKey: config.geminiApiKey,
         model: config.geminiModel,
@@ -260,7 +333,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       const correctedSupervised = await generateWithSupervision(
         {
           question: resolvedQuestion,
-          tables,
+          tables: pipelineTables,
           threadContext,
           apiKey: config.geminiApiKey,
           model: config.geminiModel,
@@ -343,7 +416,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       teachingsUsed: supervisedResult.sqlResult.groundingCitations.map(c => c.sourceFile),
       supervisorVerdict: supervisedResult.verdict,
       supervisorNotes: supervisedResult.supervisorNotes,
-      retrievedSchema: tables.map(table => ({
+      retrievedSchema: pipelineTables.map(table => ({
         name: table.name,
         description: table.description,
         columns: table.columns.map(c => ({
@@ -399,6 +472,39 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
   } finally {
     await releaseThreadLock(threadTs).catch(() => {});
   }
+}
+
+function extractModelName(question: string): string | null {
+  // dbt naming convention prefixes (most specific first)
+  const prefixPatterns = [
+    /\b(dim_\w+)\b/i,
+    /\b(fct_\w+)\b/i,
+    /\b(stg_\w+)\b/i,
+    /\b(int_\w+)\b/i,
+    /\b(rpt_\w+)\b/i,
+    /\b(snap_\w+)\b/i,
+    /\b(mart_\w+)\b/i,
+  ];
+  for (const pattern of prefixPatterns) {
+    const match = question.match(pattern);
+    if (match) return match[1].toLowerCase();
+  }
+
+  // Keyword-adjacent model names (e.g., "model users", "table revenue")
+  const keywordPatterns = [
+    /\bmodel\s+(\w+)\b/i,
+    /\btable\s+(\w+)\b/i,
+    /\b(?:was|is|did)\s+(\w+)\s+(?:built|run|refreshed|updated|succeed|fail)/i,
+    /\b(?:status|history|build|run)\s+(?:of|for)\s+(\w+)\b/i,
+  ];
+  const stopwords = new Set(['the', 'last', 'latest', 'most', 'recent', 'dbt', 'my', 'our', 'any', 'all', 'a']);
+  for (const pattern of keywordPatterns) {
+    const match = question.match(pattern);
+    if (match && !stopwords.has(match[1].toLowerCase())) return match[1].toLowerCase();
+  }
+
+  // No match → caller falls back to getLatestRun() for all-models overview
+  return null;
 }
 
 function resolveEscalationTarget(

@@ -8,9 +8,9 @@ A Slack bot that answers business questions by translating natural language into
 
 Users ask questions in Slack via `@Anna Lytics`, `/anna`, DMs, or thread replies. Each question flows through a 7-stage pipeline (`src/pipeline.ts`):
 
-1. **Clarification** — Classifies question confidence as high/medium/low. Low-confidence questions suspend the pipeline and post clarifying questions. Medium/high proceed with assumptions noted.
-2. **Retrieval** — Loads two context sources for the SQL generator: cached sample rows (concrete data examples per table) and teaching summaries from the knowledge base (business definitions, metric formulas, sanctioned SQL patterns).
-3. **SQL Generation + Supervisor Loop** — The primary agent generates BigQuery SQL using dbt schema, sample rows, and RAG-retrieved teachings as context. A supervisor agent then reviews it; on rejection, the primary agent retries with the critique (up to 2 retries). If File Search is unavailable, the agent falls back to generation without RAG and caps confidence at `medium`.
+1. **Clarification** — Classifies question confidence as high/medium/low. Low-confidence questions suspend the pipeline and respond to requestor (or channel) with clarifying questions. Medium/high proceed with assumptions noted.
+2. **Retrieval** — Loads two context sources for the SQL generator: cached sample rows (concrete data examples per table) and summaries from the knowledge base (business definitions, metric formulas, sanctioned SQL patterns).
+3. **SQL Generation + Supervisor Loop** — The primary agent generates BigQuery SQL using dbt schema, sample rows, and RAG-retrieved teachings as context. A supervisor agent then reviews it; if supervisor rejection, the primary agent retries with the supervisor critique (up to 2 retries).
 4. **Escalation Decision** — If the supervisor loop exhausts retries, the bot either shows a best-effort answer with a caveat (medium/high confidence) or parks the thread and asks the data team (low confidence). Escalation state is persisted to Firestore for async resume when a human responds.
 5. **Validation (L1-L4)** — Four sequential validation layers:
    - **L1 Static Analysis** — Blocks DML/DDL, multi-statement queries, and SQL comments
@@ -26,12 +26,7 @@ All queries are read-only. The bot cannot modify data.
 
 ### dbt as a Semantic Layer
 
-The bot uses dbt's `manifest.json` and `catalog.json` as its understanding of the data warehouse. At startup, `src/dbt/parser.ts` merges both artifacts into an in-memory array of `TableContext` objects (one per dbt model) containing:
-
-- **Table and column names** with descriptions from dbt YAML schema files
-- **Column data types** from `catalog.json` (e.g. `STRING`, `INT64`, `TIMESTAMP`)
-- **Materialization type** (`table`, `view`, `incremental`) and DAG dependencies
-- **Synthetic DDL** (`CREATE TABLE ...`) with column descriptions as inline comments, injected into the SQL generator's system prompt
+The bot uses dbt's `manifest.json` and `catalog.json` as its understanding of the data warehouse. At startup, `src/dbt/parser.ts` merges both artifacts into an in-memory array of `TableContext` objects (one per dbt model). Each object carries materialization type, DAG dependencies, and a synthetic DDL statement (`CREATE TABLE ...`) that combines column names, data types (from `catalog.json`), and descriptions (from dbt YAML) as inline comments. This DDL is injected directly into the SQL generator's system prompt.
 
 Tables with less than 30% of columns described are flagged in the prompt so the LLM is cautious with poorly documented schema (`src/dbt/quality.ts`).
 
@@ -107,6 +102,7 @@ Every response includes interactive buttons:
 The Slack app needs these features enabled:
 
 **Event Subscriptions** (request URL: `https://<your-cloud-run-url>/slack/events`):
+
 - `app_mention`, `message.channels`, `message.groups`, `message.im`, `message.mpim`
 
 **Slash Commands:** `/anna` pointing to `https://<your-cloud-run-url>/slack/events`
@@ -233,6 +229,7 @@ terraform apply \
 ```
 
 This provisions:
+
 - Cloud Run service (2 CPU, 1Gi memory, min 1 / max 10 instances)
 - Service account with read-only BigQuery + Firestore access
 - Secret Manager secrets for Slack and Gemini credentials

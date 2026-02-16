@@ -3,16 +3,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../src/state/escalationState.js');
 vi.mock('../../src/slack/escalationBlocks.js');
 vi.mock('../../src/pipeline.js');
+vi.mock('../../src/teachings/candidateGenerator.js', () => ({
+  generateTeachingCandidate: vi.fn(),
+}));
+vi.mock('../../src/state/teachingCandidates.js', () => ({
+  saveTeachingCandidate: vi.fn(),
+}));
 
 import { getEscalationByEscalationThread, resolveEscalation } from '../../src/state/escalationState.js';
 import { buildEscalationResolvedBlocks } from '../../src/slack/escalationBlocks.js';
 import { runPipeline } from '../../src/pipeline.js';
 import { checkEscalationResponse, resumeFromEscalation } from '../../src/handlers/escalationResponse.js';
+import { generateTeachingCandidate } from '../../src/teachings/candidateGenerator.js';
+import { saveTeachingCandidate } from '../../src/state/teachingCandidates.js';
 
 const mockGetEscalation = vi.mocked(getEscalationByEscalationThread);
 const mockResolve = vi.mocked(resolveEscalation);
 const mockBuildResolved = vi.mocked(buildEscalationResolvedBlocks);
 const mockRunPipeline = vi.mocked(runPipeline);
+const mockGenerateTeachingCandidate = vi.mocked(generateTeachingCandidate);
+const mockSaveTeachingCandidate = vi.mocked(saveTeachingCandidate);
 
 const mockClient = {
   chat: { postMessage: vi.fn(), update: vi.fn() },
@@ -71,6 +81,8 @@ describe('resumeFromEscalation', () => {
     mockRunPipeline.mockResolvedValue(undefined);
     mockBuildResolved.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'resolved' } }] as any);
     mockClient.chat.postMessage.mockResolvedValue({});
+    mockGenerateTeachingCandidate.mockResolvedValue({ candidateId: 'teach_default' } as any);
+    mockSaveTeachingCandidate.mockResolvedValue(undefined);
   });
 
   it('park_wait: resumes pipeline with human guidance, resolves escalation', async () => {
@@ -136,5 +148,68 @@ describe('resumeFromEscalation', () => {
     );
     // Should resolve escalation
     expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
+  });
+
+  it('generates teaching candidate on escalation resolution', async () => {
+    const mockCandidate = { candidateId: 'teach_esc_trace-1' } as any;
+    mockGenerateTeachingCandidate.mockResolvedValue(mockCandidate);
+    mockSaveTeachingCandidate.mockResolvedValue(undefined);
+    mockGetEscalation.mockResolvedValue(baseEscalation);
+
+    const ctx = await checkEscalationResponse({
+      channel: 'C-ESCALATION',
+      thread_ts: 'esc-ts-1',
+      text: 'Use LEFT JOIN on user_id',
+    });
+
+    await resumeFromEscalation(ctx!, mockClient, [], {
+      geminiApiKey: 'test-key',
+      maxBytesProcessed: 10e9,
+      queryTimeoutMs: 30000,
+      maxResultRows: 1000,
+    });
+
+    // Flush microtask queue so fire-and-forget promise chain resolves
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(mockGenerateTeachingCandidate).toHaveBeenCalledWith({
+      escalationId: 'esc_trace-1',
+      originalQuestion: 'What is revenue?',
+      clarifiedQuestion: 'What is revenue?',
+      humanResponse: 'Use LEFT JOIN on user_id',
+      finalSql: 'SELECT SUM(amount) FROM orders',
+      supervisorNotes: 'Not sure about joins',
+      apiKey: 'test-key',
+    });
+    expect(mockSaveTeachingCandidate).toHaveBeenCalledWith(mockCandidate);
+  });
+
+  it('teaching candidate generation failure does not block resolution', async () => {
+    mockGenerateTeachingCandidate.mockRejectedValue(new Error('LLM timeout'));
+    mockGetEscalation.mockResolvedValue(baseEscalation);
+
+    const ctx = await checkEscalationResponse({
+      channel: 'C-ESCALATION',
+      thread_ts: 'esc-ts-1',
+      text: 'Use LEFT JOIN on user_id',
+    });
+
+    // Should not throw even though teaching candidate generation fails
+    await expect(
+      resumeFromEscalation(ctx!, mockClient, [], {
+        geminiApiKey: 'key',
+        maxBytesProcessed: 10e9,
+        queryTimeoutMs: 30000,
+        maxResultRows: 1000,
+      }),
+    ).resolves.toBeUndefined();
+
+    // Flush microtask queue
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    // resolveEscalation should have been called (resolution not blocked)
+    expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
+    // generateTeachingCandidate was called but its failure was swallowed
+    expect(mockGenerateTeachingCandidate).toHaveBeenCalled();
   });
 });

@@ -58,7 +58,7 @@ export function parseDbtArtifacts(
   return tables;
 }
 
-function generateDDL(schema: string, name: string, columns: ColumnContext[]): string {
+export function generateDDL(schema: string, name: string, columns: ColumnContext[]): string {
   const colDefs = columns
     .map((c) => {
       const desc = c.description.replace(/[\r\n]+/g, ' ');

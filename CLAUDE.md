@@ -27,6 +27,8 @@ Every query follows this path through `src/pipeline.ts`:
 Slack Event → ack() → preflightChecks (lock + clarification + escalation) →
   0. Follow-Up Routing (thread replies: classifyFollowUp → meta_question/refinement/discrepancy skip to handler)
   1. Clarification (classifyQuestion → LOW suspends pipeline with follow-up questions)
+  1a. dbt_status Route (route=dbt_status → bypass SQL gen, query dbt_run_history, Flash formats answer)
+  1b. INFORMATION_SCHEMA Fallback (non-dbt tables → query I_S COLUMN_FIELD_PATHS → build minimal TableContext with ⚠️ warning)
   2. Thread Context (conversations.replies → last 4 msgs, 4K char limit)
   3. SQL Generation + Supervisor Loop (generateSql → supervisor review → retry)
   3b. Escalation Decision (if exhausted: park_wait or best_effort_verify → save state, post to escalation channel, return)
@@ -117,6 +119,9 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
 | `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume) |
 | `config` | `metadata_state` | dbt metadata freshness |
+| `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
+| `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
+| `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
 
 ### Config Conversion
 
@@ -125,6 +130,12 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 ### Error Handling
 
 `src/errors.ts` maps all errors to user-safe messages. Raw error text, API URLs, and internal identifiers are never exposed to users. Every error response includes a trace ID.
+
+### REST Endpoints
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/dbt-run-results` | Bearer `DBT_WEBHOOK_SECRET` | Ingest dbt `run_results.json` from CI |
 
 ## Key SDK Patterns
 
@@ -164,4 +175,4 @@ Tests mirror source at `tests/` with `.test.ts` suffix. Fixtures at `tests/fixtu
 
 ## Environment
 
-Required env vars are documented in `.env.example`. dbt artifacts (`manifest.json`, `catalog.json`) are COPY'd into the container image at build time from the `dbt/` directory.
+Required env vars are documented in `.env.example`. dbt artifacts (`manifest.json`, `catalog.json`) are COPY'd into the container image at build time from the `dbt/` directory. `DBT_WEBHOOK_SECRET` is optional — when set, it enables the `POST /api/dbt-run-results` endpoint for ingesting dbt build results.
