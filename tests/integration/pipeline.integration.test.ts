@@ -400,6 +400,117 @@ describe('Pipeline — Integration', () => {
     expect(savedCtx.supervisorVerdict).toBe('fail_then_pass');
   });
 
+  it('supervisor exhausted with park_wait: suspends pipeline, saves escalation state', async () => {
+    const escalationConfig: PipelineConfig = {
+      ...config,
+      escalation: {
+        mode: 'channel',
+        channelId: 'C-ESCALATION',
+        analystUserId: 'U-ANALYST',
+        timeoutHours: 4,
+      },
+    };
+
+    // clarification(HIGH) → gen1(low) → sup(FAIL) → gen2(low) → sup(FAIL) → gen3(low) → sup(FAIL)
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse())
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'low' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Bad query'] }))
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'low' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Still bad'] }))
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'low' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Exhausted'] }));
+
+    mockClient.chat.postMessage.mockResolvedValue({ ts: 'esc-msg-ts' });
+
+    await runPipeline({ ...makeInput(), config: escalationConfig });
+
+    // 7 Gemini calls (clarify + 3 gen + 3 supervisor)
+    expect(mockGenerateContent).toHaveBeenCalledTimes(7);
+    // No BigQuery calls — pipeline suspended before validation
+    expect(mockCreateQueryJob).not.toHaveBeenCalled();
+
+    // Escalation state saved
+    const escKeys = [...firestoreStore.keys()].filter(k => k.startsWith('escalation_state/'));
+    expect(escKeys.length).toBe(1);
+    const escState = firestoreStore.get(escKeys[0]);
+    expect(escState.pipelineState).toBe('awaiting_human');
+    expect(escState.behavior).toBe('park_wait');
+
+    // User message updated with waiting text
+    const updateCalls = mockClient.chat.update.mock.calls;
+    const waitingUpdate = updateCalls.find((c: any) => c[0].text?.includes('data team'));
+    expect(waitingUpdate).toBeDefined();
+
+    // Escalation posted to escalation channel
+    const postCalls = mockClient.chat.postMessage.mock.calls;
+    const escalationPost = postCalls.find((c: any) => c[0].channel === 'C-ESCALATION');
+    expect(escalationPost).toBeDefined();
+
+    // No ResponseContext saved (pipeline suspended)
+    const responseKeys = [...firestoreStore.keys()].filter(k => k.startsWith('response_context/'));
+    expect(responseKeys.length).toBe(0);
+  });
+
+  it('supervisor exhausted with best_effort_verify: executes with caveat, saves escalation', async () => {
+    const escalationConfig: PipelineConfig = {
+      ...config,
+      escalation: {
+        mode: 'channel',
+        channelId: 'C-ESCALATION',
+        analystUserId: 'U-ANALYST',
+        timeoutHours: 4,
+      },
+    };
+
+    // clarification(HIGH) → gen1(medium) → sup(FAIL) → gen2(medium) → sup(FAIL) → gen3(medium) → sup(FAIL)
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse())
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Uncertain'] }))
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Still uncertain'] }))
+      .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
+      .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Exhausted'] }));
+
+    // BigQuery: dry run → execution
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
+
+    mockClient.chat.postMessage.mockResolvedValue({ ts: 'esc-msg-ts' });
+
+    await runPipeline({ ...makeInput(), config: escalationConfig });
+
+    // 7 Gemini calls (clarify + 3 gen + 3 supervisor)
+    expect(mockGenerateContent).toHaveBeenCalledTimes(7);
+    // 2 BigQuery calls — pipeline continues to execution
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+
+    // Response shown with caveat
+    const updateCalls = mockClient.chat.update.mock.calls;
+    const finalUpdate = updateCalls[updateCalls.length - 1][0];
+    expect(finalUpdate.blocks).toBeDefined();
+    const blocksJson = JSON.stringify(finalUpdate.blocks);
+    expect(blocksJson).toContain('not fully confident');
+
+    // Escalation state saved
+    const escKeys = [...firestoreStore.keys()].filter(k => k.startsWith('escalation_state/'));
+    expect(escKeys.length).toBe(1);
+    const escState = firestoreStore.get(escKeys[0]);
+    expect(escState.pipelineState).toBe('awaiting_human');
+    expect(escState.behavior).toBe('best_effort_verify');
+
+    // ResponseContext was also saved (pipeline completed)
+    const responseKeys = [...firestoreStore.keys()].filter(k => k.startsWith('response_context/'));
+    expect(responseKeys.length).toBe(1);
+
+    // Escalation posted to escalation channel
+    const postCalls = mockClient.chat.postMessage.mock.calls;
+    const escalationPost = postCalls.find((c: any) => c[0].channel === 'C-ESCALATION');
+    expect(escalationPost).toBeDefined();
+  });
+
   it('negative feedback injection: thread with thumbs-down feeds into generation', async () => {
     // Pre-populate Firestore with negative feedback for this thread
     firestoreQueryResults.set('response_context', {

@@ -11,7 +11,7 @@ export interface GenerateSqlOptions {
   threadContext: ThreadMessage[];
   apiKey: string;
   model?: string;
-  previousAttempt?: { sql: string; error: string };
+  previousAttempt?: { sql: string; error: string; refinement?: string };
   fileSearchStoreId?: string;
   sampleRows?: Map<string, { rows: Record<string, unknown>[]; stale: boolean }>;
   negativeExample?: { sql: string; explanation: string; userFeedback: string };
@@ -117,12 +117,19 @@ export async function generateSql(opts: GenerateSqlOptions): Promise<SqlGenerati
 
   let systemPrompt = buildSystemPrompt(opts);
 
-  // Self-correction: include previous failed attempt
+  // Self-correction or refinement: include previous attempt context
   if (opts.previousAttempt) {
-    systemPrompt += `\nPREVIOUS ATTEMPT (failed validation):
+    if (opts.previousAttempt.refinement) {
+      systemPrompt += `\nPREVIOUS SQL (user wants a modification):
+SQL: ${opts.previousAttempt.sql}
+Requested change: ${opts.previousAttempt.refinement}
+Use the previous SQL as a starting point and apply the requested modification.`;
+    } else {
+      systemPrompt += `\nPREVIOUS ATTEMPT (failed validation):
 SQL: ${opts.previousAttempt.sql}
 Error: ${opts.previousAttempt.error}
 Fix the error and generate a corrected query.`;
+    }
   }
 
   const tools = opts.fileSearchStoreId

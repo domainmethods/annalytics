@@ -1,0 +1,114 @@
+import { getDb } from './firestore.js';
+import type { EscalationState } from '../types.js';
+
+const COLLECTION = 'escalation_state';
+
+export async function saveEscalationState(
+  state: Omit<EscalationState, 'createdAt' | 'expiresAt' | 'pipelineState' | 'lastReminderAt'>,
+  timeoutHours: number,
+): Promise<void> {
+  const db = getDb();
+  const now = new Date();
+  await db.collection(COLLECTION).doc(state.escalationId).set({
+    ...state,
+    pipelineState: 'awaiting_human',
+    createdAt: now,
+    expiresAt: new Date(now.getTime() + timeoutHours * 60 * 60 * 1000),
+  });
+}
+
+type FirestoreTimestamp = { toDate: () => Date };
+
+function toDate(value: Date | FirestoreTimestamp | undefined): Date | undefined {
+  if (value === undefined) return undefined;
+  return value instanceof Date ? value : value.toDate();
+}
+
+function toEscalationState(data: Record<string, unknown>): EscalationState {
+  return {
+    ...data,
+    createdAt: toDate(data.createdAt as Date | FirestoreTimestamp)!,
+    expiresAt: toDate(data.expiresAt as Date | FirestoreTimestamp)!,
+    lastReminderAt: toDate(data.lastReminderAt as Date | FirestoreTimestamp | undefined),
+  } as EscalationState;
+}
+
+async function queryPendingEscalation(
+  field: string,
+  value: string,
+): Promise<EscalationState | null> {
+  const db = getDb();
+  const snapshot = await db.collection(COLLECTION)
+    .where(field, '==', value)
+    .where('pipelineState', '==', 'awaiting_human')
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) return null;
+
+  const doc = snapshot.docs[0];
+  const state = toEscalationState(doc.data());
+
+  if (state.expiresAt < new Date()) {
+    await doc.ref.update({ pipelineState: 'timed_out' });
+    return null;
+  }
+
+  return state;
+}
+
+export async function getEscalationByThread(
+  threadTs: string,
+): Promise<EscalationState | null> {
+  return queryPendingEscalation('originalThreadTs', threadTs);
+}
+
+export async function getEscalationByEscalationThread(
+  escalationTs: string,
+): Promise<EscalationState | null> {
+  return queryPendingEscalation('escalationTs', escalationTs);
+}
+
+export async function resolveEscalation(
+  escalationId: string,
+): Promise<void> {
+  const db = getDb();
+  await db.collection(COLLECTION).doc(escalationId).update({
+    pipelineState: 'resolved',
+  });
+}
+
+export async function updateReminderTime(
+  escalationId: string,
+): Promise<void> {
+  const db = getDb();
+  await db.collection(COLLECTION).doc(escalationId).update({
+    lastReminderAt: new Date(),
+  });
+}
+
+export async function getAllPendingEscalations(): Promise<EscalationState[]> {
+  const db = getDb();
+  const snapshot = await db.collection(COLLECTION)
+    .where('pipelineState', '==', 'awaiting_human')
+    .limit(50)
+    .get();
+
+  return snapshot.docs.map(doc => toEscalationState(doc.data()));
+}
+
+export async function timeoutEscalation(
+  escalationId: string,
+): Promise<void> {
+  const db = getDb();
+  await db.collection(COLLECTION).doc(escalationId).update({
+    pipelineState: 'timed_out',
+  });
+}
+
+export async function hasPendingEscalation(
+  threadTs: string,
+): Promise<boolean> {
+  const state = await getEscalationByThread(threadTs);
+  return state !== null;
+}

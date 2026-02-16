@@ -1,0 +1,101 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { preflightChecks } from '../../src/handlers/preflightChecks.js';
+
+const mockAcquireThreadLock = vi.fn();
+const mockReleaseThreadLock = vi.fn();
+const mockHasPendingClarification = vi.fn();
+const mockGetEscalationByThread = vi.fn();
+const mockPostMessage = vi.fn();
+
+vi.mock('../../src/state/threadLock.js', () => ({
+  acquireThreadLock: (...args: unknown[]) => mockAcquireThreadLock(...args),
+  releaseThreadLock: (...args: unknown[]) => mockReleaseThreadLock(...args),
+}));
+
+vi.mock('../../src/state/clarificationState.js', () => ({
+  hasPendingClarification: (...args: unknown[]) => mockHasPendingClarification(...args),
+}));
+
+vi.mock('../../src/state/escalationState.js', () => ({
+  getEscalationByThread: (...args: unknown[]) => mockGetEscalationByThread(...args),
+}));
+
+const mockClient = {
+  chat: { postMessage: mockPostMessage },
+} as any;
+
+describe('preflightChecks', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAcquireThreadLock.mockResolvedValue(true);
+    mockHasPendingClarification.mockResolvedValue(false);
+    mockGetEscalationByThread.mockResolvedValue(null);
+    mockPostMessage.mockResolvedValue({ ts: 'msg-ts' });
+    mockReleaseThreadLock.mockResolvedValue(undefined);
+  });
+
+  it('returns true when all guards pass', async () => {
+    const result = await preflightChecks('C123', '1234.5678', mockClient);
+
+    expect(result).toBe(true);
+    expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockHasPendingClarification).toHaveBeenCalledWith('1234.5678');
+    expect(mockGetEscalationByThread).toHaveBeenCalledWith('1234.5678');
+  });
+
+  it('returns false and posts message when lock fails', async () => {
+    mockAcquireThreadLock.mockResolvedValue(false);
+
+    const result = await preflightChecks('C123', '1234.5678', mockClient);
+
+    expect(result).toBe(false);
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123',
+        thread_ts: '1234.5678',
+        text: expect.stringContaining('still working'),
+      }),
+    );
+    // Should not check further guards
+    expect(mockHasPendingClarification).not.toHaveBeenCalled();
+  });
+
+  it('returns false and releases lock when pending clarification', async () => {
+    mockHasPendingClarification.mockResolvedValue(true);
+
+    const result = await preflightChecks('C123', '1234.5678', mockClient);
+
+    expect(result).toBe(false);
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    // Should not check escalation
+    expect(mockGetEscalationByThread).not.toHaveBeenCalled();
+  });
+
+  it('returns false and posts message when pending escalation', async () => {
+    mockGetEscalationByThread.mockResolvedValue({
+      escalationId: 'esc-123',
+      pipelineState: 'awaiting_human',
+    });
+
+    const result = await preflightChecks('C123', '1234.5678', mockClient);
+
+    expect(result).toBe(false);
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123',
+        thread_ts: '1234.5678',
+        text: expect.stringContaining('still waiting for the data team'),
+      }),
+    );
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+  });
+
+  it('returns true when escalation is expired (null returned)', async () => {
+    // getEscalationByThread returns null for expired escalations
+    mockGetEscalationByThread.mockResolvedValue(null);
+
+    const result = await preflightChecks('C123', '1234.5678', mockClient);
+
+    expect(result).toBe(true);
+  });
+});

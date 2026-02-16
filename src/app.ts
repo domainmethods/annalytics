@@ -10,10 +10,18 @@ import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMentions } from './handlers/mentions.js';
 import { shouldRespond, checkClarificationReply } from './handlers/messages.js';
-import { acquireThreadLock } from './state/threadLock.js';
+import { checkEscalationResponse, resumeFromEscalation } from './handlers/escalationResponse.js';
+import { checkOverdueEscalations } from './handlers/escalationLifecycle.js';
 import { checkRateLimit } from './state/rateLimiter.js';
-import { recordFeedback } from './state/responseContext.js';
-import { runPipeline } from './pipeline.js';
+import { preflightChecks } from './handlers/preflightChecks.js';
+import { recordFeedback, getResponseContext } from './state/responseContext.js';
+import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
+import { buildFeedbackActions } from './slack/blocks.js';
+import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
+import { runPipeline, toPipelineConfig } from './pipeline.js';
+import { classifyFollowUp } from './agents/followUpClassifier.js';
+import { routeFollowUp } from './handlers/followUpRouter.js';
+import { buildThreadContext } from './slack/threadContext.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
@@ -87,6 +95,11 @@ app.event('message', async ({ event, client }) => {
 
   const msg = event as GenericMessageEvent;
 
+  // Non-blocking lifecycle check: reminders + timeouts for pending escalations
+  checkOverdueEscalations(client, config.escalation).catch(err =>
+    rootLogger.error({ error: (err as Error).message }, 'escalation.lifecycle.error'),
+  );
+
   // Check for pending clarification reply FIRST
   const clarificationReply = await checkClarificationReply(msg);
   if (clarificationReply) {
@@ -98,16 +111,20 @@ app.event('message', async ({ event, client }) => {
       statusMsgTs: clarificationReply.clarifyingMessageTs,
       client,
       tables: getTables(),
-      config: {
-        geminiApiKey: config.gemini.apiKey,
-        geminiModel: config.gemini.model,
-        fileSearchStoreId: config.gemini.fileSearchStoreId,
-        maxBytesProcessed: config.limits.costGateMaxBytes,
-        queryTimeoutMs: config.limits.queryTimeoutMs,
-        maxResultRows: config.limits.maxResultRows,
-      },
+      config: toPipelineConfig(config),
     });
     return;
+  }
+
+  // Check for escalation response (data team replying in escalation channel or DM)
+  const isEscalationChannel = config.escalation.channelId && msg.channel === config.escalation.channelId;
+  const isEscalationDm = config.escalation.mode === 'dm' && config.escalation.analystUserId;
+  if ((isEscalationChannel || isEscalationDm) && msg.thread_ts) {
+    const escalationCtx = await checkEscalationResponse(msg);
+    if (escalationCtx) {
+      await resumeFromEscalation(escalationCtx, client, getTables(), toPipelineConfig(config));
+      return;
+    }
   }
 
   const respond = await shouldRespond(msg);
@@ -126,22 +143,43 @@ app.event('message', async ({ event, client }) => {
     return;
   }
 
-  // Acquire thread lock
-  const locked = await acquireThreadLock(threadTs);
-  if (!locked) {
-    await client.chat.postMessage({
-      channel: msg.channel,
-      thread_ts: threadTs,
-      text: "I'm still working on your previous question...",
-    });
-    return;
-  }
+  // Preflight: lock + clarification + escalation guards
+  const passed = await preflightChecks(msg.channel, threadTs, client);
+  if (!passed) return;
 
   const statusMsg = await client.chat.postMessage({
     channel: msg.channel,
     thread_ts: threadTs,
     text: 'Understanding your question...',
   });
+
+  // Follow-up intent routing for thread replies
+  if (msg.thread_ts) {
+    try {
+      const threadMessages = await client.conversations.replies({
+        channel: msg.channel,
+        ts: threadTs,
+        oldest: threadTs,
+      });
+      const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
+        summarizeOlder: true,
+        stripQueryResults: true,
+        maxTokens: 1000,
+      });
+      if (threadContext.length > 0) {
+        const { intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
+        if (intent !== 'new_query') {
+          await routeFollowUp(
+            intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
+            client, toPipelineConfig(config), getTables(),
+          );
+          return;
+        }
+      }
+    } catch {
+      // Classification failed — fall through to standard pipeline
+    }
+  }
 
   await runPipeline({
     question: msg.text || '',
@@ -150,14 +188,7 @@ app.event('message', async ({ event, client }) => {
     statusMsgTs: statusMsg.ts!,
     client,
     tables: getTables(),
-    config: {
-      geminiApiKey: config.gemini.apiKey,
-      geminiModel: config.gemini.model,
-      fileSearchStoreId: config.gemini.fileSearchStoreId,
-      maxBytesProcessed: config.limits.costGateMaxBytes,
-      queryTimeoutMs: config.limits.queryTimeoutMs,
-      maxResultRows: config.limits.maxResultRows,
-    },
+    config: toPipelineConfig(config),
   });
 });
 
@@ -191,6 +222,105 @@ app.action('refine_assumptions', async ({ ack, body, client }) => {
       text: 'What should I change about my assumptions? Reply with your corrections and I\'ll re-run the query.',
     });
   }
+});
+
+// "Show reasoning" toggle — appends reasoning blocks to the message
+app.action(/show_reasoning_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string; action_id: string };
+  const compoundKey = btn.value; // threadTs_statusMsgTs
+  if (!compoundKey) return;
+
+  const ctx = await getResponseContext(compoundKey);
+  if (!ctx) return;
+
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+
+  // Remove the feedback actions block that contains the show_reasoning button
+  const currentBlocks: any[] = (body as any).message?.blocks || [];
+  const withoutFeedback = currentBlocks.filter(
+    (b: any) => !(b.type === 'actions' && b.elements?.some((e: any) => e.action_id?.startsWith('show_reasoning_'))),
+  );
+  const reasoningBlocks = buildReasoningBlocks(ctx);
+
+  await client.chat.update({
+    channel,
+    ts: messageTs,
+    text: (body as any).message?.text || '',
+    blocks: [...withoutFeedback, ...reasoningBlocks],
+  });
+});
+
+// "Hide reasoning" toggle — removes reasoning blocks from the message
+app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string; action_id: string };
+  const compoundKey = btn.value; // threadTs_statusMsgTs
+  if (!compoundKey) return;
+
+  const ctx = await getResponseContext(compoundKey);
+  if (!ctx) return;
+
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+
+  // Remove all reasoning blocks by block_id prefix
+  const currentBlocks: any[] = (body as any).message?.blocks || [];
+  const withoutReasoning = currentBlocks.filter(
+    (b: any) => !b.block_id?.startsWith(REASONING_BLOCK_PREFIX),
+  );
+
+  // Re-add the feedback actions with show_reasoning button
+  const [threadTs, statusMsgTs] = compoundKey.split('_');
+  withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs));
+
+  await client.chat.update({
+    channel,
+    ts: messageTs,
+    text: (body as any).message?.text || '',
+    blocks: withoutReasoning,
+  });
+});
+
+// Response override handlers (Table, Summary, CSV)
+const overrideConfig = {
+  maxBytesProcessed: config.limits.costGateMaxBytes,
+  queryTimeoutMs: config.limits.queryTimeoutMs,
+  maxResultRows: config.limits.maxResultRows,
+  geminiApiKey: config.gemini.apiKey,
+};
+
+app.action(/override_table_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string };
+  if (!btn.value) return;
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+  await handleTableOverride(btn.value, channel, messageTs, client, overrideConfig);
+});
+
+app.action(/override_summary_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string };
+  if (!btn.value) return;
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+  await handleSummaryOverride(btn.value, channel, messageTs, client, overrideConfig);
+});
+
+app.action(/override_csv_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string };
+  if (!btn.value) return;
+  const channel = (body as any).channel?.id;
+  const threadTs = (body as any).message?.thread_ts || (body as any).message?.ts;
+  if (!channel || !threadTs) return;
+  await handleCsvOverride(btn.value, channel, threadTs, client, overrideConfig);
 });
 
 // Start

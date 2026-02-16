@@ -5,6 +5,8 @@ export function buildSingleValueBlocks(
   explanation: string,
   sql: string,
   traceId: string,
+  threadTs?: string,
+  statusMsgTs?: string,
 ): KnownBlock[] {
   return [
     {
@@ -15,7 +17,7 @@ export function buildSingleValueBlocks(
       type: 'section',
       text: { type: 'mrkdwn', text: `\`\`\`${sql}\`\`\`` },
     } as SectionBlock,
-    buildFeedbackActions(traceId),
+    buildFeedbackActions(traceId, threadTs, statusMsgTs),
   ];
 }
 
@@ -80,22 +82,51 @@ export function buildTruncatedBlocks(
   ];
 }
 
-export function buildFeedbackActions(traceId: string): ActionsBlock {
-  return {
-    type: 'actions',
-    elements: [
+export function buildFeedbackActions(traceId: string, threadTs?: string, statusMsgTs?: string): ActionsBlock {
+  const elements: ActionsBlock['elements'] = [
+    {
+      type: 'button',
+      text: { type: 'plain_text', text: '👍' },
+      action_id: `thumbs_up_${traceId}`,
+      value: traceId,
+    },
+    {
+      type: 'button',
+      text: { type: 'plain_text', text: '👎' },
+      action_id: `thumbs_down_${traceId}`,
+      value: traceId,
+    },
+  ];
+
+  if (threadTs && statusMsgTs) {
+    const compoundKey = `${threadTs}_${statusMsgTs}`;
+    elements.push(
       {
         type: 'button',
-        text: { type: 'plain_text', text: '👍' },
-        action_id: `thumbs_up_${traceId}`,
-        value: traceId,
+        text: { type: 'plain_text', text: 'Reasoning' },
+        action_id: `show_reasoning_${traceId}`,
+        value: compoundKey,
       },
       {
         type: 'button',
-        text: { type: 'plain_text', text: '👎' },
-        action_id: `thumbs_down_${traceId}`,
-        value: traceId,
+        text: { type: 'plain_text', text: 'Table' },
+        action_id: `override_table_${traceId}`,
+        value: compoundKey,
       },
-    ],
-  };
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'Summary' },
+        action_id: `override_summary_${traceId}`,
+        value: compoundKey,
+      },
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: 'CSV' },
+        action_id: `override_csv_${traceId}`,
+        value: compoundKey,
+      },
+    );
+  }
+
+  return { type: 'actions', elements };
 }

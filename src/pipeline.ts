@@ -1,6 +1,7 @@
 import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import type { TableContext } from './dbt/types.js';
+import type { AppConfig } from './config.js';
 import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
 import { generateWithSupervision } from './agents/supervisorLoop.js';
@@ -25,6 +26,9 @@ import { getTeachingSummaries } from './teachings/summaryMap.js';
 import { getSampleRows } from './dbt/sampleRowCache.js';
 import { createTraceId, createLogger, logStage } from './logging.js';
 import { friendlyErrorMessage } from './errors.js';
+import { decideEscalation } from './agents/escalationDecision.js';
+import { saveEscalationState } from './state/escalationState.js';
+import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlocks } from './slack/escalationBlocks.js';
 
 export interface PipelineConfig {
   geminiApiKey: string;
@@ -33,6 +37,12 @@ export interface PipelineConfig {
   maxBytesProcessed: number;
   queryTimeoutMs: number;
   maxResultRows: number;
+  escalation?: {
+    mode: 'channel' | 'dm';
+    channelId?: string;
+    analystUserId?: string;
+    timeoutHours: number;
+  };
 }
 
 export interface PipelineInput {
@@ -43,6 +53,24 @@ export interface PipelineInput {
   client: WebClient;
   tables: TableContext[];
   config: PipelineConfig;
+  refinementHint?: { previousSql: string };
+}
+
+export function toPipelineConfig(config: AppConfig): PipelineConfig {
+  return {
+    geminiApiKey: config.gemini.apiKey,
+    geminiModel: config.gemini.model,
+    fileSearchStoreId: config.gemini.fileSearchStoreId,
+    maxBytesProcessed: config.limits.costGateMaxBytes,
+    queryTimeoutMs: config.limits.queryTimeoutMs,
+    maxResultRows: config.limits.maxResultRows,
+    escalation: {
+      mode: config.escalation.mode,
+      channelId: config.escalation.channelId,
+      analystUserId: config.escalation.analystUserId,
+      timeoutHours: config.escalation.timeoutHours,
+    },
+  };
 }
 
 export async function runPipeline(input: PipelineInput): Promise<void> {
@@ -148,6 +176,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           explanation: negativeExample.explanation,
           userFeedback: threadContext[threadContext.length - 1]?.content || '',
         } : undefined,
+        previousAttempt: input.refinementHint
+          ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
+          : undefined,
       },
       config.geminiApiKey,
       resolvedQuestion,
@@ -157,6 +188,66 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     // Stage 3b: Supervisor review status
     await updateStatus('Reviewing answer...');
     logStage(logger, { traceId, stage: 'supervise', durationMs: Date.now() - startTime });
+
+    // Escalation decision
+    const escalationDecision = decideEscalation(
+      supervisedResult.verdict,
+      supervisedResult.sqlResult.confidence,
+    );
+    const escalationTarget = resolveEscalationTarget(config.escalation);
+
+    if (escalationDecision.shouldEscalate) {
+      logger.info({ trigger: escalationDecision.trigger, behavior: escalationDecision.behavior, traceId }, 'escalation.triggered');
+    }
+
+    if (escalationDecision.shouldEscalate && escalationDecision.behavior === 'park_wait' && escalationTarget) {
+      const waitingBlocks = buildUserWaitingBlocks();
+      await client.chat.update({
+        channel,
+        ts: statusMsgTs,
+        text: "I've asked the data team — I'll reply here when I have the answer.",
+        blocks: waitingBlocks as unknown as KnownBlock[],
+      });
+
+      const escalationMsg = await client.chat.postMessage({
+        channel: escalationTarget,
+        text: `Anna Lytics needs help with: "${question}"`,
+        blocks: buildEscalationBlocks({
+          userQuestion: question,
+          channelName: `<#${channel}>`,
+          threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
+          stuckDescription: supervisedResult.supervisorNotes || 'Could not generate a confident answer',
+          bestGuessSql: supervisedResult.sqlResult.sql,
+        }) as unknown as KnownBlock[],
+      });
+
+      await saveEscalationState({
+        escalationId: `esc_${traceId}`,
+        originalThreadTs: threadTs,
+        originalChannel: channel,
+        trigger: escalationDecision.trigger,
+        behavior: 'park_wait',
+        stageToResume: 'sql_generation',
+        context: {
+          clarifiedQuestion: resolvedQuestion,
+          userQuestion: question,
+          groundingCitations: supervisedResult.sqlResult.groundingCitations,
+          previousSql: supervisedResult.sqlResult.sql,
+          supervisorNotes: supervisedResult.supervisorNotes,
+        },
+        escalationChannel: escalationTarget,
+        escalationTs: escalationMsg.ts!,
+        statusMsgTs,
+        bestEffortSql: supervisedResult.sqlResult.sql,
+        traceId,
+      }, config.escalation!.timeoutHours);
+
+      return;
+    }
+
+    const shouldEscalateAsync = escalationDecision.shouldEscalate
+      && escalationDecision.behavior === 'best_effort_verify'
+      && !!escalationTarget;
 
     // Stage 4: Validation (L1-L4) with self-correction retry
     let sqlToExecute = supervisedResult.sqlResult.sql;
@@ -210,17 +301,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     );
 
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, supervisedResult.sqlResult, queryResult, traceId, assumptions);
+    const blocks = buildResponseBlocks(format, supervisedResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, assumptions);
 
-    // Exhaustion caveat: prepend warning when supervisor could not approve
-    if (supervisedResult.verdict === 'exhausted') {
-      blocks.unshift({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `_I'm not fully confident in this answer. [Supervisor note: ${supervisedResult.supervisorNotes}]_`,
-        },
-      } as KnownBlock);
+    // Best-effort caveat for escalated responses
+    if (shouldEscalateAsync) {
+      blocks.unshift(...buildBestEffortCaveatBlocks(supervisedResult.supervisorNotes));
     }
 
     await client.chat.update({
@@ -258,7 +343,52 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       teachingsUsed: supervisedResult.sqlResult.groundingCitations.map(c => c.sourceFile),
       supervisorVerdict: supervisedResult.verdict,
       supervisorNotes: supervisedResult.supervisorNotes,
+      retrievedSchema: tables.map(table => ({
+        name: table.name,
+        description: table.description,
+        columns: table.columns.map(c => ({
+          name: c.name,
+          description: c.description,
+          dataType: c.dataType,
+        })),
+      })),
     });
+
+    // Async escalation for best_effort_verify
+    if (shouldEscalateAsync && escalationTarget) {
+      const escalationMsg = await client.chat.postMessage({
+        channel: escalationTarget,
+        text: `Anna Lytics needs verification: "${question}"`,
+        blocks: buildEscalationBlocks({
+          userQuestion: question,
+          channelName: `<#${channel}>`,
+          threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
+          stuckDescription: supervisedResult.supervisorNotes || 'Answer needs verification',
+          bestGuessSql: sqlToExecute,
+        }) as unknown as KnownBlock[],
+      });
+
+      await saveEscalationState({
+        escalationId: `esc_${traceId}`,
+        originalThreadTs: threadTs,
+        originalChannel: channel,
+        trigger: escalationDecision.trigger,
+        behavior: 'best_effort_verify',
+        stageToResume: 'supervisor_review',
+        context: {
+          clarifiedQuestion: resolvedQuestion,
+          userQuestion: question,
+          groundingCitations: supervisedResult.sqlResult.groundingCitations,
+          previousSql: supervisedResult.sqlResult.sql,
+          supervisorNotes: supervisedResult.supervisorNotes,
+        },
+        escalationChannel: escalationTarget,
+        escalationTs: escalationMsg.ts!,
+        statusMsgTs,
+        bestEffortSql: sqlToExecute,
+        traceId,
+      }, config.escalation!.timeoutHours);
+    }
   } catch (error) {
     logger.error({ error }, 'Pipeline failed');
     await client.chat.update({
@@ -271,11 +401,22 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
   }
 }
 
+function resolveEscalationTarget(
+  escalation?: PipelineConfig['escalation'],
+): string | null {
+  if (!escalation) return null;
+  if (escalation.mode === 'dm' && escalation.analystUserId) return escalation.analystUserId;
+  if (escalation.channelId) return escalation.channelId;
+  return null;
+}
+
 function buildResponseBlocks(
   format: string,
   gen: SqlGenerationResult,
   result: QueryResult,
   traceId: string,
+  threadTs: string,
+  statusMsgTs: string,
   assumptions?: string[],
 ): KnownBlock[] {
   const assumptionBlocks: KnownBlock[] = [];
@@ -300,7 +441,7 @@ function buildResponseBlocks(
   switch (format) {
     case 'single_value': {
       const value = String(Object.values(result.rows[0])[0]);
-      return [...assumptionBlocks, ...buildSingleValueBlocks(value, gen.explanation, gen.sql, traceId)];
+      return [...assumptionBlocks, ...buildSingleValueBlocks(value, gen.explanation, gen.sql, traceId, threadTs, statusMsgTs)];
     }
     case 'table':
     case 'wide_table':
@@ -312,21 +453,21 @@ function buildResponseBlocks(
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${gen.sql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(traceId),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs),
       ];
     }
     case 'zero_rows':
       return [
         ...assumptionBlocks,
         ...buildZeroRowBlocks(gen.assumptions, gen.sql),
-        buildFeedbackActions(traceId),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs),
       ];
     default:
       return [
         ...assumptionBlocks,
         { type: 'section', text: { type: 'mrkdwn', text: gen.explanation } } as KnownBlock,
         { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${gen.sql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(traceId),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs),
       ];
   }
 }

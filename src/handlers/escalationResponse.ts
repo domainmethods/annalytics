@@ -1,0 +1,78 @@
+import type { WebClient } from '@slack/web-api';
+import type { KnownBlock } from '@slack/types';
+import type { TableContext } from '../dbt/types.js';
+import type { PipelineConfig } from '../pipeline.js';
+import type { EscalationState } from '../types.js';
+import { getEscalationByEscalationThread, resolveEscalation } from '../state/escalationState.js';
+import { buildEscalationResolvedBlocks } from '../slack/escalationBlocks.js';
+import { runPipeline } from '../pipeline.js';
+
+export interface EscalationResumeContext {
+  escalationId: string;
+  originalChannel: string;
+  originalThreadTs: string;
+  statusMsgTs: string;
+  humanGuidance: string;
+  behavior: 'best_effort_verify' | 'park_wait';
+  context: EscalationState['context'];
+  traceId: string;
+}
+
+/**
+ * Check if a message in a thread is a reply to a pending escalation.
+ * Returns the escalation resume context if so, null otherwise.
+ */
+export async function checkEscalationResponse(
+  event: { thread_ts?: string; text?: string; channel: string },
+): Promise<EscalationResumeContext | null> {
+  const threadTs = event.thread_ts;
+  if (!threadTs) return null;
+
+  const state = await getEscalationByEscalationThread(threadTs);
+  if (!state) return null;
+
+  return {
+    escalationId: state.escalationId,
+    originalChannel: state.originalChannel,
+    originalThreadTs: state.originalThreadTs,
+    statusMsgTs: state.statusMsgTs,
+    humanGuidance: event.text || '',
+    behavior: state.behavior,
+    context: state.context,
+    traceId: state.traceId,
+  };
+}
+
+/**
+ * Handle a human's response to an escalation.
+ * park_wait: re-run pipeline with human guidance injected.
+ * best_effort_verify: post human's verification to the original thread.
+ */
+export async function resumeFromEscalation(
+  ctx: EscalationResumeContext,
+  client: WebClient,
+  tables: TableContext[],
+  config: PipelineConfig,
+): Promise<void> {
+  if (ctx.behavior === 'park_wait') {
+    await runPipeline({
+      question: `${ctx.context.clarifiedQuestion} (Data team guidance: ${ctx.humanGuidance})`,
+      channel: ctx.originalChannel,
+      threadTs: ctx.originalThreadTs,
+      statusMsgTs: ctx.statusMsgTs,
+      client,
+      tables,
+      config,
+    });
+  } else {
+    const blocks = buildEscalationResolvedBlocks(ctx.humanGuidance, ctx.behavior);
+    await client.chat.postMessage({
+      channel: ctx.originalChannel,
+      thread_ts: ctx.originalThreadTs,
+      text: ctx.humanGuidance,
+      blocks: blocks as unknown as KnownBlock[],
+    });
+  }
+
+  await resolveEscalation(ctx.escalationId);
+}

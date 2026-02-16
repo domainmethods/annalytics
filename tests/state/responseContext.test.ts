@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockSet = vi.fn();
 const mockGet = vi.fn();
-const mockDoc = vi.fn().mockReturnValue({ set: mockSet });
+const mockDocGet = vi.fn();
+const mockDoc = vi.fn().mockReturnValue({ set: mockSet, get: mockDocGet });
 const mockWhere = vi.fn();
 const mockLimit = vi.fn();
 const mockSelect = vi.fn();
+const mockOrderBy = vi.fn();
 
 vi.mock('../../src/state/firestore.js', () => ({
   getDb: () => ({
@@ -20,7 +22,12 @@ mockWhere.mockReturnValue({ limit: mockLimit });
 mockLimit.mockReturnValue({ select: mockSelect });
 mockSelect.mockReturnValue({ get: mockGet });
 
-import { saveResponseContext, botHasRepliedInThread } from '../../src/state/responseContext.js';
+import {
+  saveResponseContext,
+  botHasRepliedInThread,
+  getResponseContext,
+  getLatestResponseContext,
+} from '../../src/state/responseContext.js';
 
 describe('saveResponseContext', () => {
   beforeEach(() => {
@@ -71,5 +78,70 @@ describe('botHasRepliedInThread', () => {
     mockGet.mockResolvedValue({ empty: true });
     const result = await botHasRepliedInThread('thread-1');
     expect(result).toBe(false);
+  });
+});
+
+describe('getResponseContext', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ select: mockSelect });
+    mockSelect.mockReturnValue({ get: mockGet });
+  });
+
+  it('returns context when doc exists', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        responseId: 'r1',
+        threadTs: 'thread-1',
+        statusMsgTs: 'msg-1',
+        generatedSql: 'SELECT 1',
+      }),
+    });
+
+    const result = await getResponseContext('thread-1_msg-1');
+
+    expect(result).not.toBeNull();
+    expect(result!.responseId).toBe('r1');
+    expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+  });
+
+  it('returns null when doc does not exist', async () => {
+    mockDocGet.mockResolvedValue({ exists: false });
+
+    const result = await getResponseContext('nonexistent_key');
+
+    expect(result).toBeNull();
+  });
+});
+
+describe('getLatestResponseContext', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ orderBy: mockOrderBy });
+    mockOrderBy.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
+  });
+
+  it('returns most recent context for thread', async () => {
+    mockGet.mockResolvedValue({
+      empty: false,
+      docs: [{
+        data: () => ({
+          responseId: 'r2',
+          threadTs: 'thread-1',
+          statusMsgTs: 'msg-2',
+          generatedSql: 'SELECT 2',
+        }),
+      }],
+    });
+
+    const result = await getLatestResponseContext('thread-1');
+
+    expect(result).not.toBeNull();
+    expect(result!.responseId).toBe('r2');
+    expect(mockWhere).toHaveBeenCalledWith('threadTs', '==', 'thread-1');
+    expect(mockOrderBy).toHaveBeenCalledWith('createdAt', 'desc');
   });
 });

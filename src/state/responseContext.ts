@@ -36,6 +36,32 @@ export async function recordFeedback(
   }
 }
 
+export async function getResponseContext(
+  compoundKey: string,
+): Promise<ResponseContext | null> {
+  const doc = await getDb()
+    .collection('response_context')
+    .doc(compoundKey)
+    .get();
+
+  if (!doc.exists) return null;
+  return doc.data() as ResponseContext;
+}
+
+export async function getLatestResponseContext(
+  threadTs: string,
+): Promise<ResponseContext | null> {
+  const snapshot = await getDb()
+    .collection('response_context')
+    .where('threadTs', '==', threadTs)
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) return null;
+  return snapshot.docs[0].data() as ResponseContext;
+}
+
 export async function getLatestNegativeFeedback(
   threadTs: string,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {

@@ -15,6 +15,9 @@ vi.mock('../src/state/clarificationState.js');
 vi.mock('../src/state/threadLock.js');
 vi.mock('../src/teachings/summaryMap.js');
 vi.mock('../src/dbt/sampleRowCache.js');
+vi.mock('../src/agents/escalationDecision.js');
+vi.mock('../src/state/escalationState.js');
+vi.mock('../src/slack/escalationBlocks.js');
 vi.mock('../src/logging.js', () => ({
   createTraceId: () => 'trace-abc',
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn() }),
@@ -36,6 +39,9 @@ import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
 import { buildSingleValueBlocks, buildFeedbackActions } from '../src/slack/blocks.js';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
+import { decideEscalation } from '../src/agents/escalationDecision.js';
+import { saveEscalationState } from '../src/state/escalationState.js';
+import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlocks } from '../src/slack/escalationBlocks.js';
 
 const mockClassify = vi.mocked(classifyQuestion);
 const mockSupervise = vi.mocked(generateWithSupervision);
@@ -53,6 +59,11 @@ const mockGetSampleRows = vi.mocked(getSampleRows);
 const mockBuildSingleValue = vi.mocked(buildSingleValueBlocks);
 const mockBuildFeedback = vi.mocked(buildFeedbackActions);
 const mockBuildClarification = vi.mocked(buildClarificationBlocks);
+const mockDecideEscalation = vi.mocked(decideEscalation);
+const mockSaveEscalation = vi.mocked(saveEscalationState);
+const mockBuildEscalationBlocks = vi.mocked(buildEscalationBlocks);
+const mockBuildWaiting = vi.mocked(buildUserWaitingBlocks);
+const mockBuildCaveat = vi.mocked(buildBestEffortCaveatBlocks);
 
 const mockClient = {
   conversations: { replies: vi.fn() },
@@ -123,8 +134,14 @@ function setupHappyPath() {
   mockBuildFeedback.mockReturnValue({ type: 'actions', elements: [] } as any);
   mockBuildClarification.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'test' } }]);
   mockClient.chat.update.mockResolvedValue({});
+  mockClient.chat.postMessage.mockResolvedValue({ ts: 'esc-msg-1' });
   mockSaveCtx.mockResolvedValue(undefined);
   mockReleaseLock.mockResolvedValue(undefined);
+  mockDecideEscalation.mockReturnValue({ shouldEscalate: false, behavior: 'park_wait', trigger: 'supervisor_exhausted' });
+  mockSaveEscalation.mockResolvedValue(undefined);
+  mockBuildEscalationBlocks.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'escalation' } }] as any);
+  mockBuildWaiting.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'waiting' } }] as any);
+  mockBuildCaveat.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'caveat' } }] as any);
 }
 
 describe('runPipeline', () => {
@@ -226,5 +243,135 @@ describe('runPipeline', () => {
     // Should have at least: "Understanding...", "Generating SQL...", "Reviewing answer...", then final
     expect(updateCalls.some((t: string) => t?.includes('Understanding'))).toBe(true);
     expect(updateCalls.some((t: string) => t?.includes('Generating SQL'))).toBe(true);
+  });
+
+  it('park_wait escalation: no execution, state saved, user notified', async () => {
+    mockSupervise.mockResolvedValue({
+      ...baseSupervisedResult,
+      verdict: 'exhausted',
+      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'low' },
+      finalConfidence: 'low',
+      supervisorNotes: 'Could not approve after 3 attempts',
+    });
+    mockDecideEscalation.mockReturnValue({
+      shouldEscalate: true,
+      behavior: 'park_wait',
+      trigger: 'supervisor_exhausted',
+    });
+
+    const inputWithEscalation = {
+      ...baseInput,
+      config: {
+        ...baseInput.config,
+        escalation: {
+          mode: 'channel' as const,
+          channelId: 'C-ESCALATION',
+          timeoutHours: 4,
+        },
+      },
+    };
+
+    await runPipeline(inputWithEscalation);
+
+    // Should NOT execute query
+    expect(mockExecute).not.toHaveBeenCalled();
+    // Should update status with waiting message
+    expect(mockClient.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('data team'),
+      }),
+    );
+    // Should post to escalation channel
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'C-ESCALATION' }),
+    );
+    // Should save escalation state
+    expect(mockSaveEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        behavior: 'park_wait',
+        originalThreadTs: 'thread-1',
+        escalationChannel: 'C-ESCALATION',
+      }),
+      4,
+    );
+    // Should still release lock (via finally)
+    expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {
+    mockSupervise.mockResolvedValue({
+      ...baseSupervisedResult,
+      verdict: 'exhausted',
+      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'medium' },
+      finalConfidence: 'medium',
+      supervisorNotes: 'Uncertain about join logic',
+    });
+    mockDecideEscalation.mockReturnValue({
+      shouldEscalate: true,
+      behavior: 'best_effort_verify',
+      trigger: 'supervisor_exhausted',
+    });
+    mockReconcile.mockReturnValue('medium');
+
+    const inputWithEscalation = {
+      ...baseInput,
+      config: {
+        ...baseInput.config,
+        escalation: {
+          mode: 'channel' as const,
+          channelId: 'C-ESCALATION',
+          timeoutHours: 4,
+        },
+      },
+    };
+
+    await runPipeline(inputWithEscalation);
+
+    // Should execute query (best effort)
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    // Should show caveat blocks
+    expect(mockBuildCaveat).toHaveBeenCalledWith('Uncertain about join logic');
+    // Should save response context
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+    // Should save escalation state with best_effort_verify
+    expect(mockSaveEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        behavior: 'best_effort_verify',
+        originalThreadTs: 'thread-1',
+      }),
+      4,
+    );
+    // Should post to escalation channel
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'C-ESCALATION' }),
+    );
+  });
+
+  it('escalation without channelId configured: falls through to normal flow', async () => {
+    mockSupervise.mockResolvedValue({
+      ...baseSupervisedResult,
+      verdict: 'exhausted',
+      sqlResult: { ...baseSupervisedResult.sqlResult, confidence: 'low' },
+      finalConfidence: 'low',
+      supervisorNotes: 'Could not approve',
+    });
+    mockDecideEscalation.mockReturnValue({
+      shouldEscalate: true,
+      behavior: 'park_wait',
+      trigger: 'supervisor_exhausted',
+    });
+    mockReconcile.mockReturnValue('low');
+
+    // No escalation config (or no channelId) — use baseInput which has no escalation
+    await runPipeline(baseInput);
+
+    // Should NOT post waiting message or escalation
+    expect(mockSaveEscalation).not.toHaveBeenCalled();
+    // Should fall through to execution (no park_wait without channel)
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    // Should NOT show caveat (best_effort_verify also gated on channelId)
+    expect(mockBuildCaveat).not.toHaveBeenCalled();
+    // Should still save response context normally
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
   });
 });

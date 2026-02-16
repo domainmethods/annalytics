@@ -21,6 +21,13 @@ export interface AppConfig {
     maxResultRows: number;
     rateLimitPerHour: number;
   };
+  escalation: {
+    mode: 'channel' | 'dm';
+    channelId?: string;
+    analystUserId?: string;
+    reminderIntervalMinutes: number;
+    timeoutHours: number;
+  };
   port: number;
 }
 
@@ -36,6 +43,12 @@ function parseEnvInt(name: string, defaultVal: number): number {
   const parsed = Number(val);
   if (Number.isNaN(parsed)) throw new Error(`Invalid config: ${name} must be a number, got "${val}"`);
   return parsed;
+}
+
+function parseEscalationMode(val: string | undefined): 'channel' | 'dm' {
+  if (!val || val === 'channel') return 'channel';
+  if (val === 'dm') return 'dm';
+  throw new Error(`Invalid config: ESCALATION_MODE must be "channel" or "dm", got "${val}"`);
 }
 
 export function loadConfig(): AppConfig {
@@ -61,6 +74,13 @@ export function loadConfig(): AppConfig {
       queryTimeoutMs: parseEnvInt('QUERY_TIMEOUT_MS', 30_000),
       maxResultRows: parseEnvInt('MAX_RESULT_ROWS', 1_000),
       rateLimitPerHour: parseEnvInt('RATE_LIMIT_PER_HOUR', 30),
+    },
+    escalation: {
+      mode: parseEscalationMode(process.env.ESCALATION_MODE),
+      channelId: process.env.ESCALATION_CHANNEL_ID || undefined,
+      analystUserId: process.env.ESCALATION_ANALYST_USER_ID || undefined,
+      reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30),
+      timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4),
     },
     port: parseEnvInt('PORT', 3000),
   };

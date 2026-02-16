@@ -1,9 +1,10 @@
 import type { App } from '@slack/bolt';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
-import { runPipeline } from '../pipeline.js';
-import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
+import { runPipeline, toPipelineConfig } from '../pipeline.js';
+import { releaseThreadLock } from '../state/threadLock.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
+import { preflightChecks } from './preflightChecks.js';
 
 export function registerMentions(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
   app.event('app_mention', async ({ event, client }) => {
@@ -21,16 +22,9 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       return;
     }
 
-    // Preflight: acquire thread lock
-    const locked = await acquireThreadLock(threadTs);
-    if (!locked) {
-      await client.chat.postMessage({
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: "I'm still working on your previous question...",
-      });
-      return;
-    }
+    // Preflight: lock + clarification + escalation guards
+    const passed = await preflightChecks(event.channel, threadTs, client);
+    if (!passed) return;
 
     let statusMsgTs: string | undefined;
     try {
@@ -48,14 +42,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
         statusMsgTs,
         client,
         tables: getTables(),
-        config: {
-          geminiApiKey: config.gemini.apiKey,
-          geminiModel: config.gemini.model,
-          fileSearchStoreId: config.gemini.fileSearchStoreId,
-          maxBytesProcessed: config.limits.costGateMaxBytes,
-          queryTimeoutMs: config.limits.queryTimeoutMs,
-          maxResultRows: config.limits.maxResultRows,
-        },
+        config: toPipelineConfig(config),
       });
     } catch {
       // runPipeline has its own error handling; this catches pre-pipeline failures

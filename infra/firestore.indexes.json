@@ -31,6 +31,22 @@
         { "fieldPath": "threadTs", "order": "ASCENDING" },
         { "fieldPath": "state", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "escalation_state",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "originalThreadTs", "order": "ASCENDING" },
+        { "fieldPath": "pipelineState", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "escalation_state",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "escalationTs", "order": "ASCENDING" },
+        { "fieldPath": "pipelineState", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

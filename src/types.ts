@@ -53,6 +53,37 @@ export interface ResponseContext {
   supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
   supervisorNotes: string;
   negativeFeedback?: boolean;
+  retrievedSchema?: {
+    name: string;
+    description: string;
+    columns: { name: string; description: string; dataType: string }[];
+  }[];
+}
+
+export interface EscalationState {
+  escalationId: string;
+  originalThreadTs: string;
+  originalChannel: string;
+  pipelineState: 'awaiting_human' | 'resolved' | 'timed_out';
+  trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity';
+  behavior: 'best_effort_verify' | 'park_wait';
+  stageToResume: 'sql_generation' | 'supervisor_review';
+  context: {
+    clarifiedQuestion: string;
+    userQuestion: string;
+    groundingCitations: GroundingCitation[];
+    previousSql?: string;
+    supervisorNotes?: string;
+    ambiguityDescription?: string;
+  };
+  escalationChannel: string;
+  escalationTs: string;
+  statusMsgTs: string;
+  bestEffortSql?: string;
+  createdAt: Date;
+  expiresAt: Date;
+  lastReminderAt?: Date;
+  traceId: string;
 }
 
 export interface SampleRowEntry {

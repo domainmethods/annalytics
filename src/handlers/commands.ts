@@ -1,11 +1,12 @@
 import type { App } from '@slack/bolt';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
-import { runPipeline } from '../pipeline.js';
-import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
+import { runPipeline, toPipelineConfig } from '../pipeline.js';
+import { releaseThreadLock } from '../state/threadLock.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { createTraceId } from '../logging.js';
+import { preflightChecks } from './preflightChecks.js';
 
 export function registerCommands(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
   app.command('/anna', async ({ command, ack, client }) => {
@@ -32,15 +33,9 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
     const threadTs = statusMsg.ts!;
     const statusMsgTs = statusMsg.ts!;
 
-    const locked = await acquireThreadLock(threadTs);
-    if (!locked) {
-      await client.chat.update({
-        channel: command.channel_id,
-        ts: statusMsgTs,
-        text: "I'm still working on your previous question...",
-      });
-      return;
-    }
+    // Preflight: lock + clarification + escalation guards
+    const passed = await preflightChecks(command.channel_id, threadTs, client);
+    if (!passed) return;
 
     try {
       await runPipeline({
@@ -50,14 +45,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
         statusMsgTs,
         client,
         tables: getTables(),
-        config: {
-          geminiApiKey: config.gemini.apiKey,
-          geminiModel: config.gemini.model,
-          fileSearchStoreId: config.gemini.fileSearchStoreId,
-          maxBytesProcessed: config.limits.costGateMaxBytes,
-          queryTimeoutMs: config.limits.queryTimeoutMs,
-          maxResultRows: config.limits.maxResultRows,
-        },
+        config: toPipelineConfig(config),
       });
     } catch (error) {
       await releaseThreadLock(threadTs).catch(() => {});
