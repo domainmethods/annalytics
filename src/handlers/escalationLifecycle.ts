@@ -59,9 +59,10 @@ export async function checkOverdueEscalations(
       continue;
     }
 
-    // Overdue reminder: lastReminderAt is null or older than interval
+    // Overdue reminder: fall back to createdAt if no reminder sent yet
     const reminderThreshold = new Date(now.getTime() - config.reminderIntervalMinutes * 60000);
-    if (!esc.lastReminderAt || esc.lastReminderAt < reminderThreshold) {
+    const lastActionTime = esc.lastReminderAt || esc.createdAt;
+    if (lastActionTime < reminderThreshold) {
       const blocks = buildEscalationReminderBlocks({
         escalationId: esc.escalationId,
         originalQuestion: esc.context.userQuestion,

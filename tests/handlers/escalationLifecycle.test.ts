@@ -84,6 +84,20 @@ describe('checkOverdueEscalations', () => {
     expect(mockUpdateReminder).toHaveBeenCalledWith('esc_trace-1');
   });
 
+  it('skips reminder when just created (createdAt is recent, no lastReminderAt)', async () => {
+    mockGetAll.mockResolvedValue([{
+      ...baseEscalation,
+      createdAt: new Date(Date.now() - 5 * 60000), // created 5 minutes ago
+      lastReminderAt: undefined,
+    }]);
+
+    await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(mockBuildReminder).not.toHaveBeenCalled();
+    expect(mockUpdateReminder).not.toHaveBeenCalled();
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+  });
+
   it('skips reminder when lastReminderAt is recent', async () => {
     mockGetAll.mockResolvedValue([{
       ...baseEscalation,

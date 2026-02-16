@@ -240,7 +240,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         statusMsgTs,
         bestEffortSql: supervisedResult.sqlResult.sql,
         traceId,
-      }, config.escalation!.timeoutHours);
+      }, config.escalation?.timeoutHours ?? 4);
 
       return;
     }
@@ -387,7 +387,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         statusMsgTs,
         bestEffortSql: sqlToExecute,
         traceId,
-      }, config.escalation!.timeoutHours);
+      }, config.escalation?.timeoutHours ?? 4);
     }
   } catch (error) {
     logger.error({ error }, 'Pipeline failed');
