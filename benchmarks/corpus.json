@@ -1,0 +1,57 @@
+[
+  {
+    "id": "seed-001",
+    "question": "What was total revenue last month?",
+    "category": "simple",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_revenue"],
+    "notes": "Basic aggregation with date filter"
+  },
+  {
+    "id": "seed-002",
+    "question": "Show me the top 10 customers by lifetime value",
+    "category": "aggregate",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_orders", "analytics.dim_customers"],
+    "notes": "Requires join + aggregation + ORDER BY + LIMIT"
+  },
+  {
+    "id": "seed-003",
+    "question": "How has daily active users trended over the past 90 days?",
+    "category": "time_series",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_user_activity"],
+    "notes": "Time-series with date grouping"
+  },
+  {
+    "id": "seed-004",
+    "question": "revenue",
+    "category": "ambiguous",
+    "source": "manual",
+    "notes": "Too vague — should trigger LOW confidence clarification"
+  },
+  {
+    "id": "seed-005",
+    "question": "Compare conversion rates between mobile and desktop by funnel stage",
+    "category": "join",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_conversions", "analytics.dim_devices"],
+    "notes": "Multi-dimension comparison requiring joins and pivoting"
+  },
+  {
+    "id": "seed-006",
+    "question": "Forecast next month's revenue based on the past 12 months",
+    "category": "time_series",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_revenue"],
+    "notes": "BQML forecast intent — should trigger bqml_hint: forecast and generate ML.FORECAST SQL"
+  },
+  {
+    "id": "seed-007",
+    "question": "Find any anomalies in daily signup counts over the past 90 days",
+    "category": "time_series",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_user_activity"],
+    "notes": "BQML anomaly intent — should trigger bqml_hint: anomaly and generate ML.DETECT_ANOMALIES SQL"
+  }
+]
