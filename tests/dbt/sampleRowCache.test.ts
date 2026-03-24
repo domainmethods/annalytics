@@ -86,6 +86,18 @@ describe('getSampleRows', () => {
 
     expect(result!.stale).toBe(true);
   });
+
+  it('returns stale=true when fetchedAt is missing', async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ rows: [{ id: 1 }] }),
+    });
+
+    const result = await getSampleRows('analytics.fct_orders');
+
+    expect(result).not.toBeNull();
+    expect(result!.stale).toBe(true);
+  });
 });
 
 describe('formatSampleRowsForPrompt', () => {
