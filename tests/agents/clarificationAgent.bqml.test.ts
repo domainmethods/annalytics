@@ -92,3 +92,33 @@ describe('classifyQuestion — bqml_hint', () => {
     expect(output.bqml_hint).toBe('anomaly');
   });
 });
+
+describe('classifyQuestion — BQML prompt instructions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('includes bqml_hint, forecast, and anomaly keywords in the system prompt', async () => {
+    mockLLMResponse({
+      route: 'data_query',
+      confidence: 'high',
+      reasoning: 'clear',
+      ambiguities: [],
+      assumptions: [],
+      clarifying_questions: [],
+      resolved_question: 'Forecast revenue',
+    });
+
+    await classifyQuestion(
+      'Forecast revenue for next quarter',
+      [] as ThreadMessage[],
+      [] as TeachingSummary[],
+      'test-api-key',
+    );
+
+    const systemInstruction = mockGenerateContent.mock.calls[0][0].config.systemInstruction;
+    expect(systemInstruction).toContain('bqml_hint');
+    expect(systemInstruction).toContain('forecast');
+    expect(systemInstruction).toContain('anomaly');
+  });
+});
