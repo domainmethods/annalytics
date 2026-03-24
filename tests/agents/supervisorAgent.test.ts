@@ -207,4 +207,31 @@ describe('reviewSql — Supervisor Agent', () => {
     // Should format without crashing — exact value: 46566.13 GB
     expect(prompt).toMatch(/\d+\.\d{2} GB/);
   });
+
+  // ── BQML review criteria tests ───────────────────────────────────────
+
+  it('includes ML.* review criteria in the prompt when SQL uses ML.FORECAST', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'PASS',
+        confidence: 'high',
+        issues: [],
+        suggestions: [],
+        teaching_compliance: 'no_relevant_teaching',
+      }),
+    });
+
+    await reviewSql({
+      ...baseInput,
+      userQuestion: 'Forecast sales for the next 30 days',
+      clarifiedQuestion: 'Forecast total sales for the next 30 days using BQML',
+      generatedSql: 'SELECT * FROM ML.FORECAST(MODEL `analytics.sales_forecast_model`, STRUCT(30 AS horizon, 0.8 AS confidence_level))',
+      explanation: 'Uses ML.FORECAST to project sales 30 days out',
+      reasoningChain: 'User wants a forecast → use BQML ML.FORECAST with the trained model',
+    });
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const prompt = call.contents[0].parts[0].text as string;
+    expect(prompt).toContain('ML.*');
+  });
 });
