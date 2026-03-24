@@ -7,6 +7,7 @@ export interface ClarificationResult {
   clarifying_questions: string[];
   resolved_question: string;
   follow_up_intent?: 'new_query' | 'refinement' | 'meta_question' | 'discrepancy';
+  bqml_hint?: 'forecast' | 'anomaly' | 'generate' | null;
 }
 
 export interface SupervisorVerdict {

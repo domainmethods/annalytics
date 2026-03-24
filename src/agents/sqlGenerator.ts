@@ -15,6 +15,7 @@ export interface GenerateSqlOptions {
   fileSearchStoreId?: string;
   sampleRows?: Map<string, { rows: Record<string, unknown>[]; stale: boolean }>;
   negativeExample?: { sql: string; explanation: string; userFeedback: string };
+  bqml_hint?: 'forecast' | 'anomaly' | 'generate' | null;
 }
 
 // JSON Schema for structured output — used by Gemini's responseJsonSchema

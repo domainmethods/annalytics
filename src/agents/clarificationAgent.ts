@@ -13,6 +13,7 @@ const ClarificationSchema = z.object({
   assumptions: z.array(z.string()),
   clarifying_questions: z.array(z.string()),
   resolved_question: z.string(),
+  bqml_hint: z.enum(['forecast', 'anomaly', 'generate']).nullable().optional(),
 });
 
 export async function classifyQuestion(
