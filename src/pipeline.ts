@@ -26,6 +26,8 @@ import { getSampleRows } from './dbt/sampleRowCache.js';
 import { createTraceId, createLogger, logStage } from './logging.js';
 import { friendlyErrorMessage } from './errors.js';
 import { decideEscalation } from './agents/escalationDecision.js';
+import { generateChartSpec } from './agents/chartAgent.js';
+import { isChartable, renderChart } from './execution/chartRenderer.js';
 import { saveEscalationState } from './state/escalationState.js';
 import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlocks } from './slack/escalationBlocks.js';
 import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
@@ -419,6 +421,37 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         })),
       })),
     });
+
+    // Stage 7b: Chart generation (fire-and-forget — failures silently skipped)
+    if (isChartable(queryResult)) {
+      try {
+        const chartSpec = await generateChartSpec({
+          question: resolvedQuestion,
+          columnNames: queryResult.columnNames,
+          sampleRows: queryResult.rows.slice(0, 20),
+          apiKey: config.geminiApiKey,
+        });
+
+        if (chartSpec) {
+          const pngBuffer = await renderChart(
+            chartSpec.vegaLiteSpec,
+            queryResult.rows,
+          );
+
+          if (pngBuffer) {
+            await client.filesUploadV2({
+              channel_id: channel,
+              thread_ts: threadTs,
+              filename: 'chart.png',
+              file: pngBuffer,
+              title: chartSpec.chartTitle,
+            });
+          }
+        }
+      } catch (error) {
+        console.debug('[Pipeline] Chart generation failed (non-blocking):', error);
+      }
+    }
 
     // Async escalation for best_effort_verify
     if (shouldEscalateAsync && escalationTarget) {
