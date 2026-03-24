@@ -140,4 +140,14 @@ describe('staticAnalysis', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toContain('CREATE');
   });
+
+  it('passes SELECT with ML.FORECAST (BQML prediction)', () => {
+    const result = staticAnalysis("SELECT * FROM ML.FORECAST(MODEL `project.dataset.model`, STRUCT(30 AS horizon))");
+    expect(result.valid).toBe(true);
+  });
+
+  it('blocks CREATE OR REPLACE MODEL (BQML training DDL)', () => {
+    const result = staticAnalysis("CREATE OR REPLACE MODEL `project.dataset.model` OPTIONS(model_type='ARIMA_PLUS') AS SELECT date, amount FROM revenue");
+    expect(result.valid).toBe(false);
+  });
 });

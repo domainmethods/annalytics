@@ -250,6 +250,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         previousAttempt: input.refinementHint
           ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
           : undefined,
+        bqml_hint: clarification.bqml_hint,
       },
       config.geminiApiKey,
       resolvedQuestion,
