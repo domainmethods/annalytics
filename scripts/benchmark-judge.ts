@@ -153,9 +153,21 @@ async function main() {
   console.log(`Judging ${benchmarkRun.results.length} result(s) from ${benchmarkRun.runDate}...\n`);
 
   const ai = new GoogleGenAI({ apiKey: apiKey! });
-  const judgeResults: JudgeResult[] = [];
+
+  // Resume from previous progress if script was interrupted
+  const judgeResults: JudgeResult[] = benchmarkRun.judgeResults ? [...benchmarkRun.judgeResults] : [];
+  const judgedIds = new Set(judgeResults.map(r => r.corpusId));
+
+  if (judgedIds.size > 0) {
+    console.log(`Resuming: ${judgedIds.size} already judged, ${benchmarkRun.results.length - judgedIds.size} remaining\n`);
+  }
 
   for (const result of benchmarkRun.results) {
+    if (judgedIds.has(result.corpusId)) {
+      console.log(`[${result.corpusId}] Already judged, skipping...`);
+      continue;
+    }
+
     const entry = corpusMap.get(result.corpusId);
     const prompt = buildJudgePrompt(entry, result);
 
