@@ -71,7 +71,7 @@ export function generateSummary(
 
   const flagged = judges.filter(j => j.flaggedForReview);
 
-  const regressions = previous
+  const regressions = previous && previous.judgeResults
     ? detectRegressions(previous.judgeResults, judges)
     : [];
 

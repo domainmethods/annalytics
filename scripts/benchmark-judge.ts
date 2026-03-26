@@ -110,7 +110,7 @@ function buildJudgePrompt(entry: CorpusEntry | undefined, result: BenchmarkResul
   lines.push(`- Supervisor Notes: ${result.supervisorNotes}`);
   lines.push(`- Teaching Compliance: ${result.teachingCompliance}`);
 
-  if (result.bytesProcessed !== null) {
+  if (result.bytesProcessed != null) {
     const gb = (result.bytesProcessed / 1024 / 1024 / 1024).toFixed(3);
     lines.push(`- Bytes Processed: ${result.bytesProcessed} (${gb} GB)`);
   }
