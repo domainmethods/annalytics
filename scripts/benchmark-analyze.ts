@@ -55,6 +55,9 @@ export function generateSummary(
   previous?: BenchmarkRun,
 ): string {
   const judges = current.judgeResults;
+  if (!judges || judges.length === 0) {
+    return `# Benchmark Summary — ${current.runDate}\n\nNo judge results available yet.`;
+  }
   const overallScores = judges.map(j => j.overallScore).sort((a, b) => a - b);
 
   const avg = mean(overallScores);
@@ -127,22 +130,22 @@ const isMain =
   process.argv[1]?.endsWith('benchmark-analyze.js');
 
 if (isMain) {
-const args = process.argv.slice(2);
-if (args.length === 0) {
-  console.error('Usage: npx tsx scripts/benchmark-analyze.ts <current.json> [previous.json]');
-  process.exit(1);
-}
+  const args = process.argv.slice(2);
+  if (args.length === 0) {
+    console.error('Usage: npx tsx scripts/benchmark-analyze.ts <current.json> [previous.json]');
+    process.exit(1);
+  }
 
-const currentPath = args[0];
-const previousPath = args[1];
+  const currentPath = args[0];
+  const previousPath = args[1];
 
-const current: BenchmarkRun = JSON.parse(readFileSync(currentPath, 'utf-8'));
-const previous: BenchmarkRun | undefined = previousPath
-  ? JSON.parse(readFileSync(previousPath, 'utf-8'))
-  : undefined;
+  const current: BenchmarkRun = JSON.parse(readFileSync(currentPath, 'utf-8'));
+  const previous: BenchmarkRun | undefined = previousPath
+    ? JSON.parse(readFileSync(previousPath, 'utf-8'))
+    : undefined;
 
-const summary = generateSummary(current, previous);
-const outputPath = currentPath.replace('.json', '-summary.md');
-writeFileSync(outputPath, summary, 'utf-8');
-console.log(`Summary written to ${outputPath}`);
+  const summary = generateSummary(current, previous);
+  const outputPath = currentPath.replace('.json', '-summary.md');
+  writeFileSync(outputPath, summary, 'utf-8');
+  console.log(`Summary written to ${outputPath}`);
 }

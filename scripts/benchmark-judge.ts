@@ -162,7 +162,7 @@ async function main() {
     console.log(`[${result.corpusId}] Judging...`);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-pro-exp',
+      model: 'gemini-3.0-pro',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: {
         responseMimeType: 'application/json',
