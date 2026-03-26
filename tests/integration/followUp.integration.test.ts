@@ -107,6 +107,15 @@ vi.mock('../../src/logging.js', () => ({
   rootLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Stub out chart generation so it doesn't add extra Gemini calls
+vi.mock('../../src/execution/chartRenderer.js', () => ({
+  isChartable: vi.fn(() => false),
+  renderChart: vi.fn(async () => null),
+}));
+vi.mock('../../src/agents/chartAgent.js', () => ({
+  generateChartSpec: vi.fn(async () => null),
+}));
+
 // ─── Real imports ────────────────────────────────────────────────
 import { routeFollowUp } from '../../src/handlers/followUpRouter.js';
 import type { PipelineConfig } from '../../src/pipeline.js';

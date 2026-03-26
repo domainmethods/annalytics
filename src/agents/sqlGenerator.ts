@@ -15,6 +15,7 @@ export interface GenerateSqlOptions {
   fileSearchStoreId?: string;
   sampleRows?: Map<string, { rows: Record<string, unknown>[]; stale: boolean }>;
   negativeExample?: { sql: string; explanation: string; userFeedback: string };
+  bqml_hint?: 'forecast' | 'anomaly' | 'generate' | null;
 }
 
 // JSON Schema for structured output — used by Gemini's responseJsonSchema
@@ -83,6 +84,14 @@ SQL: ${ne.sql}
 Explanation: ${ne.explanation}
 User feedback: "${ne.userFeedback}"
 Do NOT repeat this approach. Adjust based on the user's correction.\n`;
+  }
+
+  if (opts.bqml_hint === 'forecast') {
+    prompt += '\nBIGQUERY ML FUNCTIONS AVAILABLE:\nThe user is asking about forecasting/prediction. You may use ML.FORECAST:\n\nSELECT *\nFROM ML.FORECAST(\n  MODEL `project.dataset.model_name`,\n  STRUCT(horizon AS horizon, 0.95 AS confidence_level)\n)\n\nNotes:\n- The model must already exist (SELECT only, no CREATE MODEL)\n- Common models: ARIMA_PLUS for time series\n- Returns: forecast_timestamp, forecast_value, standard_error, confidence_level, prediction_interval_lower_bound, prediction_interval_upper_bound\n- Reference actual model names from the schema context above\n';
+  } else if (opts.bqml_hint === 'anomaly') {
+    prompt += '\nBIGQUERY ML FUNCTIONS AVAILABLE:\nThe user is asking about anomaly detection. You may use ML.DETECT_ANOMALIES:\n\nSELECT *\nFROM ML.DETECT_ANOMALIES(\n  MODEL `project.dataset.model_name`,\n  STRUCT(0.05 AS contamination)\n)\n\nNotes:\n- The model must already exist (SELECT only, no CREATE MODEL)\n- Returns: row data + is_anomaly (BOOL) + anomaly_probability (FLOAT64)\n- Lower contamination = fewer anomalies detected\n';
+  } else if (opts.bqml_hint === 'generate') {
+    prompt += '\nBIGQUERY ML FUNCTIONS AVAILABLE:\nThe user is asking about text generation. You may use ML.GENERATE_TEXT:\n\nSELECT ml_generate_text_result\nFROM ML.GENERATE_TEXT(\n  MODEL `project.dataset.llm_model`,\n  (SELECT prompt_column FROM source_table),\n  STRUCT(1024 AS max_output_tokens)\n)\n\nNotes:\n- The model must be a remote LLM connection (SELECT only, no CREATE MODEL)\n- Returns: ml_generate_text_result (STRING), ml_generate_text_status (STRING)\n';
   }
 
   return prompt;

@@ -48,7 +48,7 @@ describe('getSampleRows', () => {
   });
 
   it('retrieves cached rows for a table', async () => {
-    const fetchedAt = new Date('2026-02-14');
+    const fetchedAt = new Date(Date.now() - 1000 * 60 * 60); // 1 hour ago (within 7-day threshold)
     mockGet.mockResolvedValue({
       exists: true,
       data: () => ({
@@ -84,6 +84,18 @@ describe('getSampleRows', () => {
 
     const result = await getSampleRows('analytics.fct_orders');
 
+    expect(result!.stale).toBe(true);
+  });
+
+  it('returns stale=true when fetchedAt is missing', async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ rows: [{ id: 1 }] }),
+    });
+
+    const result = await getSampleRows('analytics.fct_orders');
+
+    expect(result).not.toBeNull();
     expect(result!.stale).toBe(true);
   });
 });

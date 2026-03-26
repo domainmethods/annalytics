@@ -13,6 +13,7 @@ const ClarificationSchema = z.object({
   assumptions: z.array(z.string()),
   clarifying_questions: z.array(z.string()),
   resolved_question: z.string(),
+  bqml_hint: z.enum(['forecast', 'anomaly', 'generate']).nullable().optional(),
 });
 
 export async function classifyQuestion(
@@ -56,7 +57,13 @@ Classify and respond with the confidence level:
 
 When the question matches a known business term exactly, prefer HIGH confidence.
 When the topic is established in thread context, avoid redundant clarification.
-If the user says "just guess" or "best guess is fine", always classify as HIGH.`;
+If the user says "just guess" or "best guess is fine", always classify as HIGH.
+
+BQML INTENT DETECTION:
+If the question involves forecasting, prediction, or time-series projection, set bqml_hint to "forecast".
+If the question involves anomalies, outliers, unusual patterns, spikes, or deviations, set bqml_hint to "anomaly".
+If the question involves text summarization, classification, or generation from data, set bqml_hint to "generate".
+Otherwise, leave bqml_hint as null.`;
 }
 
 function buildContents(

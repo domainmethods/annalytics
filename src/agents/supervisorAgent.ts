@@ -83,6 +83,10 @@ REVIEW CHECKLIST:
 6. Is the explanation accurate and matches the SQL?
 7. Are the stated assumptions reasonable and valid?
 8. Is the query safe (no DML/DDL, no unbounded scans, no sensitive data exposure)?
+9. If the query uses ML.* functions:
+   - Is the function appropriate for the user's question?
+   - Are parameters reasonable (e.g., forecast horizon isn't absurdly large)?
+   - Is the referenced model likely to exist in the dataset context?
 
 ${buildValidationContext(input)}Respond with your verdict.`;
 }

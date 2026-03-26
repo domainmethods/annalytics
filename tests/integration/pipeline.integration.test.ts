@@ -106,6 +106,15 @@ vi.mock('../../src/logging.js', () => ({
   logStage: vi.fn(),
 }));
 
+// Stub out chart generation so it doesn't add extra Gemini calls
+vi.mock('../../src/execution/chartRenderer.js', () => ({
+  isChartable: vi.fn(() => false),
+  renderChart: vi.fn(async () => null),
+}));
+vi.mock('../../src/agents/chartAgent.js', () => ({
+  generateChartSpec: vi.fn(async () => null),
+}));
+
 // ─── Real imports (everything else is real) ──────────────────────
 import { runPipeline, type PipelineConfig } from '../../src/pipeline.js';
 import { parseDbtArtifacts } from '../../src/dbt/parser.js';
