@@ -161,52 +161,54 @@ async function main() {
 
     console.log(`[${result.corpusId}] Judging...`);
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.0-pro',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: 'application/json',
-        responseJsonSchema: judgeResponseSchema,
-        temperature: 0.1,
-      },
-    });
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.0-pro',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: 'application/json',
+          responseJsonSchema: judgeResponseSchema,
+          temperature: 0.1,
+        },
+      });
 
-    if (!response.text) throw new Error('Empty response from judge for ' + result.corpusId);
+      if (!response.text) throw new Error('Empty response from judge');
 
-    const judgeResponse = JSON.parse(response.text) as JudgeResponse;
-    const overallScore = computeOverallScore(judgeResponse);
+      const judgeResponse = JSON.parse(response.text) as JudgeResponse;
+      const overallScore = computeOverallScore(judgeResponse);
 
-    const judgeResult: JudgeResult = {
-      corpusId: result.corpusId,
-      scores: {
-        correctness: judgeResponse.correctness,
-        efficiency: judgeResponse.efficiency,
-        readability: judgeResponse.readability,
-        teachingCompliance: judgeResponse.teachingCompliance,
-        safety: judgeResponse.safety,
-      },
-      overallScore: Math.round(overallScore * 100) / 100,
-      rationale: judgeResponse.rationale,
-      ...(judgeResponse.suggestedImprovement !== undefined && {
-        suggestedImprovement: judgeResponse.suggestedImprovement,
-      }),
-      flaggedForReview: judgeResponse.flaggedForReview,
-    };
+      const judgeResult: JudgeResult = {
+        corpusId: result.corpusId,
+        scores: {
+          correctness: judgeResponse.correctness,
+          efficiency: judgeResponse.efficiency,
+          readability: judgeResponse.readability,
+          teachingCompliance: judgeResponse.teachingCompliance,
+          safety: judgeResponse.safety,
+        },
+        overallScore: Math.round(overallScore * 100) / 100,
+        rationale: judgeResponse.rationale,
+        ...(judgeResponse.suggestedImprovement !== undefined && {
+          suggestedImprovement: judgeResponse.suggestedImprovement,
+        }),
+        flaggedForReview: judgeResponse.flaggedForReview,
+      };
 
-    judgeResults.push(judgeResult);
+      judgeResults.push(judgeResult);
 
-    const flagLabel = judgeResult.flaggedForReview ? ' [FLAGGED]' : '';
-    console.log(`  overall: ${judgeResult.overallScore.toFixed(2)}${flagLabel}`);
-    console.log(`  scores: correctness=${judgeResult.scores.correctness} efficiency=${judgeResult.scores.efficiency} readability=${judgeResult.scores.readability} teachingCompliance=${judgeResult.scores.teachingCompliance} safety=${judgeResult.scores.safety}`);
-    console.log(`  rationale: ${judgeResult.rationale.slice(0, 120)}${judgeResult.rationale.length > 120 ? '...' : ''}\n`);
+      // Write incrementally to preserve progress
+      const updated: BenchmarkRun = { ...benchmarkRun, judgeResults };
+      writeFileSync(resolvedPath, JSON.stringify(updated, null, 2), 'utf-8');
+
+      const flagLabel = judgeResult.flaggedForReview ? ' [FLAGGED]' : '';
+      console.log(`  overall: ${judgeResult.overallScore.toFixed(2)}${flagLabel}`);
+      console.log(`  scores: correctness=${judgeResult.scores.correctness} efficiency=${judgeResult.scores.efficiency} readability=${judgeResult.scores.readability} teachingCompliance=${judgeResult.scores.teachingCompliance} safety=${judgeResult.scores.safety}`);
+      console.log(`  rationale: ${judgeResult.rationale.slice(0, 120)}${judgeResult.rationale.length > 120 ? '...' : ''}\n`);
+    } catch (err) {
+      console.error(`  ERROR judging ${result.corpusId}: ${(err as Error).message}\n`);
+    }
   }
 
-  // Append judgeResults to the results file
-  const updated: BenchmarkRun = {
-    ...benchmarkRun,
-    judgeResults,
-  };
-  writeFileSync(resolvedPath, JSON.stringify(updated, null, 2), 'utf-8');
   console.log(`Judge results written to ${resolvedPath}`);
 
   // Summary
