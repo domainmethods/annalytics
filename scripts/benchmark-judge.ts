@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { GoogleGenAI } from '@google/genai';
 import type { CorpusEntry, BenchmarkResult, JudgeResult, BenchmarkRun } from './benchmark-types.js';
 
@@ -124,14 +123,10 @@ function buildJudgePrompt(entry: CorpusEntry | undefined, result: BenchmarkResul
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const resolvedPath = resultsFilePath.startsWith('/')
-    ? resultsFilePath
-    : join(process.cwd(), resultsFilePath);
-
   // Load results file
   let benchmarkRun: BenchmarkRun;
   try {
-    const raw = readFileSync(resolvedPath, 'utf-8');
+    const raw = readFileSync(resultsFilePath, 'utf-8');
     benchmarkRun = JSON.parse(raw) as BenchmarkRun;
   } catch (err) {
     console.error(`Error reading results file: ${(err as Error).message}`);
@@ -139,7 +134,7 @@ async function main() {
   }
 
   // Load corpus
-  const corpusPath = join(process.cwd(), 'benchmarks', 'corpus.json');
+  const corpusPath = 'benchmarks/corpus.json';
   let corpus: CorpusEntry[] = [];
   try {
     const raw = readFileSync(corpusPath, 'utf-8');
@@ -210,7 +205,7 @@ async function main() {
 
       // Write incrementally to preserve progress
       const updated: BenchmarkRun = { ...benchmarkRun, judgeResults };
-      writeFileSync(resolvedPath, JSON.stringify(updated, null, 2), 'utf-8');
+      writeFileSync(resultsFilePath, JSON.stringify(updated, null, 2), 'utf-8');
 
       const flagLabel = judgeResult.flaggedForReview ? ' [FLAGGED]' : '';
       console.log(`  overall: ${judgeResult.overallScore.toFixed(2)}${flagLabel}`);
@@ -221,7 +216,7 @@ async function main() {
     }
   }
 
-  console.log(`Judge results written to ${resolvedPath}`);
+  console.log(`Judge results written to ${resultsFilePath}`);
 
   // Summary
   const avgScore = judgeResults.reduce((sum, r) => sum + r.overallScore, 0) / judgeResults.length;
