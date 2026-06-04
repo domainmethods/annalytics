@@ -63,6 +63,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "runStartedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "teaching_candidates",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "generatedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
