@@ -10,14 +10,11 @@ This document records the current development trajectory for Anna Lytics after r
 
 The next development cycle should continue to prioritize trust infrastructure over feature expansion.
 
-The **Revenue ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evidence Acceptance** analyzer are implemented. The active next tranche is now the **Revenue ReferenceCard Acceptance Run**:
+The **Revenue ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evidence Acceptance** analyzer are implemented. The **Revenue ReferenceCard Acceptance Run** has a recorded `NEEDS_REVISION` decision as of 2026-06-04.
 
-1. Run a real revenue ReferenceCard benchmark.
-2. Analyze the saved benchmark JSON with `scripts/benchmark-analyze.ts`.
-3. Produce the dedicated `*-referencecard-acceptance.md` report.
-4. Record the resulting `ACCEPTED` or `NEEDS_REVISION` decision in this governance document.
+The active next tranche is scoped repair of the failing evidence categories from that acceptance report: benchmark/runtime configuration, ReferenceCard retrieval metadata, table selection, SQL shape, and validation metadata.
 
-Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until the revenue pilot has an acceptance decision recorded here.
+Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until a revised revenue pilot run records an `ACCEPTED` decision or this document is updated with new evidence and rationale.
 
 After the revenue pilot decision is recorded, the trajectory branches:
 
@@ -55,6 +52,16 @@ Acceptance criteria:
 - The analyzer writes both `*-summary.md` and `*-referencecard-acceptance.md`.
 - The acceptance report returns either `ACCEPTED` or `NEEDS_REVISION`.
 - This governance document records the decision and whether the next tranche is one-domain expansion or scoped repair.
+
+Recorded decision on 2026-06-04:
+
+- Decision: `NEEDS_REVISION`.
+- Benchmark JSON: `benchmarks/results/2026-06-04.json`.
+- Summary report: `benchmarks/results/2026-06-04-summary.md`.
+- Acceptance report: `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
+- Evidence source: live local benchmark run using git SHA `1340acdc343a44bac6733db471333cd1111b1440`, followed by `npx tsx scripts/benchmark-analyze.ts benchmarks/results/2026-06-04.json`.
+- Evidence summary: the analyzer evaluated 5 revenue ReferenceCard cases and returned `NEEDS_REVISION`; failures included missing `metadata.fileSearchStoreId`, retrieval misses, table mismatches, SQL-shape mismatches, quality loop exhaustion, validation failures, and a clarification mismatch. The benchmark JSON also records `gemini-3.0-flash` `NOT_FOUND` errors in supervisor notes for each case.
+- Next branch: scoped repair of the failing evidence categories before any additional ReferenceCard domain is added.
 
 ### ReferenceCard v1 Foundation
 
@@ -175,11 +182,11 @@ As of 2026-06-04:
 
 - The `Revenue ReferenceCard v1 Trust Tranche` is implemented.
 - The deterministic `ReferenceCard Evidence Acceptance` analyzer is implemented by `scripts/benchmarkAcceptance.ts`, `scripts/benchmark-analyze.ts`, and focused benchmark script tests.
-- The selected next tranche is `Revenue ReferenceCard Acceptance Run`.
-- No saved `benchmarks/results/*.json` artifact exists in the local repository, so no real revenue acceptance decision has been recorded yet.
+- The `Revenue ReferenceCard Acceptance Run` produced `benchmarks/results/2026-06-04.json`, `benchmarks/results/2026-06-04-summary.md`, and `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
+- The selected next tranche is scoped repair of the `NEEDS_REVISION` acceptance evidence.
 - Mock acceptance artifacts live under `benchmarks/mock-results/` and exercise both `ACCEPTED` and `NEEDS_REVISION` analyzer branches without external services. They do not count as live revenue acceptance evidence.
 - Live-run preflight on 2026-06-04 used the active gcloud project as `GCP_PROJECT_ID` and ran `npx tsx scripts/benchmark.ts`; the run stopped before benchmark execution because `GEMINI_API_KEY` was not present in the local environment. A continuation check on 2026-06-04 confirmed no local `.env` file beyond `.env.example`, no `benchmarks/results/*.json` artifact, no visible GitHub repository secrets for the active repo, and no Gemini/File Search-relevant Secret Manager names in the active gcloud project.
-- Current blocked-audit state: repeated acceptance-run attempts on 2026-06-04 exit before corpus execution with `Missing required environment variable(s): GEMINI_API_KEY`. Resume the tranche by supplying a live `GEMINI_API_KEY` in the local run environment or by adding an equivalent secret-backed CI path, then rerun the benchmark and analyzer before recording an `ACCEPTED` or `NEEDS_REVISION` decision.
+- The acceptance run resumed on 2026-06-04 by explicitly sourcing a gitignored repo-root `.env` with `GCP_PROJECT_ID` and `GEMINI_API_KEY` present. `FILE_SEARCH_STORE_ID` was not present. The live benchmark reached corpus execution and wrote a real result artifact, but all cases exhausted because `gemini-3.0-flash` was not available for `generateContent` in the configured API surface.
 - Failed escalation SQL is tracked as `failedSql`, not `finalSql`, when generating teaching candidates.
 - Chart rendering uses `@resvg/resvg-js` to preserve distroless runtime compatibility.
 - Chartability scans across result rows rather than trusting the first row.
@@ -191,7 +198,7 @@ As of 2026-06-04:
 - Knowledge sync validates environment and initializes Firestore before mutating File Search, reducing partial-sync failure states.
 - Benchmark table observations are derived from generated SQL rather than model-reported `tables_used`; revenue ReferenceCard cases include table-specific SQL-shape expectations.
 - Pull request CI runs `scripts/validate-knowledge.ts` so malformed teaching or reference YAML is caught before merge, while missing dbt artifacts skip only artifact-aware checks.
-- Evidence source for this update: local repository inspection on 2026-06-04 confirmed `references/revenue.yml`, `scripts/benchmarkAcceptance.ts`, and `scripts/benchmark-analyze.ts` exist, while `benchmarks/results/*.json` does not.
+- Evidence source for this update: `benchmarks/results/2026-06-04.json`, `benchmarks/results/2026-06-04-summary.md`, and `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
 
 ## Relationship to Existing Docs
 

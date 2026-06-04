@@ -1,0 +1,460 @@
+{
+  "runDate": "2026-06-04",
+  "metadata": {
+    "runId": "benchmark_2026-06-04T21-32-38-147Z",
+    "runStartedAt": "2026-06-04T21:32:38.147Z",
+    "gitSha": "1340acdc343a44bac6733db471333cd1111b1440",
+    "gitDirty": false,
+    "packageVersion": "1.0.0",
+    "corpusHash": "b91b8fa44ebf30608de6c2e4364277b148f7574e0a0ac27de83c50bcb5b651a3",
+    "dbtManifestHash": null,
+    "dbtCatalogHash": null,
+    "geminiModel": "gemini-3.0-pro",
+    "judgeModel": "gemini-3.0-pro",
+    "fileSearchStoreId": "",
+    "gcpProjectId": "dm-website-426721"
+  },
+  "corpusSize": 12,
+  "results": [
+    {
+      "corpusId": "seed-001",
+      "question": "What was total revenue last month?",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_revenue"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 304
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-002",
+      "question": "Show me the top 10 customers by lifetime value",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_orders",
+        "analytics.dim_customers"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 142
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-003",
+      "question": "How has daily active users trended over the past 90 days?",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_user_activity"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 162
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-004",
+      "question": "revenue",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "observedTables": [],
+      "tableSelectionPassed": null,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 141
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-005",
+      "question": "Compare conversion rates between mobile and desktop by funnel stage",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_conversions",
+        "analytics.dim_devices"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 147
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-006",
+      "question": "Forecast next month's revenue based on the past 12 months",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_revenue"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 144
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "seed-007",
+      "question": "Find any anomalies in daily signup counts over the past 90 days",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "expectedTables": [
+        "analytics.fct_user_activity"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "sqlShapePassed": null,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 126
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "revenue-ref-001",
+      "question": "What was total revenue last month?",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "expectedReferenceIds": [
+        "revenue-canonical-definition"
+      ],
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": false,
+      "expectedTables": [
+        "analytics.fct_orders"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "expectedSqlContains": [
+        "analytics.fct_orders",
+        "order_status = 'completed'"
+      ],
+      "sqlShapePassed": false,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 139
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "revenue-ref-002",
+      "question": "Show monthly revenue this year",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "expectedReferenceIds": [
+        "revenue-monthly-grain"
+      ],
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": false,
+      "expectedTables": [
+        "analytics.fct_orders"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "expectedSqlContains": [
+        "analytics.fct_orders",
+        "DATE_TRUNC",
+        "MONTH",
+        "order_status = 'completed'"
+      ],
+      "sqlShapePassed": false,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 137
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "revenue-ref-003",
+      "question": "Top 10 customers by lifetime value",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "expectedReferenceIds": [
+        "revenue-customer-lifetime-value"
+      ],
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": false,
+      "expectedTables": [
+        "analytics.fct_orders",
+        "analytics.dim_customers"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "expectedSqlContains": [
+        "analytics.fct_orders",
+        "analytics.dim_customers",
+        "customer_id",
+        "SUM",
+        "order_status = 'completed'"
+      ],
+      "sqlShapePassed": false,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 132
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "revenue-ref-004",
+      "question": "Should refunds count in revenue?",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "expectedReferenceIds": [
+        "revenue-refunds-exclusions"
+      ],
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": false,
+      "expectedTables": [
+        "analytics.fct_orders"
+      ],
+      "observedTables": [],
+      "tableSelectionPassed": false,
+      "expectedSqlContains": [
+        "analytics.fct_orders",
+        "order_status = 'completed'"
+      ],
+      "sqlShapePassed": false,
+      "clarificationPassed": null,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 126
+      },
+      "groundingCitations": []
+    },
+    {
+      "corpusId": "revenue-ref-005",
+      "question": "revenue",
+      "generatedSql": null,
+      "confidence": "low",
+      "qualityVerdict": "exhausted",
+      "retryCount": 0,
+      "validationResults": {
+        "l1": false,
+        "l2": false,
+        "l3": false,
+        "l4": false
+      },
+      "bytesProcessed": null,
+      "supervisorNotes": "Error: {\"error\":{\"code\":404,\"message\":\"models/gemini-3.0-flash is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.\",\"status\":\"NOT_FOUND\"}}",
+      "teachingCompliance": "no_relevant_teaching",
+      "observedReferenceIds": [],
+      "referenceRetrievalPassed": null,
+      "observedTables": [],
+      "tableSelectionPassed": null,
+      "sqlShapePassed": null,
+      "expectedClarificationConfidence": "low",
+      "clarificationPassed": false,
+      "latencyMs": {
+        "clarification": 0,
+        "generation": 0,
+        "validation": 0,
+        "supervisor": 0,
+        "total": 136
+      },
+      "groundingCitations": []
+    }
+  ],
+  "judgeResults": []
+}
