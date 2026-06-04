@@ -21,6 +21,8 @@ It includes:
 
 Do not treat the existing Phase 3 feature plan as the active next tranche unless this governance document is updated first.
 
+After the Revenue ReferenceCard v1 implementation lands, the next proposed tranche is **ReferenceCard Evidence Acceptance**, designed in `docs/superpowers/specs/2026-06-04-referencecard-evidence-acceptance-design.md`. It should convert benchmark output into an explicit accept/revise decision before adding another reference-card domain.
+
 ## Strategic Rationale
 
 Anna Lytics already has the core self-serve analytics shape: Slack-native intake, dbt metadata, validated SQL generation, supervisor review, escalation, teachings, and response transparency. The highest-leverage gap is not another answer format. It is making the system more governable, measurable, and semantically grounded.

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadDbtTableNames, validateTeachingIntegrity } from '../../src/teachings/validation.js';
 import type { Teaching } from '../../src/teachings/types.js';
 import { loadTeachingsFromDir } from '../../scripts/validate-teachings.js';
@@ -56,12 +59,14 @@ describe('validateTeachingIntegrity', () => {
 
 describe('loadTeachingsFromDir', () => {
   it('treats a missing teachings directory as empty', async () => {
-    await expect(loadTeachingsFromDir('/tmp/annalytics-missing-teachings-dir')).resolves.toEqual([]);
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-teachings-'));
+    await expect(loadTeachingsFromDir(join(root, 'missing'))).resolves.toEqual([]);
   });
 });
 
 describe('loadDbtTableNames', () => {
   it('returns null when dbt artifacts are missing', async () => {
-    await expect(loadDbtTableNames('/tmp/annalytics-missing-dbt-artifacts')).resolves.toBeNull();
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-dbt-'));
+    await expect(loadDbtTableNames(root)).resolves.toBeNull();
   });
 });

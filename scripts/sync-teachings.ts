@@ -1,58 +1,20 @@
-import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
-import { parseTeachingFile } from '../src/teachings/parser.js';
 import { syncTeachingsToFileSearch } from '../src/teachings/fileSearchSync.js';
 import { buildSummaries } from '../src/teachings/summaryMap.js';
 import { initFirestore, getDb } from '../src/state/firestore.js';
-import { loadDbtTableNames, validateTeachingIntegrity } from '../src/teachings/validation.js';
-import { initBigQuery, dryRunValidation } from '../src/validation/dryRun.js';
+import { loadTeachingsFromDir, validateTeachingsForSync } from './validate-teachings.js';
 
 async function main() {
-  const teachingsDir = join(process.cwd(), 'teachings');
-  let files: string[];
-  try {
-    files = await readdir(teachingsDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      console.log('No teachings directory found');
-      return;
-    }
-    throw err;
-  }
-  const yamlFiles = files.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'));
-
-  if (yamlFiles.length === 0) {
+  const rootDir = process.cwd();
+  const teachingsDir = join(rootDir, 'teachings');
+  const allTeachings = await loadTeachingsFromDir(teachingsDir);
+  if (allTeachings.length === 0) {
     console.log('No teaching YAML files found');
     return;
   }
 
-  // Parse all teaching files
-  const allTeachings = [];
-  for (const file of yamlFiles) {
-    const content = await readFile(join(teachingsDir, file), 'utf-8');
-    const teachings = parseTeachingFile(content);
-    allTeachings.push(...teachings);
-  }
-
-  console.log(`Parsed ${allTeachings.length} teachings from ${yamlFiles.length} files`);
-
-  const validTableNames = await loadDbtTableNames(process.cwd());
-  const validationErrors = validateTeachingIntegrity(allTeachings, {
-    validTableNames: validTableNames ?? undefined,
-  });
-
-  const projectId = process.env.GCP_PROJECT_ID;
-  if (projectId) {
-    initBigQuery(projectId);
-    for (const teaching of allTeachings) {
-      if (!teaching.sanctioned_sql) continue;
-      const dryRun = await dryRunValidation(teaching.sanctioned_sql);
-      if (!dryRun.valid) {
-        validationErrors.push(`Teaching ${teaching.id} sanctioned_sql failed dry run: ${dryRun.error}`);
-      }
-    }
-  }
-
+  console.log(`Parsed ${allTeachings.length} teachings`);
+  const validationErrors = await validateTeachingsForSync(rootDir);
   if (validationErrors.length > 0) {
     console.error('Teaching validation failed:');
     for (const error of validationErrors) console.error(`- ${error}`);
@@ -75,6 +37,7 @@ async function main() {
   }
 
   // Update Firestore teaching summary map
+  const projectId = process.env.GCP_PROJECT_ID;
   if (!projectId) {
     throw new Error('Missing GCP_PROJECT_ID');
   }
