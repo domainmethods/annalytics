@@ -178,7 +178,7 @@ As of 2026-06-04:
 - The selected next tranche is `Revenue ReferenceCard Acceptance Run`.
 - No saved `benchmarks/results/*.json` artifact exists in the local repository, so no real revenue acceptance decision has been recorded yet.
 - Mock acceptance artifacts live under `benchmarks/mock-results/` and exercise both `ACCEPTED` and `NEEDS_REVISION` analyzer branches without external services. They do not count as live revenue acceptance evidence.
-- Live-run preflight on 2026-06-04 used the active gcloud project as `GCP_PROJECT_ID` and ran `npx tsx scripts/benchmark.ts`; the run stopped before benchmark execution because `GEMINI_API_KEY` was not present in the local environment. GitHub secret inspection for the visible repository exposed no `GEMINI_API_KEY_CI` or `FILE_SEARCH_STORE_ID` secret names.
+- Live-run preflight on 2026-06-04 used the active gcloud project as `GCP_PROJECT_ID` and ran `npx tsx scripts/benchmark.ts`; the run stopped before benchmark execution because `GEMINI_API_KEY` was not present in the local environment. A continuation check on 2026-06-04 confirmed no local `.env` file beyond `.env.example`, no `benchmarks/results/*.json` artifact, no visible GitHub repository secrets for the active repo, and no Gemini/File Search-relevant Secret Manager names in the active gcloud project.
 - Failed escalation SQL is tracked as `failedSql`, not `finalSql`, when generating teaching candidates.
 - Chart rendering uses `@resvg/resvg-js` to preserve distroless runtime compatibility.
 - Chartability scans across result rows rather than trusting the first row.
