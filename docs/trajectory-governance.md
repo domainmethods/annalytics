@@ -8,20 +8,21 @@ This document records the current development trajectory for Anna Lytics after r
 
 ## Current Decision
 
-The next development cycle should prioritize trust infrastructure over feature expansion.
+The next development cycle should continue to prioritize trust infrastructure over feature expansion.
 
-The active tranche is the **Revenue ReferenceCard v1 Trust Tranche**, designed in `docs/superpowers/specs/2026-06-04-referencecard-v1-trust-tranche-design.md`.
+The **Revenue ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evidence Acceptance** analyzer are implemented. The active next tranche is now the **Revenue ReferenceCard Acceptance Run**:
 
-It includes:
+1. Run a real revenue ReferenceCard benchmark.
+2. Analyze the saved benchmark JSON with `scripts/benchmark-analyze.ts`.
+3. Produce the dedicated `*-referencecard-acceptance.md` report.
+4. Record the resulting `ACCEPTED` or `NEEDS_REVISION` decision in this governance document.
 
-1. Typed `ReferenceCard v1` for one high-confusion analytics domain.
-2. Benchmark hardening with run provenance and validation-layer visibility.
-3. Teaching validation gates before File Search sync.
-4. Compact provenance and trust indicators only when they materially change user interpretation.
+Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until the revenue pilot has an acceptance decision recorded here.
 
-Do not treat the existing Phase 3 feature plan as the active next tranche unless this governance document is updated first.
+After the revenue pilot decision is recorded, the trajectory branches:
 
-After the Revenue ReferenceCard v1 implementation lands, the next proposed tranche is **ReferenceCard Evidence Acceptance**, designed in `docs/superpowers/specs/2026-06-04-referencecard-evidence-acceptance-design.md`. It should convert benchmark output into an explicit accept/revise decision before adding another reference-card domain.
+- If the revenue pilot is `ACCEPTED`, the next product tranche may add exactly one additional high-confusion ReferenceCard domain.
+- If the revenue pilot is `NEEDS_REVISION`, the next tranche should be scoped repair of the failing evidence category: card content, prompt behavior, retrieval, table selection, SQL shape, or validation metadata.
 
 ## Strategic Rationale
 
@@ -37,7 +38,25 @@ Borrow from Anthropic's self-service analytics approach at the operating-model l
 
 ## Current Tranche
 
-### ReferenceCard v1
+### Revenue ReferenceCard Acceptance Run
+
+Convert the implemented revenue ReferenceCard and deterministic analyzer into recorded evidence before expanding scope.
+
+Scope:
+
+- Execute the real revenue benchmark that emits ReferenceCard retrieval, table-selection, SQL-shape, validation-layer, and provenance fields.
+- Run `scripts/benchmark-analyze.ts` against the saved benchmark JSON.
+- Review the generated `*-referencecard-acceptance.md` report.
+- Update this document with the dated acceptance decision, benchmark artifact path, evidence source, and next branch.
+
+Acceptance criteria:
+
+- A real benchmark JSON exists under `benchmarks/results/`.
+- The analyzer writes both `*-summary.md` and `*-referencecard-acceptance.md`.
+- The acceptance report returns either `ACCEPTED` or `NEEDS_REVISION`.
+- This governance document records the decision and whether the next tranche is one-domain expansion or scoped repair.
+
+### ReferenceCard v1 Foundation
 
 Build a small typed reference layer before adding broad new product behavior.
 
@@ -154,7 +173,10 @@ Every update should include:
 
 As of 2026-06-04:
 
-- The selected next tranche is `Revenue ReferenceCard v1 Trust Tranche`.
+- The `Revenue ReferenceCard v1 Trust Tranche` is implemented.
+- The deterministic `ReferenceCard Evidence Acceptance` analyzer is implemented by `scripts/benchmarkAcceptance.ts`, `scripts/benchmark-analyze.ts`, and focused benchmark script tests.
+- The selected next tranche is `Revenue ReferenceCard Acceptance Run`.
+- No saved `benchmarks/results/*.json` artifact exists in the local repository, so no real revenue acceptance decision has been recorded yet.
 - Failed escalation SQL is tracked as `failedSql`, not `finalSql`, when generating teaching candidates.
 - Chart rendering uses `@resvg/resvg-js` to preserve distroless runtime compatibility.
 - Chartability scans across result rows rather than trusting the first row.
@@ -166,6 +188,7 @@ As of 2026-06-04:
 - Knowledge sync validates environment and initializes Firestore before mutating File Search, reducing partial-sync failure states.
 - Benchmark table observations are derived from generated SQL rather than model-reported `tables_used`; revenue ReferenceCard cases include table-specific SQL-shape expectations.
 - Pull request CI runs `scripts/validate-knowledge.ts` so malformed teaching or reference YAML is caught before merge, while missing dbt artifacts skip only artifact-aware checks.
+- Evidence source for this update: local repository inspection on 2026-06-04 confirmed `references/revenue.yml`, `scripts/benchmarkAcceptance.ts`, and `scripts/benchmark-analyze.ts` exist, while `benchmarks/results/*.json` does not.
 
 ## Relationship to Existing Docs
 
