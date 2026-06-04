@@ -63,12 +63,20 @@ export function evaluateReferenceCardAcceptance(
   const cases = run.results
     .filter(isReferenceCardAcceptanceCase)
     .map(evaluateCase);
+  const runFailures: ReferenceCardAcceptanceFailure[] = cases.length === 0
+    ? [{
+        corpusId: '__run__',
+        failureClass: 'pipeline_failure',
+        detail: 'No ReferenceCard acceptance cases found',
+      }]
+    : [];
   const failures: ReferenceCardAcceptanceFailure[] = [
     ...metadataFailures.map(detail => ({
       corpusId: '__metadata__',
       failureClass: 'missing_metadata' as const,
       detail,
     })),
+    ...runFailures,
     ...cases.flatMap(item => item.failures),
   ];
 

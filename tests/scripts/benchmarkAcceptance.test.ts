@@ -120,6 +120,33 @@ describe('evaluateReferenceCardAcceptance', () => {
     expect(acceptance.cases).toHaveLength(1);
   });
 
+  it('rejects a run with no benchmark results', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([]));
+
+    expect(acceptance.decision).toBe('NEEDS_REVISION');
+    expect(acceptance.failures).toContainEqual({
+      corpusId: '__run__',
+      failureClass: 'pipeline_failure',
+      detail: 'No ReferenceCard acceptance cases found',
+    });
+  });
+
+  it('rejects a run with no reference-card acceptance cases', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        corpusId: 'seed-001',
+        expectedReferenceIds: undefined,
+      }),
+    ]));
+
+    expect(acceptance.decision).toBe('NEEDS_REVISION');
+    expect(acceptance.cases).toEqual([]);
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      corpusId: '__run__',
+      failureClass: 'pipeline_failure',
+    }));
+  });
+
   it('classifies retrieval misses', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({ observedReferenceIds: [], referenceRetrievalPassed: false }),
