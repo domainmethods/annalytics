@@ -4,6 +4,7 @@ import { toJSONSchema } from 'zod/v4/core';
 import type { ClarificationResult } from './types.js';
 import type { TeachingSummary } from '../teachings/types.js';
 import type { ThreadMessage } from '../types.js';
+import { getFlashModel } from './modelConfig.js';
 
 const ClarificationSchema = z.object({
   route: z.enum(['data_query', 'dbt_status']),
@@ -28,7 +29,7 @@ export async function classifyQuestion(
   const contents = buildContents(question, threadContext);
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-flash',
+    model: getFlashModel(),
     contents,
     config: {
       systemInstruction: systemPrompt,

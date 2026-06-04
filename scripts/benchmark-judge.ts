@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { GoogleGenAI } from '@google/genai';
 import type { CorpusEntry, BenchmarkResult, JudgeResult, BenchmarkRun } from './benchmark-types.js';
+import { getJudgeModel } from '../src/agents/modelConfig.js';
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ async function main() {
 
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.0-pro',
+        model: getJudgeModel(),
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
           responseMimeType: 'application/json',

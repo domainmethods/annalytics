@@ -9,6 +9,8 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { TeachingSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
+import { getFlashModel, getJudgeModel, getProModel } from '../src/agents/modelConfig.js';
+import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
@@ -27,7 +29,9 @@ import {
 const apiKey = process.env.GEMINI_API_KEY;
 const projectId = process.env.GCP_PROJECT_ID;
 const fileSearchStoreId = process.env.FILE_SEARCH_STORE_ID;
-const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.0-pro';
+const flashModel = getFlashModel();
+const geminiModel = getProModel();
+const judgeModel = getJudgeModel();
 
 if (!apiKey || !projectId) {
   const missing = [
@@ -52,6 +56,12 @@ async function main() {
   const runDate = formatDate(new Date());
 
   console.log(`Benchmark run: ${runDate}`);
+
+  await assertGenerateContentModelsAvailable(apiKey!, [
+    flashModel,
+    geminiModel,
+    judgeModel,
+  ]);
 
   // Initialize services
   initFirestore(projectId!);
@@ -105,7 +115,7 @@ async function main() {
     gitSha: getGitSha(root),
     gitDirty: getGitDirty(root),
     geminiModel,
-    judgeModel: 'gemini-3.0-pro',
+    judgeModel,
     fileSearchStoreId: fileSearchStoreId ?? null,
     gcpProjectId: projectId!,
   });

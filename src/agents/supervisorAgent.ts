@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { SupervisorVerdict, GroundingCitation } from './types.js';
+import { getProModel } from './modelConfig.js';
 
 const SupervisorSchema = z.object({
   verdict: z.enum(['PASS', 'FAIL']),
@@ -30,7 +31,7 @@ export async function reviewSql(input: SupervisorInput): Promise<SupervisorVerdi
   const prompt = buildSupervisorPrompt(input);
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-pro',
+    model: getProModel(),
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       systemInstruction: 'You are a senior data analyst reviewing a generated SQL query. Be specific about issues and suggestions.',

@@ -108,6 +108,27 @@ describe('classifyQuestion', () => {
     expect(call.config.systemInstruction).toContain('churn');
   });
 
+  it('uses GEMINI_FLASH_MODEL when configured', async () => {
+    vi.stubEnv('GEMINI_FLASH_MODEL', 'gemini-3-flash-preview');
+    vi.resetModules();
+    const { classifyQuestion: classifyQuestionWithEnv } = await import('../../src/agents/clarificationAgent.js');
+    mockLLMResponse({
+      route: 'data_query',
+      confidence: 'high',
+      reasoning: 'clear',
+      ambiguities: [],
+      assumptions: [],
+      clarifying_questions: [],
+      resolved_question: 'query',
+    });
+
+    await classifyQuestionWithEnv('revenue?', [], summaries, 'key');
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    expect(call.model).toBe('gemini-3-flash-preview');
+    vi.unstubAllEnvs();
+  });
+
   it('includes thread context in the prompt', async () => {
     mockLLMResponse({
       route: 'data_query',

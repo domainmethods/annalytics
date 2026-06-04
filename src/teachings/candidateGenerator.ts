@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { TeachingCandidate } from '../state/teachingCandidates.js';
+import { getFlashModel } from '../agents/modelConfig.js';
 
 export interface EscalationTeachingContext {
   escalationId: string;
@@ -57,7 +58,7 @@ export async function generateTeachingCandidate(
   ];
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-flash',
+    model: getFlashModel(),
     contents,
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,

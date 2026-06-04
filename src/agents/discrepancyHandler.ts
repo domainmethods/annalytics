@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { ResponseContext } from '../types.js';
+import { getProModel } from './modelConfig.js';
 
 const DiagnosticSchema = z.object({
   diagnosticSql: z.string(),
@@ -30,7 +31,7 @@ Generate a diagnostic SQL query to investigate. Consider:
 - Generate only SELECT statements`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-pro',
+    model: getProModel(),
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',

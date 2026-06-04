@@ -98,7 +98,7 @@ describe('generateTeachingCandidate', () => {
     expect(userContent).not.toContain('Supervisor Notes');
   });
 
-  it('uses Flash model with structured output config', async () => {
+  it('uses the configured Flash model default with structured output config', async () => {
     mockGenerateContent.mockResolvedValue({
       text: JSON.stringify(validLLMResponse),
     });
@@ -107,7 +107,7 @@ describe('generateTeachingCandidate', () => {
 
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     const call = mockGenerateContent.mock.calls[0][0];
-    expect(call.model).toBe('gemini-3.0-flash');
+    expect(call.model).toBe('gemini-flash-latest');
     expect(call.config.responseMimeType).toBe('application/json');
     expect(call.config.responseJsonSchema).toBeDefined();
     expect(call.config.systemInstruction).toContain('reusable teaching');

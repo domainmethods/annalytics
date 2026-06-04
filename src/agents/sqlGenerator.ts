@@ -4,6 +4,7 @@ import type { SqlGenerationResult, ThreadMessage } from '../types.js';
 import type { GroundingCitation } from './types.js';
 import { assessQuality } from '../dbt/quality.js';
 import { formatSampleRowsForPrompt } from '../dbt/sampleRowCache.js';
+import { getProModel } from './modelConfig.js';
 
 export interface GenerateSqlOptions {
   question: string;
@@ -123,7 +124,7 @@ function buildContents(
 
 export async function generateSql(opts: GenerateSqlOptions): Promise<SqlGenerationResult> {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-  const model = opts.model || 'gemini-3.0-pro';
+  const model = opts.model || getProModel();
 
   let systemPrompt = buildSystemPrompt(opts);
 

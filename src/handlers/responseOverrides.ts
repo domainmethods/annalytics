@@ -5,8 +5,7 @@ import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions } from '../slack/blocks.js';
-
-const SUMMARY_MODEL = 'gemini-3.0-flash';
+import { getFlashModel } from '../agents/modelConfig.js';
 
 export interface OverrideConfig {
   maxBytesProcessed: number;
@@ -99,7 +98,7 @@ export async function handleSummaryOverride(
       const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
       const sampleRows = result.rows.slice(0, 50);
       const response = await ai.models.generateContent({
-        model: SUMMARY_MODEL,
+        model: getFlashModel(),
         contents: [{
           role: 'user',
           parts: [{
