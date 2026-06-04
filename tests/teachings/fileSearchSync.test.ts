@@ -1,13 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { syncTeachingsToFileSearch } from '../../src/teachings/fileSearchSync.js';
+import { syncMarkdownDocumentsToFileSearch, syncTeachingsToFileSearch } from '../../src/teachings/fileSearchSync.js';
 import type { Teaching } from '../../src/teachings/types.js';
 
 const mockUpload = vi.fn();
+const mockListDocuments = vi.fn();
+const mockDeleteDocument = vi.fn();
 vi.mock('@google/genai', () => ({
   GoogleGenAI: vi.fn(function () {
     return {
       fileSearchStores: {
         uploadToFileSearchStore: mockUpload,
+        documents: {
+          list: mockListDocuments,
+          delete: mockDeleteDocument,
+        },
       },
     };
   }),
@@ -43,6 +49,8 @@ describe('syncTeachingsToFileSearch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUpload.mockResolvedValue({ name: 'op-1', done: true });
+    mockListDocuments.mockResolvedValue([]);
+    mockDeleteDocument.mockResolvedValue({});
   });
 
   it('uploads each teaching as a separate file to the store', async () => {
@@ -55,17 +63,86 @@ describe('syncTeachingsToFileSearch', () => {
     expect(mockUpload).toHaveBeenCalledTimes(2);
   });
 
-  it('sets displayName to teaching ID', async () => {
+  it('sets displayName to namespaced teaching ID', async () => {
     await syncTeachingsToFileSearch([teaching1], 'stores/test', 'key');
 
     expect(mockUpload).toHaveBeenCalledWith(
       expect.objectContaining({
         fileSearchStoreName: 'stores/test',
         config: expect.objectContaining({
-          displayName: 'revenue-monthly',
+          displayName: 'teaching:revenue-monthly',
         }),
       }),
     );
+  });
+
+  it('uploads generic markdown documents with explicit display names', async () => {
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key');
+
+    expect(result.uploaded).toBe(1);
+    expect(result.errors).toHaveLength(0);
+    expect(mockUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileSearchStoreName: 'stores/test',
+        config: expect.objectContaining({
+          displayName: 'reference_card:revenue-canonical-definition',
+        }),
+      }),
+    );
+  });
+
+  it('clears existing File Search documents before upload', async () => {
+    mockListDocuments.mockResolvedValue([
+      { name: 'stores/test/documents/old-1' },
+      { name: 'stores/test/documents/old-2' },
+    ]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key');
+
+    expect(result.deleted).toBe(2);
+    expect(mockListDocuments).toHaveBeenCalledWith({ parent: 'stores/test' });
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: 'stores/test/documents/old-1',
+      config: { force: true },
+    });
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: 'stores/test/documents/old-2',
+      config: { force: true },
+    });
+  });
+
+  it('teaching-only sync preserves reference-card documents in the shared store', async () => {
+    mockListDocuments.mockResolvedValue([
+      {
+        name: 'stores/test/documents/teaching-old',
+        displayName: 'teaching:old-revenue',
+      },
+      {
+        name: 'stores/test/documents/reference-card',
+        displayName: 'reference_card:revenue-canonical-definition',
+      },
+    ]);
+
+    const result = await syncTeachingsToFileSearch([teaching1], 'stores/test', 'key');
+
+    expect(result.deleted).toBe(1);
+    expect(mockDeleteDocument).toHaveBeenCalledTimes(1);
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: 'stores/test/documents/teaching-old',
+      config: { force: true },
+    });
   });
 
   it('handles empty teachings array without error', async () => {

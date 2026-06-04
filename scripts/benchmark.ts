@@ -9,11 +9,25 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { TeachingSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
+import {
+  buildBenchmarkMetadata,
+  clarificationPassed,
+  extractTablesFromSql,
+  extractReferenceIdsFromCitations,
+  getGitDirty,
+  getGitSha,
+  referenceRetrievalPassed,
+  sqlShapePassed,
+  tableSelectionPassed,
+  validationResultsFromFailures,
+} from './benchmarkSupport.js';
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
 const apiKey = process.env.GEMINI_API_KEY;
 const projectId = process.env.GCP_PROJECT_ID;
+const fileSearchStoreId = process.env.FILE_SEARCH_STORE_ID;
+const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.0-pro';
 
 if (!apiKey || !projectId) {
   const missing = [
@@ -55,9 +69,11 @@ async function main() {
   // Load dbt artifacts (optional — benchmark can run without schema context)
   const root = join(process.cwd());
   let tables: TableContext[] = [];
+  let manifestRaw: string | null = null;
+  let catalogRaw: string | null = null;
   try {
-    const manifestRaw = await readFile(join(root, 'dbt', 'manifest.json'), 'utf-8');
-    const catalogRaw = await readFile(join(root, 'dbt', 'catalog.json'), 'utf-8');
+    manifestRaw = await readFile(join(root, 'dbt', 'manifest.json'), 'utf-8');
+    catalogRaw = await readFile(join(root, 'dbt', 'catalog.json'), 'utf-8');
     const manifest = JSON.parse(manifestRaw) as { nodes: Record<string, unknown> };
     const catalog = JSON.parse(catalogRaw) as { nodes: Record<string, unknown> };
     tables = parseDbtArtifacts(
@@ -73,7 +89,26 @@ async function main() {
   const corpusPath = join(root, 'benchmarks', 'corpus.json');
   const corpusRaw = await readFile(corpusPath, 'utf-8');
   const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
+  const knownBenchmarkTables = [
+    ...new Set([
+      ...tables.map(table => table.name),
+      ...corpus.flatMap(entry => entry.expectedTables ?? []),
+    ]),
+  ];
   console.log(`Corpus: ${corpus.length} questions\n`);
+  const packageJson = await readFile(join(root, 'package.json'), 'utf-8');
+  const metadata = buildBenchmarkMetadata({
+    packageJson,
+    corpusRaw,
+    manifestRaw,
+    catalogRaw,
+    gitSha: getGitSha(root),
+    gitDirty: getGitDirty(root),
+    geminiModel,
+    judgeModel: 'gemini-3.0-pro',
+    fileSearchStoreId: fileSearchStoreId ?? null,
+    gcpProjectId: projectId!,
+  });
 
   // Run each question
   const results: BenchmarkResult[] = [];
@@ -81,6 +116,7 @@ async function main() {
   for (const entry of corpus) {
     console.log(`[${entry.id}] ${entry.question}`);
     const totalStart = Date.now();
+    let observedClarificationConfidence: 'high' | 'medium' | 'low' | undefined;
 
     try {
       // Step 1: Clarification
@@ -92,6 +128,7 @@ async function main() {
         apiKey!,
       );
       const clarifyMs = Date.now() - clarifyStart;
+      observedClarificationConfidence = clarification.confidence;
 
       console.log(`  clarification: ${clarification.confidence} (${clarifyMs}ms)`);
 
@@ -109,6 +146,19 @@ async function main() {
           bytesProcessed: null,
           supervisorNotes: 'Skipped: LOW clarification confidence',
           teachingCompliance: 'no_relevant_teaching',
+          expectedReferenceIds: entry.expectedReferenceIds,
+          observedReferenceIds: [],
+          referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),
+          expectedTables: entry.expectedTables,
+          observedTables: [],
+          tableSelectionPassed: tableSelectionPassed(entry.expectedTables, []),
+          expectedSqlContains: entry.expectedSqlContains,
+          sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, null),
+          expectedClarificationConfidence: entry.expectedClarificationConfidence,
+          clarificationPassed: clarificationPassed(
+            entry.expectedClarificationConfidence,
+            clarification.confidence,
+          ),
           latencyMs: {
             clarification: clarifyMs,
             generation: 0,
@@ -130,6 +180,8 @@ async function main() {
           tables,
           threadContext: [],
           apiKey: apiKey!,
+          model: geminiModel,
+          fileSearchStoreId,
           bqml_hint: clarification.bqml_hint ?? undefined,
         },
         apiKey!,                        // supervisor uses same API key
@@ -138,6 +190,13 @@ async function main() {
       );
       const loopMs = Date.now() - loopStart;
       const totalMs = Date.now() - totalStart;
+      const observedReferenceIds = extractReferenceIdsFromCitations(
+        quality.sqlResult.groundingCitations,
+      );
+      const observedTables = extractTablesFromSql(
+        quality.sqlResult.sql,
+        knownBenchmarkTables,
+      );
 
       const result: BenchmarkResult = {
         corpusId: entry.id,
@@ -146,15 +205,33 @@ async function main() {
         confidence: quality.finalConfidence,
         qualityVerdict: quality.verdict,
         retryCount: quality.retryCount,
-        validationResults: {
-          l1: quality.verdict !== 'exhausted',
-          l2: quality.verdict !== 'exhausted',
-          l3: quality.verdict !== 'exhausted',
-          l4: quality.verdict !== 'cost_exceeded',
-        },
+        validationResults: validationResultsFromFailures(
+          quality.failureHistory,
+          quality.verdict,
+          quality.validationHistory,
+        ),
         bytesProcessed: quality.bytesProcessed ?? null,
         supervisorNotes: quality.supervisorNotes,
         teachingCompliance: 'no_relevant_teaching',
+        expectedReferenceIds: entry.expectedReferenceIds,
+        observedReferenceIds,
+        referenceRetrievalPassed: referenceRetrievalPassed(
+          entry.expectedReferenceIds,
+          observedReferenceIds,
+        ),
+        expectedTables: entry.expectedTables,
+        observedTables,
+        tableSelectionPassed: tableSelectionPassed(
+          entry.expectedTables,
+          observedTables,
+        ),
+        expectedSqlContains: entry.expectedSqlContains,
+        sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, quality.sqlResult.sql),
+        expectedClarificationConfidence: entry.expectedClarificationConfidence,
+        clarificationPassed: clarificationPassed(
+          entry.expectedClarificationConfidence,
+          clarification.confidence,
+        ),
         latencyMs: {
           clarification: clarifyMs,
           generation: loopMs,
@@ -182,6 +259,19 @@ async function main() {
         bytesProcessed: null,
         supervisorNotes: `Error: ${(err as Error).message}`,
         teachingCompliance: 'no_relevant_teaching',
+        expectedReferenceIds: entry.expectedReferenceIds,
+        observedReferenceIds: [],
+        referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),
+        expectedTables: entry.expectedTables,
+        observedTables: [],
+        tableSelectionPassed: tableSelectionPassed(entry.expectedTables, []),
+        expectedSqlContains: entry.expectedSqlContains,
+        sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, null),
+        expectedClarificationConfidence: entry.expectedClarificationConfidence,
+        clarificationPassed: clarificationPassed(
+          entry.expectedClarificationConfidence,
+          observedClarificationConfidence,
+        ),
         latencyMs: {
           clarification: 0,
           generation: 0,
@@ -200,8 +290,10 @@ async function main() {
   const outputPath = join(resultsDir, `${runDate}.json`);
   const output = {
     runDate,
+    metadata,
     corpusSize: corpus.length,
     results,
+    judgeResults: [],
   };
   await writeFile(outputPath, JSON.stringify(output, null, 2), 'utf-8');
   console.log(`Results written to benchmarks/results/${runDate}.json`);

@@ -8,7 +8,7 @@ export interface EscalationTeachingContext {
   originalQuestion: string;
   clarifiedQuestion: string;
   humanResponse: string;
-  finalSql?: string;
+  failedSql?: string;
   supervisorNotes?: string;
   apiKey: string;
 }
@@ -25,7 +25,7 @@ const SYSTEM_INSTRUCTION =
   'You are extracting a reusable teaching from a resolved escalation. ' +
   'Question patterns should capture the general class of question (not just this specific one). ' +
   'Reasoning should explain the approach to answering this type of question. ' +
-  'Sanctioned SQL is the corrected query if applicable, null otherwise. ' +
+  'Sanctioned SQL must come from the human response or corrected approach, not from failed SQL. ' +
   'Models referenced are the BigQuery tables used. ' +
   'Tags are topic labels for categorization.';
 
@@ -36,8 +36,8 @@ function buildUserContent(context: EscalationTeachingContext): string {
     `Human Response: ${context.humanResponse}`,
   ];
 
-  if (context.finalSql !== undefined) {
-    parts.push(`Final SQL: ${context.finalSql}`);
+  if (context.failedSql !== undefined) {
+    parts.push(`Failed SQL (do not treat as sanctioned): ${context.failedSql}`);
   }
 
   if (context.supervisorNotes !== undefined) {

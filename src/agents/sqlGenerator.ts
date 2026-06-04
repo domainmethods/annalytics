@@ -71,9 +71,10 @@ ${schemaSections.join('\n\n')}
 
   // Add File Search context hint
   if (opts.fileSearchStoreId) {
-    prompt += `\nTEACHINGS:
-(Relevant teachings are automatically retrieved via Gemini File Search.
-Follow sanctioned SQL patterns when they exist for the question type.)\n`;
+    prompt += `\nKNOWLEDGE CONTEXT:
+Relevant teachings and reference cards are automatically retrieved via Gemini File Search.
+Follow sanctioned SQL patterns from teachings when they exist.
+Follow reference-card constraints for canonical tables, metrics, grains, required filters, exclusions, and avoid-table guidance when they apply.\n`;
   }
 
   // Add negative example if provided

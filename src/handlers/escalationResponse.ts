@@ -85,7 +85,7 @@ export async function resumeFromEscalation(
     originalQuestion: ctx.context.userQuestion,
     clarifiedQuestion: ctx.context.clarifiedQuestion,
     humanResponse: ctx.humanGuidance,
-    finalSql: ctx.context.previousSql,
+    failedSql: ctx.context.previousSql,
     supervisorNotes: ctx.context.supervisorNotes,
     apiKey: config.geminiApiKey,
   };

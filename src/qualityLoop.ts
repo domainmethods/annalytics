@@ -14,6 +14,14 @@ export interface FailureRecord {
   detail: string;
 }
 
+export interface ValidationLayerRecord {
+  attempt: number;
+  layer: 'l1' | 'l2' | 'l3' | 'l4';
+  valid: boolean;
+  detail?: string;
+  bytesProcessed?: number;
+}
+
 export interface QualityResult {
   sqlResult: SqlGenerationResult;
   verdict: 'pass' | 'fail_then_pass' | 'exhausted' | 'cost_exceeded';
@@ -21,6 +29,7 @@ export interface QualityResult {
   finalConfidence: 'high' | 'medium' | 'low';
   retryCount: number;
   failureHistory: FailureRecord[];
+  validationHistory?: ValidationLayerRecord[];
   bytesProcessed?: number;
 }
 
@@ -43,6 +52,7 @@ export async function qualityLoop(
   callbacks?: StatusCallbacks,
 ): Promise<QualityResult> {
   const failureHistory: FailureRecord[] = [];
+  const validationHistory: ValidationLayerRecord[] = [];
   let lastSqlResult: SqlGenerationResult | null = null;
   let lastSupervisorNotes = '';
   let lastConfidence: 'high' | 'medium' | 'low' = 'low';
@@ -66,6 +76,13 @@ export async function qualityLoop(
     // 2. L1: Static analysis
     await callbacks?.onValidate?.();
     const l1 = staticAnalysis(sqlResult.sql);
+    validationHistory.push({
+      attempt,
+      layer: 'l1',
+      valid: l1.valid,
+      detail: l1.error,
+      bytesProcessed: l1.bytesProcessed,
+    });
     if (!l1.valid) {
       failureHistory.push({
         attempt,
@@ -77,10 +94,24 @@ export async function qualityLoop(
     }
 
     // 3. L2: AST validation (advisory — failures pass through)
-    astValidation(sqlResult.sql);
+    const l2 = astValidation(sqlResult.sql);
+    validationHistory.push({
+      attempt,
+      layer: 'l2',
+      valid: l2.valid,
+      detail: l2.error,
+      bytesProcessed: l2.bytesProcessed,
+    });
 
     // 4. L3: Dry-run validation
     const l3 = await dryRunValidation(sqlResult.sql);
+    validationHistory.push({
+      attempt,
+      layer: 'l3',
+      valid: l3.valid,
+      detail: l3.error,
+      bytesProcessed: l3.bytesProcessed,
+    });
     if (!l3.valid) {
       failureHistory.push({
         attempt,
@@ -143,12 +174,20 @@ export async function qualityLoop(
       finalConfidence: 'low',
       retryCount: MAX_ATTEMPTS - 1,
       failureHistory,
+      validationHistory,
       bytesProcessed: lastBytesProcessed,
     };
   }
 
   // L4: Cost gate (outside loop — policy, not quality)
   const l4 = costGate(lastBytesProcessed ?? 0, maxBytesProcessed);
+  validationHistory.push({
+    attempt: passedAttempt,
+    layer: 'l4',
+    valid: l4.valid,
+    detail: l4.error,
+    bytesProcessed: l4.bytesProcessed,
+  });
   if (!l4.valid) {
     return {
       sqlResult,
@@ -157,6 +196,7 @@ export async function qualityLoop(
       finalConfidence: lastConfidence,
       retryCount: passedAttempt,
       failureHistory,
+      validationHistory,
       bytesProcessed: lastBytesProcessed,
     };
   }
@@ -168,6 +208,7 @@ export async function qualityLoop(
     finalConfidence: lastConfidence,
     retryCount: passedAttempt,
     failureHistory,
+    validationHistory,
     bytesProcessed: lastBytesProcessed,
   };
 }

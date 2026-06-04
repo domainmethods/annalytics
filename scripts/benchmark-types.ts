@@ -4,8 +4,27 @@ export interface CorpusEntry {
   category: 'simple' | 'join' | 'aggregate' | 'time_series' | 'ambiguous' | 'edge_case';
   source: 'manual' | 'production_positive' | 'production_negative' | 'escalation';
   expectedTables?: string[];
+  expectedTeachingIds?: string[];
+  expectedReferenceIds?: string[];
+  expectedSqlContains?: string[];
+  expectedClarificationConfidence?: 'high' | 'medium' | 'low';
   knownGoodSql?: string;
   notes?: string;
+}
+
+export interface BenchmarkMetadata {
+  runId: string;
+  runStartedAt: string;
+  gitSha: string | null;
+  gitDirty: boolean;
+  packageVersion: string;
+  corpusHash: string;
+  dbtManifestHash: string | null;
+  dbtCatalogHash: string | null;
+  geminiModel: string | null;
+  judgeModel: string | null;
+  fileSearchStoreId: string | null;
+  gcpProjectId: string | null;
 }
 
 export interface BenchmarkResult {
@@ -19,6 +38,16 @@ export interface BenchmarkResult {
   bytesProcessed: number | null;
   supervisorNotes: string;
   teachingCompliance: string;
+  expectedReferenceIds?: string[];
+  observedReferenceIds: string[];
+  referenceRetrievalPassed: boolean | null;
+  expectedTables?: string[];
+  observedTables: string[];
+  tableSelectionPassed: boolean | null;
+  expectedSqlContains?: string[];
+  sqlShapePassed: boolean | null;
+  expectedClarificationConfidence?: 'high' | 'medium' | 'low';
+  clarificationPassed: boolean | null;
   latencyMs: {
     clarification: number;
     generation: number;
@@ -46,6 +75,7 @@ export interface JudgeResult {
 
 export interface BenchmarkRun {
   runDate: string;
+  metadata: BenchmarkMetadata;
   corpusSize: number;
   results: BenchmarkResult[];
   judgeResults: JudgeResult[];

@@ -1,6 +1,6 @@
 import * as vega from 'vega';
 import { compile } from 'vega-lite';
-import sharp from 'sharp';
+import { Resvg } from '@resvg/resvg-js';
 import type { QueryResult } from '../types.js';
 
 const MAX_CHART_ROWS = 1000;
@@ -10,10 +10,15 @@ const CHART_HEIGHT = 500;
 export function isChartable(result: QueryResult): boolean {
   if (result.rows.length < 2) return false;
   if (result.columnNames.length < 2) return false;
-  const firstRow = result.rows[0];
-  const hasNumeric = result.columnNames.some(col => typeof firstRow[col] === 'number');
-  const hasNonNumeric = result.columnNames.some(col => typeof firstRow[col] !== 'number');
-  return hasNumeric && hasNonNumeric;
+  const numericColumns = result.columnNames.filter(col =>
+    result.rows.some(row => typeof row[col] === 'number'),
+  );
+  const nonNumericColumns = result.columnNames.filter(col =>
+    result.rows.some(row => row[col] != null && typeof row[col] !== 'number'),
+  );
+  return numericColumns.some(numericCol =>
+    nonNumericColumns.some(nonNumericCol => nonNumericCol !== numericCol),
+  );
 }
 
 export async function renderChart(
@@ -33,10 +38,11 @@ export async function renderChart(
     const svg = await view.toSVG();
     view.finalize();
 
-    const pngBuffer = await sharp(Buffer.from(svg))
-      .resize(CHART_WIDTH, CHART_HEIGHT)
-      .png()
-      .toBuffer();
+    const pngBuffer = new Resvg(svg, {
+      fitTo: { mode: 'width', value: CHART_WIDTH },
+      background: 'white',
+      font: { loadSystemFonts: false },
+    }).render().asPng();
 
     return pngBuffer;
   } catch (error) {

@@ -57,6 +57,26 @@ describe('generateSql — File Search integration', () => {
     expect(call.config.tools[0].fileSearch.fileSearchStoreNames).toContain('stores/my-store');
   });
 
+  it('describes File Search as teachings plus reference cards', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify(baseResponse),
+      candidates: [{ groundingMetadata: { groundingChunks: [] } }],
+    });
+
+    await generateSql({
+      question: 'revenue?',
+      tables: [mockTable],
+      threadContext: [],
+      apiKey: 'key',
+      fileSearchStoreId: 'stores/my-store',
+    });
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    expect(call.config.systemInstruction).toContain('KNOWLEDGE CONTEXT');
+    expect(call.config.systemInstruction).toContain('teachings');
+    expect(call.config.systemInstruction).toContain('reference cards');
+  });
+
   it('does NOT include tools when store ID is not provided', async () => {
     mockGenerateContent.mockResolvedValue({
       text: JSON.stringify(baseResponse),

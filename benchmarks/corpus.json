@@ -53,5 +53,53 @@
     "source": "manual",
     "expectedTables": ["analytics.fct_user_activity"],
     "notes": "BQML anomaly intent — should trigger bqml_hint: anomaly and generate ML.DETECT_ANOMALIES SQL"
+  },
+  {
+    "id": "revenue-ref-001",
+    "question": "What was total revenue last month?",
+    "category": "simple",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_orders"],
+    "expectedReferenceIds": ["revenue-canonical-definition"],
+    "expectedSqlContains": ["analytics.fct_orders", "order_status = 'completed'"],
+    "notes": "ReferenceCard should force completed-order revenue definition"
+  },
+  {
+    "id": "revenue-ref-002",
+    "question": "Show monthly revenue this year",
+    "category": "time_series",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_orders"],
+    "expectedReferenceIds": ["revenue-monthly-grain"],
+    "expectedSqlContains": ["analytics.fct_orders", "DATE_TRUNC", "MONTH", "order_status = 'completed'"],
+    "notes": "ReferenceCard should force DATE_TRUNC month grain"
+  },
+  {
+    "id": "revenue-ref-003",
+    "question": "Top 10 customers by lifetime value",
+    "category": "aggregate",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_orders", "analytics.dim_customers"],
+    "expectedReferenceIds": ["revenue-customer-lifetime-value"],
+    "expectedSqlContains": ["analytics.fct_orders", "analytics.dim_customers", "customer_id", "SUM", "order_status = 'completed'"],
+    "notes": "ReferenceCard should guide customer-level revenue aggregation"
+  },
+  {
+    "id": "revenue-ref-004",
+    "question": "Should refunds count in revenue?",
+    "category": "edge_case",
+    "source": "manual",
+    "expectedTables": ["analytics.fct_orders"],
+    "expectedReferenceIds": ["revenue-refunds-exclusions"],
+    "expectedSqlContains": ["analytics.fct_orders", "order_status = 'completed'"],
+    "notes": "ReferenceCard should retrieve refund and cancellation exclusions"
+  },
+  {
+    "id": "revenue-ref-005",
+    "question": "revenue",
+    "category": "ambiguous",
+    "source": "manual",
+    "expectedClarificationConfidence": "low",
+    "notes": "ReferenceCard should discourage arbitrary all-time revenue SQL"
   }
 ]

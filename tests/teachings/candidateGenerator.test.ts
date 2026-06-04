@@ -17,7 +17,7 @@ function baseContext(overrides: Partial<EscalationTeachingContext> = {}): Escala
     originalQuestion: 'What is our monthly churn rate?',
     clarifiedQuestion: 'What percentage of customers had no orders in the last 90 days, broken down by month?',
     humanResponse: 'Use dim_customers with last_order_date field. Churn = no order in 90 days.',
-    finalSql: 'SELECT DATE_TRUNC(last_order_date, MONTH) AS month, COUNT(*) FROM analytics.dim_customers WHERE last_order_date < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) GROUP BY 1',
+    failedSql: 'SELECT * FROM analytics.orders',
     supervisorNotes: 'Confirmed churn definition matches business glossary.',
     apiKey: 'test-api-key',
     ...overrides,
@@ -61,7 +61,21 @@ describe('generateTeachingCandidate', () => {
     expect(candidate.tags).toEqual(['churn', 'customers', 'retention']);
   });
 
-  it('handles context with missing finalSql and supervisorNotes', async () => {
+  it('labels prior SQL as failed SQL instead of sanctioned final SQL', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify(validLLMResponse),
+    });
+
+    await generateTeachingCandidate(baseContext());
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const userContent = JSON.stringify(call.contents);
+    expect(userContent).toContain('Failed SQL');
+    expect(userContent).toContain('SELECT * FROM analytics.orders');
+    expect(userContent).not.toContain('Final SQL');
+  });
+
+  it('handles context with missing failedSql and supervisorNotes', async () => {
     const responseWithoutSql = {
       ...validLLMResponse,
       sanctionedSql: null,
@@ -70,17 +84,17 @@ describe('generateTeachingCandidate', () => {
       text: JSON.stringify(responseWithoutSql),
     });
 
-    const ctx = baseContext({ finalSql: undefined, supervisorNotes: undefined });
+    const ctx = baseContext({ failedSql: undefined, supervisorNotes: undefined });
     const candidate = await generateTeachingCandidate(ctx);
 
     expect(candidate.sanctionedSql).toBeNull();
     expect(candidate.candidateId).toBe('teach_esc_abc123');
     expect(candidate.status).toBe('pending');
 
-    // Verify the prompt content does NOT include finalSql or supervisorNotes sections
+    // Verify the prompt content does NOT include failedSql or supervisorNotes sections
     const call = mockGenerateContent.mock.calls[0][0];
     const userContent = JSON.stringify(call.contents);
-    expect(userContent).not.toContain('Final SQL');
+    expect(userContent).not.toContain('Failed SQL');
     expect(userContent).not.toContain('Supervisor Notes');
   });
 

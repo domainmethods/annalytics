@@ -21,6 +21,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npx tsx scripts/validate-knowledge.ts
       - run: npx tsc --noEmit
       - run: npx vitest run
 
