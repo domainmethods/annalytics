@@ -188,6 +188,14 @@ describe('writeBenchmarkAnalysisOutputs', () => {
     );
   });
 
+  it('throws on malformed benchmark JSON', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'annalytics-benchmark-analysis-'));
+    const currentPath = join(dir, 'broken.json');
+    await writeFile(currentPath, '{not valid json', 'utf-8');
+
+    expect(() => writeBenchmarkAnalysisOutputs(currentPath)).toThrow(SyntaxError);
+  });
+
   it('rejects benchmark paths without a final .json extension', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'annalytics-benchmark-analysis-'));
     const currentPath = join(dir, '2026-06-04.benchmark');

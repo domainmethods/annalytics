@@ -112,6 +112,15 @@ describe('evaluateReferenceCardAcceptance', () => {
     expect(acceptance.cases).toHaveLength(2);
   });
 
+  it('allows empty judge results because acceptance is deterministic', () => {
+    const benchmarkRun = run([result()]);
+    benchmarkRun.judgeResults = [];
+
+    const acceptance = evaluateReferenceCardAcceptance(benchmarkRun);
+
+    expect(acceptance.decision).toBe('ACCEPTED');
+  });
+
   it('classifies retrieval misses', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({ observedReferenceIds: [], referenceRetrievalPassed: false }),
