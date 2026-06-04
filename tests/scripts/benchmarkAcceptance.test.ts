@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compareReferenceCardAcceptance,
   evaluateReferenceCardAcceptance,
+  formatReferenceCardAcceptanceReport,
   isReferenceCardAcceptanceCase,
 } from '../../scripts/benchmarkAcceptance.js';
 import type { BenchmarkMetadata, BenchmarkResult, BenchmarkRun } from '../../scripts/benchmark-types.js';
@@ -261,5 +262,29 @@ describe('evaluateReferenceCardAcceptance', () => {
       newlyFailing: ['revenue-ref-pass-to-fail'],
       newlyPassing: ['revenue-ref-fail-to-pass'],
     });
+  });
+});
+
+describe('formatReferenceCardAcceptanceReport', () => {
+  it('formats an accepted report with provenance and scorecard rows', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([result()]));
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('# ReferenceCard Acceptance - 2026-06-04');
+    expect(report).toContain('**Decision:** `ACCEPTED`');
+    expect(report).toContain('| Git SHA | abc123 |');
+    expect(report).toContain('| revenue-ref-001 | pass | true | true | true | true | pass |');
+    expect(report).toContain('Expand to one next high-confusion domain.');
+  });
+
+  it('formats failure rows when acceptance needs revision', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({ observedReferenceIds: [], referenceRetrievalPassed: false }),
+    ]));
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('**Decision:** `NEEDS_REVISION`');
+    expect(report).toContain('| revenue-ref-001 | retrieval_miss | Expected references revenue-canonical-definition; observed (none) |');
+    expect(report).toContain('Tighten the failing layer before expanding domain scope.');
   });
 });

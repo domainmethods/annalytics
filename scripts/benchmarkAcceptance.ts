@@ -112,6 +112,79 @@ export function compareReferenceCardAcceptance(
   return { newlyFailing, newlyPassing };
 }
 
+export function formatReferenceCardAcceptanceReport(result: ReferenceCardAcceptanceResult): string {
+  const lines: string[] = [];
+
+  lines.push(`# ReferenceCard Acceptance - ${escapeMarkdown(result.runDate)}`);
+  lines.push('');
+  lines.push(`**Decision:** \`${result.decision}\``);
+  lines.push('');
+
+  lines.push('## Run Provenance');
+  lines.push('');
+  lines.push('| Field | Value |');
+  lines.push('|-------|-------|');
+  lines.push(`| Run ID | ${escapeMarkdown(result.metadata?.runId ?? '(missing)')} |`);
+  lines.push(`| Started | ${escapeMarkdown(result.metadata?.runStartedAt ?? '(missing)')} |`);
+  lines.push(`| Git SHA | ${escapeMarkdown(result.metadata?.gitSha ?? '(missing)')} |`);
+  lines.push(`| Dirty | ${escapeMarkdown(String(result.metadata?.gitDirty ?? '(missing)'))} |`);
+  lines.push(`| Corpus Hash | ${escapeMarkdown(result.metadata?.corpusHash ?? '(missing)')} |`);
+  lines.push(`| dbt Manifest Hash | ${escapeMarkdown(result.metadata?.dbtManifestHash ?? '(not available)')} |`);
+  lines.push(`| dbt Catalog Hash | ${escapeMarkdown(result.metadata?.dbtCatalogHash ?? '(not available)')} |`);
+  lines.push(`| Gemini Model | ${escapeMarkdown(result.metadata?.geminiModel ?? '(missing)')} |`);
+  lines.push(`| File Search Store | ${escapeMarkdown(result.metadata?.fileSearchStoreId ?? '(missing)')} |`);
+  lines.push('');
+
+  lines.push('## Revenue Scorecard');
+  lines.push('');
+  lines.push('| Corpus ID | Status | Retrieval | Tables | SQL Shape | L1/L3/L4 | L2 |');
+  lines.push('|-----------|--------|-----------|--------|-----------|----------|----|');
+  for (const item of result.cases) {
+    lines.push(`| ${[
+      escapeMarkdown(item.corpusId),
+      item.status,
+      boolLabel(item.referenceRetrievalPassed),
+      boolLabel(item.tableSelectionPassed),
+      boolLabel(item.sqlShapePassed),
+      blockingValidationLabel(item.validationResults),
+      item.advisoryL2Passed ? 'pass' : 'advisory_fail',
+    ].join(' | ')} |`);
+  }
+  lines.push('');
+
+  lines.push('## Failures');
+  lines.push('');
+  if (result.failures.length === 0) {
+    lines.push('No acceptance failures.');
+  } else {
+    lines.push('| Corpus ID | Class | Detail |');
+    lines.push('|-----------|-------|--------|');
+    for (const failure of result.failures) {
+      lines.push(`| ${escapeMarkdown(failure.corpusId)} | ${failure.failureClass} | ${escapeMarkdown(failure.detail)} |`);
+    }
+  }
+  lines.push('');
+
+  if (result.comparison) {
+    lines.push('## Comparison');
+    lines.push('');
+    lines.push(`Newly failing: ${formatList(result.comparison.newlyFailing)}`);
+    lines.push('');
+    lines.push(`Newly passing: ${formatList(result.comparison.newlyPassing)}`);
+    lines.push('');
+  }
+
+  lines.push('## Suggested Next Action');
+  lines.push('');
+  lines.push(
+    result.decision === 'ACCEPTED'
+      ? 'Expand to one next high-confusion domain.'
+      : 'Tighten the failing layer before expanding domain scope.',
+  );
+
+  return lines.join('\n');
+}
+
 function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
   const failures: ReferenceCardAcceptanceFailure[] = [];
   const expectedReferenceIds = arrayOrEmpty(result.expectedReferenceIds);
@@ -219,4 +292,18 @@ function arrayOrEmpty(value: string[] | undefined): string[] {
 
 function formatList(values: string[]): string {
   return values.length > 0 ? values.join(', ') : '(none)';
+}
+
+function boolLabel(value: boolean | null): string {
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  return 'n/a';
+}
+
+function blockingValidationLabel(validation: BenchmarkResult['validationResults']): string {
+  return validation.l1 && validation.l3 && validation.l4 ? 'true' : 'false';
+}
+
+function escapeMarkdown(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
