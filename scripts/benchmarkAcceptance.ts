@@ -1,5 +1,12 @@
 import type { BenchmarkMetadata, BenchmarkResult, BenchmarkRun } from './benchmark-types.js';
 
+const FAILED_VALIDATION_RESULTS: BenchmarkResult['validationResults'] = {
+  l1: false,
+  l2: false,
+  l3: false,
+  l4: false,
+};
+
 export type ReferenceCardDecision = 'ACCEPTED' | 'NEEDS_REVISION';
 
 export type ReferenceCardFailureClass =
@@ -201,6 +208,7 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
   const observedTables = arrayOrEmpty(result.observedTables);
   const expectedSqlContains = arrayOrEmpty(result.expectedSqlContains);
   const isClarificationOnly = result.expectedClarificationConfidence != null && expectedReferenceIds.length === 0;
+  const validationResults = normalizeValidationResults(result.validationResults);
 
   if (expectedReferenceIds.length > 0 && result.referenceRetrievalPassed !== true) {
     failures.push({
@@ -234,8 +242,16 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     });
   }
 
-  const blockingValidationFailures = blockingValidationFailuresFor(result.validationResults);
-  if (!isClarificationOnly && blockingValidationFailures.length > 0) {
+  const blockingValidationFailures = validationResults
+    ? blockingValidationFailuresFor(validationResults)
+    : [];
+  if (!isClarificationOnly && !validationResults) {
+    failures.push({
+      corpusId: result.corpusId,
+      failureClass: 'validation_failure',
+      detail: 'Final SQL missing validation results',
+    });
+  } else if (!isClarificationOnly && blockingValidationFailures.length > 0) {
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'validation_failure',
@@ -264,8 +280,8 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     sqlShapePassed: result.sqlShapePassed,
     clarificationPassed: result.clarificationPassed,
     qualityVerdict: result.qualityVerdict,
-    validationResults: result.validationResults,
-    advisoryL2Passed: result.validationResults.l2,
+    validationResults: validationResults ?? FAILED_VALIDATION_RESULTS,
+    advisoryL2Passed: validationResults?.l2 ?? false,
     failures,
   };
 }
@@ -284,6 +300,29 @@ function validateMetadata(metadata: BenchmarkMetadata | null): string[] {
   if (!metadata.geminiModel) failures.push('metadata.geminiModel is required');
   if (!metadata.fileSearchStoreId) failures.push('metadata.fileSearchStoreId is required');
   return failures;
+}
+
+function normalizeValidationResults(value: unknown): BenchmarkResult['validationResults'] | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.l1 !== 'boolean' ||
+    typeof candidate.l2 !== 'boolean' ||
+    typeof candidate.l3 !== 'boolean' ||
+    typeof candidate.l4 !== 'boolean'
+  ) {
+    return null;
+  }
+
+  return {
+    l1: candidate.l1,
+    l2: candidate.l2,
+    l3: candidate.l3,
+    l4: candidate.l4,
+  };
 }
 
 function blockingValidationFailuresFor(validation: BenchmarkResult['validationResults']): string[] {

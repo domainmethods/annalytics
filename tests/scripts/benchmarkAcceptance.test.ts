@@ -217,6 +217,28 @@ describe('evaluateReferenceCardAcceptance', () => {
     }));
   });
 
+  it('classifies missing validation results without crashing', () => {
+    const malformed = {
+      ...result(),
+      validationResults: undefined,
+    } as unknown as BenchmarkResult;
+
+    const acceptance = evaluateReferenceCardAcceptance(run([malformed]));
+
+    expect(acceptance.decision).toBe('NEEDS_REVISION');
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      corpusId: 'revenue-ref-001',
+      failureClass: 'validation_failure',
+      detail: 'Final SQL missing validation results',
+    }));
+    expect(acceptance.cases[0].validationResults).toEqual({
+      l1: false,
+      l2: false,
+      l3: false,
+      l4: false,
+    });
+  });
+
   it('classifies ambiguous intake clarification mismatches without treating skipped SQL as pipeline failure', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({
