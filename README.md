@@ -92,7 +92,8 @@ Every response includes interactive buttons:
 ## Prerequisites
 
 - **Node.js 20+**
-- **GCP project** with BigQuery, Firestore, Secret Manager, Cloud Run, and Artifact Registry APIs enabled
+- **GCP project** with BigQuery, Firestore Native, Secret Manager, Cloud Run, and Artifact Registry APIs enabled
+- **Firestore composite indexes** deployed from `infra/firestore.indexes.json`
 - **Slack app** with Bot Token and Signing Secret ([setup guide](https://api.slack.com/start))
 - **Gemini API key** from [Google AI Studio](https://aistudio.google.com/apikey)
 - **dbt artifacts** (`manifest.json` and `catalog.json`) from your dbt project
@@ -116,6 +117,18 @@ The Slack app needs these features enabled:
 npm install
 cp .env.example .env   # fill in values
 ```
+
+Local runs use Application Default Credentials (ADC) for BigQuery and Firestore.
+Authenticate ADC and point quota/billing at the target project:
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project "$GCP_PROJECT_ID"
+```
+
+The ADC principal must have access to the target project, including Firestore
+data-plane access (`roles/datastore.user`). Check this separately from the active
+`gcloud` account; they can be different identities.
 
 Generate dbt artifacts and place them in `dbt/`:
 
@@ -235,6 +248,27 @@ This provisions:
 - Secret Manager secrets for Slack and Gemini credentials
 - Artifact Registry for Docker images
 - Firestore database
+
+Terraform currently provisions the Firestore database and IAM, but the composite
+indexes are tracked separately in `infra/firestore.indexes.json`. Deploy those
+indexes before serving production traffic; otherwise multi-field Firestore
+queries can fail at runtime with missing-index errors.
+
+If your Firebase CLI project config points at `infra/firestore.indexes.json`:
+
+```bash
+firebase deploy --only firestore:indexes --project "$PROJECT_ID"
+```
+
+Or create equivalent composite indexes with `gcloud`, then verify all app indexes
+are ready:
+
+```bash
+gcloud firestore indexes composite list \
+  --database="(default)" \
+  --project "$PROJECT_ID" \
+  --format="table(state,fields)"
+```
 
 ## Deployment
 
