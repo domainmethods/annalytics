@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join, parse } from 'node:path';
 import type { JudgeResult, BenchmarkRun } from './benchmark-types.js';
 import {
   evaluateReferenceCardAcceptance,
@@ -139,7 +140,7 @@ export function generateSummary(
     lines.push('|-----------|-------|--------|');
     for (const failure of acceptance.failures) {
       lines.push(
-        `| ${failure.corpusId} | ${failure.failureClass} | ${escapeMarkdownCell(failure.detail)} |`,
+        `| ${escapeMarkdownCell(failure.corpusId)} | ${failure.failureClass} | ${escapeMarkdownCell(failure.detail)} |`,
       );
     }
     lines.push('');
@@ -165,13 +166,24 @@ export function writeBenchmarkAnalysisOutputs(
   const summary = generateSummary(current, previous);
   const acceptance = evaluateReferenceCardAcceptance(current, previous);
   const acceptanceReport = formatReferenceCardAcceptanceReport(acceptance);
-  const summaryPath = currentPath.replace('.json', '-summary.md');
-  const acceptancePath = currentPath.replace('.json', '-referencecard-acceptance.md');
+  const { summaryPath, acceptancePath } = analysisOutputPathsFor(currentPath);
 
   writeFileSync(summaryPath, summary, 'utf-8');
   writeFileSync(acceptancePath, acceptanceReport, 'utf-8');
 
   return { summaryPath, acceptancePath };
+}
+
+function analysisOutputPathsFor(currentPath: string): BenchmarkAnalysisOutputs {
+  const parsed = parse(currentPath);
+  if (parsed.ext !== '.json') {
+    throw new Error('Benchmark analysis input must end with .json');
+  }
+
+  return {
+    summaryPath: join(parsed.dir, `${parsed.name}-summary.md`),
+    acceptancePath: join(parsed.dir, `${parsed.name}-referencecard-acceptance.md`),
+  };
 }
 
 function escapeMarkdownCell(value: string): string {

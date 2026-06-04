@@ -14,12 +14,17 @@ import type {
   JudgeResult,
 } from '../../scripts/benchmark-types.js';
 
-const makeJudge = (id: string, correctness: number): JudgeResult => ({
+const makeJudge = (
+  id: string,
+  correctness: number,
+  overrides: Partial<JudgeResult> = {},
+): JudgeResult => ({
   corpusId: id,
   scores: { correctness, efficiency: 3, readability: 3, teachingCompliance: 3, safety: 3 },
   overallScore: correctness,
   rationale: 'test',
   flaggedForReview: false,
+  ...overrides,
 });
 
 const metadata: BenchmarkMetadata = {
@@ -101,6 +106,48 @@ describe('generateSummary', () => {
     expect(summary).toContain('## ReferenceCard Acceptance');
     expect(summary).toContain('**Decision:** `ACCEPTED`');
   });
+
+  it('preserves judge sections and appends reference-card acceptance output', () => {
+    const summary = generateSummary(
+      run({
+        judgeResults: [
+          makeJudge('q1', 3, {
+            rationale: 'needs analyst review',
+            flaggedForReview: true,
+          }),
+        ],
+      }),
+      run({ judgeResults: [makeJudge('q1', 5)] }),
+    );
+
+    expect(summary).toContain('## Score Distribution');
+    expect(summary).toContain('| Mean   | 3.00 |');
+    expect(summary).toContain('## Pipeline Failures');
+    expect(summary).toContain('**0** queries ended in `exhausted` or `cost_exceeded`.');
+    expect(summary).toContain('## Regressions');
+    expect(summary).toContain('| q1 | correctness | 5 | 3 | -2 |');
+    expect(summary).toContain('## Flagged for Review');
+    expect(summary).toContain('- **q1** (overall: 3) - needs analyst review');
+    expect(summary).toContain('## ReferenceCard Acceptance');
+    expect(summary.indexOf('## ReferenceCard Acceptance')).toBeGreaterThan(
+      summary.indexOf('## Flagged for Review'),
+    );
+  });
+
+  it('escapes reference-card failure corpus IDs in summary tables', () => {
+    const summary = generateSummary(run({
+      results: [
+        result({
+          corpusId: 'revenue-ref-bad|id',
+          observedReferenceIds: [],
+          referenceRetrievalPassed: false,
+        }),
+      ],
+    }));
+
+    expect(summary).toContain('| revenue-ref-bad\\|id | retrieval_miss |');
+    expect(summary).not.toContain('| revenue-ref-bad|id | retrieval_miss |');
+  });
 });
 
 describe('writeBenchmarkAnalysisOutputs', () => {
@@ -120,5 +167,34 @@ describe('writeBenchmarkAnalysisOutputs', () => {
     expect(summary).toContain('**Decision:** `ACCEPTED`');
     expect(acceptance).toContain('# ReferenceCard Acceptance - 2026-06-04');
     expect(acceptance).toContain('**Decision:** `ACCEPTED`');
+  });
+
+  it('derives output paths from the final .json extension only', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'annalytics.json-benchmark-analysis-'));
+    const currentPath = join(dir, '2026.json.06-04.json');
+    await writeFile(currentPath, JSON.stringify(run(), null, 2), 'utf-8');
+
+    const outputs = writeBenchmarkAnalysisOutputs(currentPath);
+
+    expect(outputs.summaryPath).toBe(join(dir, '2026.json.06-04-summary.md'));
+    expect(outputs.acceptancePath).toBe(
+      join(dir, '2026.json.06-04-referencecard-acceptance.md'),
+    );
+    await expect(readFile(outputs.summaryPath, 'utf-8')).resolves.toContain(
+      '## ReferenceCard Acceptance',
+    );
+    await expect(readFile(outputs.acceptancePath, 'utf-8')).resolves.toContain(
+      '**Decision:** `ACCEPTED`',
+    );
+  });
+
+  it('rejects benchmark paths without a final .json extension', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'annalytics-benchmark-analysis-'));
+    const currentPath = join(dir, '2026-06-04.benchmark');
+    await writeFile(currentPath, JSON.stringify(run(), null, 2), 'utf-8');
+
+    expect(() => writeBenchmarkAnalysisOutputs(currentPath)).toThrow(
+      'Benchmark analysis input must end with .json',
+    );
   });
 });
