@@ -1,16 +1,19 @@
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { initBigQuery } from '../src/validation/dryRun.js';
-import { initFirestore } from '../src/state/firestore.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { qualityLoop } from '../src/qualityLoop.js';
-import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { TeachingSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
 import { getFlashModel, getJudgeModel, getProModel } from '../src/agents/modelConfig.js';
-import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
+import {
+  assertGenerateContentModelsAvailable,
+  validateBenchmarkAcceptanceInputs,
+} from './benchmarkPreflight.js';
+import { loadLocalTeachingSummaries } from './benchmarkInputs.js';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
@@ -29,6 +32,8 @@ import {
 const apiKey = process.env.GEMINI_API_KEY;
 const projectId = process.env.GCP_PROJECT_ID;
 const fileSearchStoreId = process.env.FILE_SEARCH_STORE_ID;
+const manifestPath = process.env.DBT_MANIFEST_PATH || './dbt/manifest.json';
+const catalogPath = process.env.DBT_CATALOG_PATH || './dbt/catalog.json';
 const flashModel = getFlashModel();
 const geminiModel = getProModel();
 const judgeModel = getJudgeModel();
@@ -50,6 +55,15 @@ function formatDate(d: Date): string {
 
 const MAX_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB cost gate for benchmark
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -63,27 +77,38 @@ async function main() {
     judgeModel,
   ]);
 
-  // Initialize services
-  initFirestore(projectId!);
-  initBigQuery(projectId!);
-
-  // Load teaching summaries from Firestore
-  let teachingSummaries: TeachingSummary[] = [];
-  try {
-    teachingSummaries = await getTeachingSummaries();
-    console.log(`Loaded ${teachingSummaries.length} teaching summaries`);
-  } catch (err) {
-    console.warn(`Warning: Could not load teaching summaries: ${(err as Error).message}`);
+  const root = join(process.cwd());
+  const corpusPath = join(root, 'benchmarks', 'corpus.json');
+  const corpusRaw = await readFile(corpusPath, 'utf-8');
+  const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
+  const resolvedManifestPath = join(root, manifestPath);
+  const resolvedCatalogPath = join(root, catalogPath);
+  const manifestExists = await fileExists(resolvedManifestPath);
+  const catalogExists = await fileExists(resolvedCatalogPath);
+  const inputErrors = validateBenchmarkAcceptanceInputs({
+    corpus,
+    fileSearchStoreId,
+    manifestExists,
+    catalogExists,
+  });
+  if (inputErrors.length > 0) {
+    throw new Error(`Benchmark preflight failed:\n${inputErrors.map(error => `- ${error}`).join('\n')}`);
   }
 
-  // Load dbt artifacts (optional — benchmark can run without schema context)
-  const root = join(process.cwd());
+  // Initialize BigQuery for dry-run validation.
+  initBigQuery(projectId!);
+
+  // Load local teaching summaries. Benchmark runs should not require Firestore.
+  const teachingSummaries: TeachingSummary[] = await loadLocalTeachingSummaries(root);
+  console.log(`Loaded ${teachingSummaries.length} local teaching summaries`);
+
+  // Load dbt artifacts when available.
   let tables: TableContext[] = [];
   let manifestRaw: string | null = null;
   let catalogRaw: string | null = null;
   try {
-    manifestRaw = await readFile(join(root, 'dbt', 'manifest.json'), 'utf-8');
-    catalogRaw = await readFile(join(root, 'dbt', 'catalog.json'), 'utf-8');
+    manifestRaw = await readFile(resolvedManifestPath, 'utf-8');
+    catalogRaw = await readFile(resolvedCatalogPath, 'utf-8');
     const manifest = JSON.parse(manifestRaw) as { nodes: Record<string, unknown> };
     const catalog = JSON.parse(catalogRaw) as { nodes: Record<string, unknown> };
     tables = parseDbtArtifacts(
@@ -95,10 +120,6 @@ async function main() {
     console.warn(`Warning: Could not load dbt artifacts: ${(err as Error).message}. Running without schema context.`);
   }
 
-  // Read corpus
-  const corpusPath = join(root, 'benchmarks', 'corpus.json');
-  const corpusRaw = await readFile(corpusPath, 'utf-8');
-  const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
   const knownBenchmarkTables = [
     ...new Set([
       ...tables.map(table => table.name),

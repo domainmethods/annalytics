@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import type { CorpusEntry } from './benchmark-types.js';
 
 export interface GeminiModelInfo {
   name?: string;
@@ -9,6 +10,13 @@ export interface GeminiModelInfo {
 export interface ModelValidationInput {
   requiredModels: string[];
   availableModels: GeminiModelInfo[];
+}
+
+export interface BenchmarkAcceptanceInputValidation {
+  corpus: CorpusEntry[];
+  fileSearchStoreId?: string | null;
+  manifestExists: boolean;
+  catalogExists: boolean;
 }
 
 function normalizeModelName(name: string): string {
@@ -59,4 +67,32 @@ export async function assertGenerateContentModelsAvailable(
   if (errors.length > 0) {
     throw new Error(`Benchmark preflight failed:\n${errors.map(error => `- ${error}`).join('\n')}`);
   }
+}
+
+export function validateBenchmarkAcceptanceInputs(
+  input: BenchmarkAcceptanceInputValidation,
+): string[] {
+  const expectsReferenceCards = input.corpus.some(
+    entry => (entry.expectedReferenceIds?.length ?? 0) > 0,
+  );
+  const validatesTablesOrSql = input.corpus.some(
+    entry =>
+      (entry.expectedTables?.length ?? 0) > 0 ||
+      (entry.expectedSqlContains?.length ?? 0) > 0,
+  );
+  const errors: string[] = [];
+
+  if (expectsReferenceCards && !input.fileSearchStoreId) {
+    errors.push('FILE_SEARCH_STORE_ID is required because benchmark corpus expects ReferenceCard retrieval');
+  }
+
+  if (validatesTablesOrSql && !input.manifestExists) {
+    errors.push('dbt manifest is required because benchmark corpus validates table selection or SQL shape');
+  }
+
+  if (validatesTablesOrSql && !input.catalogExists) {
+    errors.push('dbt catalog is required because benchmark corpus validates table selection or SQL shape');
+  }
+
+  return errors;
 }
