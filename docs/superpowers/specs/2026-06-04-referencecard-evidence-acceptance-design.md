@@ -61,8 +61,8 @@ A benchmark run is accepted for the revenue pilot only when all rules below pass
 2. Every corpus case with `expectedReferenceIds` has `referenceRetrievalPassed === true`.
 3. Every revenue reference case with `expectedTables` has `tableSelectionPassed === true`.
 4. Every revenue reference case with `expectedSqlContains` has `sqlShapePassed === true`.
-5. No revenue reference case has `qualityVerdict` equal to `exhausted` or `cost_exceeded`.
-6. Final SQL validation has L1, L3, and L4 passing for each revenue reference case.
+5. No SQL-generating revenue reference case has `qualityVerdict` equal to `exhausted` or `cost_exceeded`; clarification-only cases are evaluated by clarification expectations instead.
+6. Final SQL validation has L1, L3, and L4 passing for each SQL-generating revenue reference case.
 7. L2 failures remain visible but do not fail acceptance because L2 is advisory.
 8. The ambiguous `revenue` case has `clarificationPassed === true` when it declares `expectedClarificationConfidence`.
 
@@ -146,7 +146,7 @@ Missing optional sections should be handled deliberately:
 - Missing `judgeResults` is allowed.
 - Missing `metadata` fails acceptance because provenance is part of the evidence contract.
 - Missing reference-card fields on cases without expectations is allowed.
-- Missing reference-card fields on expected reference cases fails acceptance.
+- Missing deterministic reference-card fields on expected reference cases fails acceptance, and missing observed arrays should be treated as empty for clear reporting rather than crashing the analyzer.
 
 ## Testing
 

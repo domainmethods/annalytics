@@ -157,6 +157,21 @@ describe('evaluateReferenceCardAcceptance', () => {
     }));
   });
 
+  it('classifies missing observed reference arrays as retrieval misses without crashing', () => {
+    const malformed = {
+      ...result({ referenceRetrievalPassed: false }),
+      observedReferenceIds: undefined,
+    } as unknown as BenchmarkResult;
+
+    const acceptance = evaluateReferenceCardAcceptance(run([malformed]));
+
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      corpusId: 'revenue-ref-001',
+      failureClass: 'retrieval_miss',
+      detail: expect.stringContaining('observed (none)'),
+    }));
+  });
+
   it('classifies SQL-derived table mismatches', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({ observedTables: ['analytics.fct_revenue'], tableSelectionPassed: false }),
@@ -371,29 +386,34 @@ export function compareReferenceCardAcceptance(
 
 function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
   const failures: ReferenceCardAcceptanceFailure[] = [];
-  const isClarificationOnly = result.expectedClarificationConfidence != null && result.expectedReferenceIds == null;
+  const expectedReferenceIds = arrayOrEmpty(result.expectedReferenceIds);
+  const observedReferenceIds = arrayOrEmpty(result.observedReferenceIds);
+  const expectedTables = arrayOrEmpty(result.expectedTables);
+  const observedTables = arrayOrEmpty(result.observedTables);
+  const expectedSqlContains = arrayOrEmpty(result.expectedSqlContains);
+  const isClarificationOnly = result.expectedClarificationConfidence != null && expectedReferenceIds.length === 0;
 
-  if ((result.expectedReferenceIds?.length ?? 0) > 0 && result.referenceRetrievalPassed !== true) {
+  if (expectedReferenceIds.length > 0 && result.referenceRetrievalPassed !== true) {
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'retrieval_miss',
-      detail: `Expected references ${formatList(result.expectedReferenceIds ?? [])}; observed ${formatList(result.observedReferenceIds)}`,
+      detail: `Expected references ${formatList(expectedReferenceIds)}; observed ${formatList(observedReferenceIds)}`,
     });
   }
 
-  if ((result.expectedTables?.length ?? 0) > 0 && result.tableSelectionPassed !== true) {
+  if (expectedTables.length > 0 && result.tableSelectionPassed !== true) {
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'table_mismatch',
-      detail: `Expected tables ${formatList(result.expectedTables ?? [])}; observed ${formatList(result.observedTables)}`,
+      detail: `Expected tables ${formatList(expectedTables)}; observed ${formatList(observedTables)}`,
     });
   }
 
-  if ((result.expectedSqlContains?.length ?? 0) > 0 && result.sqlShapePassed !== true) {
+  if (expectedSqlContains.length > 0 && result.sqlShapePassed !== true) {
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'sql_shape_mismatch',
-      detail: `Generated SQL did not contain all expected fragments: ${formatList(result.expectedSqlContains ?? [])}`,
+      detail: `Generated SQL did not contain all expected fragments: ${formatList(expectedSqlContains)}`,
     });
   }
 
@@ -426,11 +446,11 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     corpusId: result.corpusId,
     question: result.question,
     status: failures.length === 0 ? 'pass' : 'fail',
-    expectedReferenceIds: result.expectedReferenceIds ?? [],
-    observedReferenceIds: result.observedReferenceIds,
+    expectedReferenceIds,
+    observedReferenceIds,
     referenceRetrievalPassed: result.referenceRetrievalPassed,
-    expectedTables: result.expectedTables ?? [],
-    observedTables: result.observedTables,
+    expectedTables,
+    observedTables,
     tableSelectionPassed: result.tableSelectionPassed,
     sqlShapePassed: result.sqlShapePassed,
     clarificationPassed: result.clarificationPassed,
@@ -460,6 +480,10 @@ function blockingValidationFailuresFor(validation: BenchmarkResult['validationRe
   if (!validation.l3) failures.push('L3');
   if (!validation.l4) failures.push('L4');
   return failures;
+}
+
+function arrayOrEmpty(value: string[] | undefined): string[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function formatList(values: string[]): string {
@@ -697,7 +721,7 @@ Run:
 npx vitest run tests/scripts/benchmarkAcceptance.test.ts -t "compares previous and current"
 ```
 
-Expected: PASS if Task 1 implemented `compareReferenceCardAcceptance` exactly as specified. If it fails, update `compareReferenceCardAcceptance` to compare case status by `corpusId` and return sorted arrays in current-run order.
+Expected: PASS.
 
 - [ ] **Step 3: Commit Task 3**
 
