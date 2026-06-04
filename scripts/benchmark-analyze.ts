@@ -1,5 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { JudgeResult, BenchmarkRun } from './benchmark-types.js';
+import {
+  evaluateReferenceCardAcceptance,
+  formatReferenceCardAcceptanceReport,
+} from './benchmarkAcceptance.js';
 
 export interface Regression {
   corpusId: string;
@@ -54,74 +58,124 @@ export function generateSummary(
   current: BenchmarkRun,
   previous?: BenchmarkRun,
 ): string {
-  const judges = current.judgeResults;
-  if (!judges || judges.length === 0) {
-    return `# Benchmark Summary — ${current.runDate}\n\nNo judge results available yet.`;
-  }
-  const overallScores = judges.map(j => j.overallScore).sort((a, b) => a - b);
-
-  const avg = mean(overallScores);
-  const med = percentile(overallScores, 50);
-  const p25 = percentile(overallScores, 25);
-  const p75 = percentile(overallScores, 75);
-
-  const failureCount = current.results.filter(
-    r => r.qualityVerdict === 'exhausted' || r.qualityVerdict === 'cost_exceeded',
-  ).length;
-
-  const flagged = judges.filter(j => j.flaggedForReview);
-
-  const regressions = previous && previous.judgeResults
-    ? detectRegressions(previous.judgeResults, judges)
-    : [];
-
+  const judges = current.judgeResults ?? [];
   const lines: string[] = [];
 
-  lines.push(`# Benchmark Summary — ${current.runDate}`);
-  lines.push('');
-  lines.push('## Score Distribution');
-  lines.push('');
-  lines.push('| Metric | Value |');
-  lines.push('|--------|-------|');
-  lines.push(`| Mean   | ${avg.toFixed(2)} |`);
-  lines.push(`| Median | ${med.toFixed(2)} |`);
-  lines.push(`| P25    | ${p25.toFixed(2)} |`);
-  lines.push(`| P75    | ${p75.toFixed(2)} |`);
-  lines.push(`| N      | ${judges.length} |`);
-  lines.push('');
-  lines.push(`## Pipeline Failures`);
-  lines.push('');
-  lines.push(`**${failureCount}** queries ended in \`exhausted\` or \`cost_exceeded\`.`);
+  lines.push(`# Benchmark Summary - ${current.runDate}`);
   lines.push('');
 
-  if (regressions.length > 0) {
-    lines.push('## Regressions');
+  if (judges.length === 0) {
+    lines.push('No judge results available yet.');
     lines.push('');
-    lines.push('| Corpus ID | Criterion | Previous | Current | Delta |');
-    lines.push('|-----------|-----------|----------|---------|-------|');
-    for (const r of regressions) {
-      lines.push(
-        `| ${r.corpusId} | ${r.criterion} | ${r.previousScore} | ${r.currentScore} | -${r.delta} |`,
-      );
+  } else {
+    const overallScores = judges.map(j => j.overallScore).sort((a, b) => a - b);
+    const avg = mean(overallScores);
+    const med = percentile(overallScores, 50);
+    const p25 = percentile(overallScores, 25);
+    const p75 = percentile(overallScores, 75);
+
+    const failureCount = current.results.filter(
+      r => r.qualityVerdict === 'exhausted' || r.qualityVerdict === 'cost_exceeded',
+    ).length;
+
+    const flagged = judges.filter(j => j.flaggedForReview);
+
+    const regressions = previous?.judgeResults
+      ? detectRegressions(previous.judgeResults, judges)
+      : [];
+
+    lines.push('## Score Distribution');
+    lines.push('');
+    lines.push('| Metric | Value |');
+    lines.push('|--------|-------|');
+    lines.push(`| Mean   | ${avg.toFixed(2)} |`);
+    lines.push(`| Median | ${med.toFixed(2)} |`);
+    lines.push(`| P25    | ${p25.toFixed(2)} |`);
+    lines.push(`| P75    | ${p75.toFixed(2)} |`);
+    lines.push(`| N      | ${judges.length} |`);
+    lines.push('');
+    lines.push('## Pipeline Failures');
+    lines.push('');
+    lines.push(`**${failureCount}** queries ended in \`exhausted\` or \`cost_exceeded\`.`);
+    lines.push('');
+
+    if (regressions.length > 0) {
+      lines.push('## Regressions');
+      lines.push('');
+      lines.push('| Corpus ID | Criterion | Previous | Current | Delta |');
+      lines.push('|-----------|-----------|----------|---------|-------|');
+      for (const r of regressions) {
+        lines.push(
+          `| ${r.corpusId} | ${r.criterion} | ${r.previousScore} | ${r.currentScore} | -${r.delta} |`,
+        );
+      }
+      lines.push('');
+    } else if (previous) {
+      lines.push('## Regressions');
+      lines.push('');
+      lines.push('No regressions detected.');
+      lines.push('');
     }
-    lines.push('');
-  } else if (previous) {
-    lines.push('## Regressions');
-    lines.push('');
-    lines.push('No regressions detected.');
-    lines.push('');
+
+    if (flagged.length > 0) {
+      lines.push('## Flagged for Review');
+      lines.push('');
+      for (const j of flagged) {
+        lines.push(`- **${j.corpusId}** (overall: ${j.overallScore}) - ${j.rationale}`);
+      }
+      lines.push('');
+    }
   }
 
-  if (flagged.length > 0) {
-    lines.push('## Flagged for Review');
-    lines.push('');
-    for (const j of flagged) {
-      lines.push(`- **${j.corpusId}** (overall: ${j.overallScore}) — ${j.rationale}`);
+  const acceptance = evaluateReferenceCardAcceptance(current, previous);
+  lines.push('## ReferenceCard Acceptance');
+  lines.push('');
+  lines.push(`**Decision:** \`${acceptance.decision}\``);
+  lines.push('');
+  lines.push(`Cases evaluated: ${acceptance.cases.length}`);
+  lines.push('');
+  if (acceptance.failures.length > 0) {
+    lines.push('| Corpus ID | Class | Detail |');
+    lines.push('|-----------|-------|--------|');
+    for (const failure of acceptance.failures) {
+      lines.push(
+        `| ${failure.corpusId} | ${failure.failureClass} | ${escapeMarkdownCell(failure.detail)} |`,
+      );
     }
     lines.push('');
   }
 
   return lines.join('\n');
+}
+
+export interface BenchmarkAnalysisOutputs {
+  summaryPath: string;
+  acceptancePath: string;
+}
+
+export function writeBenchmarkAnalysisOutputs(
+  currentPath: string,
+  previousPath?: string,
+): BenchmarkAnalysisOutputs {
+  const current: BenchmarkRun = JSON.parse(readFileSync(currentPath, 'utf-8'));
+  const previous: BenchmarkRun | undefined = previousPath
+    ? JSON.parse(readFileSync(previousPath, 'utf-8'))
+    : undefined;
+
+  const summary = generateSummary(current, previous);
+  const acceptance = evaluateReferenceCardAcceptance(current, previous);
+  const acceptanceReport = formatReferenceCardAcceptanceReport(acceptance);
+  const summaryPath = currentPath.replace('.json', '-summary.md');
+  const acceptancePath = currentPath.replace('.json', '-referencecard-acceptance.md');
+
+  writeFileSync(summaryPath, summary, 'utf-8');
+  writeFileSync(acceptancePath, acceptanceReport, 'utf-8');
+
+  return { summaryPath, acceptancePath };
+}
+
+function escapeMarkdownCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 // CLI entry point — only runs when executed directly
@@ -139,13 +193,7 @@ if (isMain) {
   const currentPath = args[0];
   const previousPath = args[1];
 
-  const current: BenchmarkRun = JSON.parse(readFileSync(currentPath, 'utf-8'));
-  const previous: BenchmarkRun | undefined = previousPath
-    ? JSON.parse(readFileSync(previousPath, 'utf-8'))
-    : undefined;
-
-  const summary = generateSummary(current, previous);
-  const outputPath = currentPath.replace('.json', '-summary.md');
-  writeFileSync(outputPath, summary, 'utf-8');
-  console.log(`Summary written to ${outputPath}`);
+  const outputs = writeBenchmarkAnalysisOutputs(currentPath, previousPath);
+  console.log(`Summary written to ${outputs.summaryPath}`);
+  console.log(`ReferenceCard acceptance written to ${outputs.acceptancePath}`);
 }
