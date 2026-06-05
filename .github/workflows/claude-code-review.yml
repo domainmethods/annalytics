@@ -21,8 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
-      issues: read
+      pull-requests: write
+      issues: write
+      actions: read
       id-token: write
 
     steps:
@@ -38,7 +39,28 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
+            Always post a top-level PR comment or pull-request review summarizing the review outcome, even when there are no findings. A green workflow without a PR artifact is not an accepted review signal.
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
+      - name: Verify Claude review posted feedback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          issue_comments="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | length')"
+          reviews="$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | length')"
+          review_comments="$(gh api "repos/$REPO/pulls/$PR_NUMBER/comments" \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | length')"
+
+          if [ "$issue_comments" -eq 0 ] && [ "$reviews" -eq 0 ] && [ "$review_comments" -eq 0 ]; then
+            echo "::error::Claude review completed without posting a PR comment, review, or inline review comment. Do not treat this check as a review pass."
+            exit 1
+          fi
