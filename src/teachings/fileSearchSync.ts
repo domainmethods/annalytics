@@ -5,6 +5,7 @@ import { teachingToMarkdown } from './markdownConverter.js';
 export interface SyncResult {
   uploaded: number;
   verified: number;
+  active: number;
   deleted: number;
   errors: string[];
 }
@@ -24,6 +25,7 @@ export async function syncTeachingsToFileSearch(
   teachings: Teaching[],
   fileSearchStoreName: string,
   apiKey: string,
+  options: SyncMarkdownDocumentsOptions = {},
 ): Promise<SyncResult> {
   return syncMarkdownDocumentsToFileSearch(
     teachings.map(teaching => ({
@@ -33,7 +35,7 @@ export async function syncTeachingsToFileSearch(
     })),
     fileSearchStoreName,
     apiKey,
-    { deleteDisplayNamePrefix: 'teaching:' },
+    { ...options, deleteDisplayNamePrefix: 'teaching:' },
   );
 }
 
@@ -46,6 +48,8 @@ export interface SyncMarkdownDocumentsOptions {
   maxIndexingAttempts?: number;
   activeDocumentPollAttempts?: number;
   activeDocumentPollIntervalMs?: number;
+  cleanupPollAttempts?: number;
+  cleanupPollIntervalMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -62,6 +66,8 @@ interface ResolvedSyncOptions {
   maxIndexingAttempts: number;
   activeDocumentPollAttempts: number;
   activeDocumentPollIntervalMs: number;
+  cleanupPollAttempts: number;
+  cleanupPollIntervalMs: number;
   sleep: (ms: number) => Promise<void>;
 }
 
@@ -87,8 +93,43 @@ function resolveOptions(options: SyncMarkdownDocumentsOptions): ResolvedSyncOpti
     maxIndexingAttempts: options.maxIndexingAttempts ?? 2,
     activeDocumentPollAttempts: options.activeDocumentPollAttempts ?? 20,
     activeDocumentPollIntervalMs: options.activeDocumentPollIntervalMs ?? 3000,
+    cleanupPollAttempts: options.cleanupPollAttempts ?? 20,
+    cleanupPollIntervalMs: options.cleanupPollIntervalMs ?? 3000,
     sleep: options.sleep ?? defaultSleep,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string =>
+    typeof value === 'string' && value.length > 0,
+  );
+}
+
+export function extractUploadedDocumentName(response: unknown): string | undefined {
+  const record = asRecord(response);
+  if (!record) return undefined;
+
+  const nestedRecords = [
+    asRecord(record.document),
+    asRecord(record.fileSearchStoreDocument),
+    asRecord(record.fileSearchDocument),
+    asRecord(record.documentMetadata),
+  ];
+
+  return firstString(
+    record.documentName,
+    record.name,
+    ...nestedRecords.flatMap(nested => [
+      nested?.documentName,
+      nested?.name,
+    ]),
+  );
 }
 
 function errorText(err: unknown): string {
@@ -133,8 +174,32 @@ function operationTarget(
 ): UploadedDocumentTarget {
   return {
     displayName: document.displayName,
-    documentName: operation.response?.documentName,
+    documentName: extractUploadedDocumentName(operation.response),
   };
+}
+
+interface FileSearchDocumentReadback {
+  name?: string;
+  displayName?: string;
+  state: string;
+}
+
+async function listFileSearchDocuments(
+  ai: GoogleGenAI,
+  fileSearchStoreName: string,
+): Promise<FileSearchDocumentReadback[]> {
+  const documents = await ai.fileSearchStores.documents.list({
+    parent: fileSearchStoreName,
+  });
+  const readback: FileSearchDocumentReadback[] = [];
+  for await (const document of documents) {
+    readback.push({
+      name: document.name,
+      displayName: document.displayName,
+      state: document.state ?? 'STATE_UNSPECIFIED',
+    });
+  }
+  return readback;
 }
 
 async function uploadWithRetry(
@@ -205,10 +270,8 @@ async function listDocumentStates(
       .filter(target => !target.documentName)
       .map(target => [target.displayName, target]),
   );
-  const documents = await ai.fileSearchStores.documents.list({
-    parent: fileSearchStoreName,
-  });
-  for await (const document of documents) {
+  const documents = await listFileSearchDocuments(ai, fileSearchStoreName);
+  for (const document of documents) {
     const target = document.name
       ? targetsByDocumentName.get(document.name)
       : undefined;
@@ -247,10 +310,8 @@ async function deleteDocumentsByTargets(
   if (fallbackDisplayNames.size === 0) return;
 
   try {
-    const documents = await ai.fileSearchStores.documents.list({
-      parent: fileSearchStoreName,
-    });
-    for await (const document of documents) {
+    const documents = await listFileSearchDocuments(ai, fileSearchStoreName);
+    for (const document of documents) {
       if (!document.name || !document.displayName) continue;
       if (!fallbackDisplayNames.has(document.displayName)) continue;
       try {
@@ -308,33 +369,150 @@ async function verifyActiveDocuments(
   };
 }
 
-async function cleanupReplacedFiles(
-  ai: GoogleGenAI,
-  fileSearchStoreName: string,
-  retainedTargets: UploadedDocumentTarget[],
+function isManagedDocument(
+  document: FileSearchDocumentReadback,
   displayNamePrefix?: string,
-): Promise<number> {
-  let deleted = 0;
+): boolean {
+  if (!displayNamePrefix) return true;
+  return Boolean(document.displayName?.startsWith(displayNamePrefix));
+}
+
+function retainedDocumentNames(
+  documents: FileSearchDocumentReadback[],
+  retainedTargets: UploadedDocumentTarget[],
+): Set<string> {
   const retainedDocumentNames = new Set(
     retainedTargets
       .map(target => target.documentName)
       .filter((name): name is string => Boolean(name)),
   );
-  const fallbackDisplayNames = new Set(
-    retainedTargets
-      .filter(target => !target.documentName)
-      .map(target => target.displayName),
-  );
 
-  try {
-    const documents = await ai.fileSearchStores.documents.list({
-      parent: fileSearchStoreName,
-    });
-    for await (const document of documents) {
+  for (const target of retainedTargets) {
+    if (target.documentName) continue;
+    const fallback = documents
+      .filter(document =>
+        document.displayName === target.displayName
+        && document.state === 'STATE_ACTIVE'
+        && document.name,
+      )
+      .sort((left, right) => left.name!.localeCompare(right.name!))
+      .at(0);
+    if (fallback?.name) retainedDocumentNames.add(fallback.name);
+  }
+
+  return retainedDocumentNames;
+}
+
+function documentsToDeleteForConvergence(
+  documents: FileSearchDocumentReadback[],
+  retainedTargets: UploadedDocumentTarget[],
+  displayNamePrefix?: string,
+): FileSearchDocumentReadback[] {
+  const targetsByDisplayName = new Map(
+    retainedTargets.map(target => [target.displayName, target]),
+  );
+  const retainedNames = retainedDocumentNames(documents, retainedTargets);
+
+  return documents.filter(document => {
+    if (!document.name) return false;
+    if (!isManagedDocument(document, displayNamePrefix)) return false;
+    const target = document.displayName
+      ? targetsByDisplayName.get(document.displayName)
+      : undefined;
+    if (!target) return true;
+    return !retainedNames.has(document.name);
+  });
+}
+
+function convergenceStatus(
+  documents: FileSearchDocumentReadback[],
+  retainedTargets: UploadedDocumentTarget[],
+  displayNamePrefix?: string,
+): { active: number; issues: string[] } {
+  const issues: string[] = [];
+  const retainedNames = retainedDocumentNames(documents, retainedTargets);
+  const targetsByDisplayName = new Map(
+    retainedTargets.map(target => [target.displayName, target]),
+  );
+  let active = 0;
+
+  for (const target of retainedTargets) {
+    const matchingDocuments = documents.filter(document =>
+      document.displayName === target.displayName,
+    );
+    const activeDocuments = matchingDocuments.filter(document =>
+      document.state === 'STATE_ACTIVE',
+    );
+    const failedDocuments = matchingDocuments.filter(document =>
+      document.state === 'STATE_FAILED',
+    );
+    const staleDocuments = matchingDocuments.filter(document =>
+      !document.name || !retainedNames.has(document.name),
+    );
+    const uploadedActiveDocuments = target.documentName
+      ? activeDocuments.filter(document => document.name === target.documentName)
+      : activeDocuments;
+
+    if (uploadedActiveDocuments.length === 1 && activeDocuments.length === 1) {
+      active++;
+    }
+    if (uploadedActiveDocuments.length !== 1) {
+      issues.push(`${target.displayName} missing uploaded STATE_ACTIVE document`);
+    }
+    if (activeDocuments.length > 1) {
+      issues.push(`${target.displayName} has ${activeDocuments.length} active documents`);
+    }
+    if (failedDocuments.length > 0) {
+      issues.push(`${target.displayName} has ${failedDocuments.length} failed documents`);
+    }
+    if (staleDocuments.length > 0) {
+      issues.push(`${target.displayName} has ${staleDocuments.length} stale duplicate documents`);
+    }
+  }
+
+  const extraManagedDocuments = documents.filter(document => {
+    if (!isManagedDocument(document, displayNamePrefix)) return false;
+    return !document.displayName || !targetsByDisplayName.has(document.displayName);
+  });
+  if (extraManagedDocuments.length > 0) {
+    issues.push(`${extraManagedDocuments.length} unexpected managed documents remain`);
+  }
+
+  return { active, issues };
+}
+
+async function cleanupReplacedFiles(
+  ai: GoogleGenAI,
+  fileSearchStoreName: string,
+  retainedTargets: UploadedDocumentTarget[],
+  options: ResolvedSyncOptions,
+): Promise<{ active: number; deleted: number; errors: string[] }> {
+  let deleted = 0;
+  let lastIssues: string[] = [];
+  let lastActive = 0;
+  let lastListError: unknown;
+
+  for (let attempt = 1; attempt <= options.cleanupPollAttempts; attempt++) {
+    let documents: FileSearchDocumentReadback[];
+    try {
+      documents = await listFileSearchDocuments(ai, fileSearchStoreName);
+      lastListError = undefined;
+    } catch (err) {
+      lastListError = err;
+      if (attempt < options.cleanupPollAttempts) {
+        await options.sleep(options.cleanupPollIntervalMs);
+        continue;
+      }
+      break;
+    }
+
+    const deletions = documentsToDeleteForConvergence(
+      documents,
+      retainedTargets,
+      options.deleteDisplayNamePrefix,
+    );
+    for (const document of deletions) {
       if (!document.name) continue;
-      if (displayNamePrefix && !document.displayName?.startsWith(displayNamePrefix)) continue;
-      if (retainedDocumentNames.has(document.name)) continue;
-      if (document.displayName && fallbackDisplayNames.has(document.displayName)) continue;
       try {
         await ai.fileSearchStores.documents.delete({
           name: document.name,
@@ -342,14 +520,40 @@ async function cleanupReplacedFiles(
         });
         deleted++;
       } catch {
-        // Best-effort cleanup; verified new documents remain available.
+        // Final convergence readback below determines whether cleanup succeeded.
       }
     }
-  } catch {
-    // Best-effort cleanup; verified new documents remain available.
+
+    const status = convergenceStatus(
+      documents,
+      retainedTargets,
+      options.deleteDisplayNamePrefix,
+    );
+    lastIssues = status.issues;
+    lastActive = status.active;
+    if (deletions.length === 0 && status.issues.length === 0) {
+      return { active: status.active, deleted, errors: [] };
+    }
+
+    if (attempt < options.cleanupPollAttempts) {
+      await options.sleep(options.cleanupPollIntervalMs);
+    }
   }
 
-  return deleted;
+  if (lastListError) {
+    return {
+      active: lastActive,
+      deleted,
+      errors: [`File Search cleanup failed: ${errorText(lastListError)}`],
+    };
+  }
+  return {
+    active: lastActive,
+    deleted,
+    errors: [
+      `File Search cleanup did not converge: ${lastIssues.join('; ') || 'final readback was not duplicate-free'}`,
+    ],
+  };
 }
 
 export async function syncMarkdownDocumentsToFileSearch(
@@ -358,7 +562,7 @@ export async function syncMarkdownDocumentsToFileSearch(
   apiKey: string,
   options: SyncMarkdownDocumentsOptions = {},
 ): Promise<SyncResult> {
-  const result: SyncResult = { uploaded: 0, verified: 0, deleted: 0, errors: [] };
+  const result: SyncResult = { uploaded: 0, verified: 0, active: 0, deleted: 0, errors: [] };
   if (documents.length === 0) return result;
 
   const resolvedOptions = resolveOptions(options);
@@ -435,14 +639,18 @@ export async function syncMarkdownDocumentsToFileSearch(
   result.verified = new Set(
     [...verifiedTargets.values()].map(target => target.displayName),
   ).size;
+  result.active = result.verified;
 
   if (result.errors.length === 0 && result.verified === documents.length) {
-    result.deleted = await cleanupReplacedFiles(
+    const cleanup = await cleanupReplacedFiles(
       ai,
       fileSearchStoreName,
       [...verifiedTargets.values()],
-      resolvedOptions.deleteDisplayNamePrefix,
+      resolvedOptions,
     );
+    result.active = cleanup.active;
+    result.deleted = cleanup.deleted;
+    result.errors.push(...cleanup.errors);
   }
 
   return result;

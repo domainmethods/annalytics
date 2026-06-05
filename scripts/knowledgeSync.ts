@@ -22,6 +22,7 @@ export type SummarySyncStatus =
 export interface KnowledgeSyncResult {
   uploaded: number;
   verified: number;
+  active: number;
   deleted: number;
   errors: string[];
   summarySync: SummarySyncStatus;
@@ -81,7 +82,7 @@ export async function runKnowledgeSync(
   const documents = buildKnowledgeDocuments(teachings, referenceCards);
   if (documents.length === 0) {
     logger.log('No knowledge files found');
-    return { uploaded: 0, verified: 0, deleted: 0, errors: [], summarySync: 'skipped_no_knowledge' };
+    return { uploaded: 0, verified: 0, active: 0, deleted: 0, errors: [], summarySync: 'skipped_no_knowledge' };
   }
 
   const storeId = env.FILE_SEARCH_STORE_ID;
@@ -91,7 +92,9 @@ export async function runKnowledgeSync(
   }
 
   const result = await syncDocuments(documents, storeId, apiKey);
-  logger.log(`Uploaded: ${result.uploaded}, Verified: ${result.verified}, Errors: ${result.errors.length}`);
+  logger.log(
+    `Uploaded: ${result.uploaded}, Verified: ${result.verified}, Active: ${result.active}, Deleted: ${result.deleted}, Errors: ${result.errors.length}`,
+  );
   if (result.errors.length > 0) {
     throw new Error(`Sync errors:\n${result.errors.map(error => `- ${error}`).join('\n')}`);
   }

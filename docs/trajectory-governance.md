@@ -14,6 +14,8 @@ The **ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evi
 
 The active next tranche is scoped implementation alignment: replace starter ReferenceCards and benchmark corpus with one real business domain, provide matching dbt artifacts, sync File Search, deploy, and run the acceptance analyzer with real evidence.
 
+File Search sync is part of the trust gate. A sync is successful only when upload operations complete, newly uploaded documents verify as `STATE_ACTIVE`, replaced managed documents are cleaned up, and final readback converges to exactly one active document per expected display name with no failed or duplicate managed documents remaining.
+
 Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until the first implementation-specific pilot run records an `ACCEPTED` decision or this document is updated with new evidence and rationale.
 
 After the first implementation-specific pilot decision is recorded, the trajectory branches:
@@ -205,7 +207,7 @@ As of 2026-06-05:
 - `references/` and `scripts/sync-knowledge.ts` are the primary knowledge authoring/sync path. Legacy teaching-only sync remains for compatibility but is not the main onboarding path.
 - `scripts/setup-check.ts` records offline setup guardrails for stale model IDs, required files, env var presence without secret values, dbt artifact presence, ReferenceCard/dbt alignment, workflow consistency, and Terraform boundary drift.
 - File Search investigation showed successful sync requires more than a store ID: upload operations must complete and uploaded documents must read back as `STATE_ACTIVE`.
-- File Search sync is hardened to retry transient upload failures, poll upload operations, re-upload documents that reach failed indexing state, and verify `STATE_ACTIVE` document readback before cleaning up replaced documents and reporting success.
+- File Search sync is hardened to retry transient upload failures, poll upload operations, re-upload documents that reach failed indexing state, verify newly uploaded documents by exact document name when available, and require duplicate-free final readback convergence before reporting success.
 - Template boundary: do not commit implementation-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, or benchmark evidence to this repository unless it has intentionally become an implementation repo.
 - A real implementation-specific acceptance decision is still required before adding another ReferenceCard domain.
 
