@@ -1,10 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
 import type { TableContext } from '../dbt/types.js';
 import type { SqlGenerationResult, ThreadMessage } from '../types.js';
-import type { GroundingCitation } from './types.js';
 import { assessQuality } from '../dbt/quality.js';
 import { formatSampleRowsForPrompt } from '../dbt/sampleRowCache.js';
 import { getProModel } from './modelConfig.js';
+import { extractGroundingCitations } from './grounding.js';
 
 export interface GenerateSqlOptions {
   question: string;
@@ -220,39 +220,4 @@ Fix the error and generate a corrected query.`;
     reasoningChain: parsed.reasoning_chain,
     groundingCitations,
   };
-}
-
-function extractGroundingCitations(response: any): GroundingCitation[] {
-  try {
-    const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
-    if (!Array.isArray(chunks)) return [];
-    return chunks
-      .filter((c: any) => c.retrievedContext)
-      .map((c: any) => ({
-        sourceFile: citationSourceFile(c.retrievedContext),
-        chunkText: c.retrievedContext.text ?? '',
-        relevanceScore: c.retrievedContext?.score ?? 1.0,
-      }));
-  } catch {
-    return [];
-  }
-}
-
-function citationSourceFile(retrievedContext: any): string {
-  const uri = retrievedContext?.uri;
-  if (typeof uri === 'string' && uri.trim()) return uri;
-
-  const title = retrievedContext?.title;
-  if (typeof title === 'string' && title.trim()) return title;
-
-  const text = retrievedContext?.text;
-  if (typeof text !== 'string') return '';
-
-  const referenceMatch = text.match(/ReferenceCard:\s*([a-z0-9-]+)/i);
-  if (referenceMatch) return `reference_card:${referenceMatch[1]}`;
-
-  const teachingMatch = text.match(/Teaching:\s*([a-z0-9-]+)/i);
-  if (teachingMatch) return `teaching:${teachingMatch[1]}`;
-
-  return '';
 }

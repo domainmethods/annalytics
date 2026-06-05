@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { GroundingCitation } from '../src/agents/types.js';
 import type { FailureRecord, QualityResult, ValidationLayerRecord } from '../src/qualityLoop.js';
+import { extractReferenceIdsFromCitations as extractCitationReferenceIds } from '../src/agents/grounding.js';
 
 export interface BenchmarkMetadataInput {
   packageJson: string;
@@ -107,15 +108,20 @@ export function validationResultsFromFailures(
 export function extractReferenceIdsFromCitations(
   citations: Pick<GroundingCitation, 'sourceFile' | 'chunkText' | 'relevanceScore'>[],
 ): string[] {
-  const ids = new Set<string>();
-  for (const citation of citations) {
-    const sourceMatch = citation.sourceFile.match(/reference_card:([a-z0-9-]+)/i);
-    if (sourceMatch) ids.add(sourceMatch[1]);
+  return extractCitationReferenceIds(citations);
+}
 
-    const chunkMatch = citation.chunkText.match(/ReferenceCard:\s*([a-z0-9-]+)/i);
-    if (chunkMatch) ids.add(chunkMatch[1]);
-  }
-  return [...ids].sort();
+export function combineReferenceIds(...groups: Array<string[] | undefined>): string[] {
+  return [...new Set(groups.flatMap(group => group ?? []))].sort();
+}
+
+export function referenceRetrievalSource(
+  referenceProbeIds: string[],
+  sqlGroundingIds: string[],
+): 'explicit_probe' | 'sql_grounding' | 'none' {
+  if (referenceProbeIds.length > 0) return 'explicit_probe';
+  if (sqlGroundingIds.length > 0) return 'sql_grounding';
+  return 'none';
 }
 
 export function referenceRetrievalPassed(

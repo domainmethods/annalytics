@@ -31,6 +31,7 @@ export interface ReferenceCardCaseAcceptance {
   expectedReferenceIds: string[];
   observedReferenceIds: string[];
   referenceRetrievalPassed: boolean | null;
+  referenceRetrievalSource: 'explicit_probe' | 'sql_grounding' | 'none' | 'legacy';
   expectedTables: string[];
   observedTables: string[];
   tableSelectionPassed: boolean | null;
@@ -152,13 +153,14 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
 
   lines.push('## ReferenceCard Scorecard');
   lines.push('');
-  lines.push('| Corpus ID | Status | Retrieval | Tables | SQL Shape | L1/L3/L4 | L2 |');
-  lines.push('|-----------|--------|-----------|--------|-----------|----------|----|');
+  lines.push('| Corpus ID | Status | Retrieval | Source | Tables | SQL Shape | L1/L3/L4 | L2 |');
+  lines.push('|-----------|--------|-----------|--------|--------|-----------|----------|----|');
   for (const item of result.cases) {
     lines.push(`| ${[
       escapeMarkdown(item.corpusId),
       item.status,
       boolLabel(item.referenceRetrievalPassed),
+      item.referenceRetrievalSource,
       boolLabel(item.tableSelectionPassed),
       boolLabel(item.sqlShapePassed),
       blockingValidationLabel(item.validationResults),
@@ -204,6 +206,7 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
   const failures: ReferenceCardAcceptanceFailure[] = [];
   const expectedReferenceIds = arrayOrEmpty(result.expectedReferenceIds);
   const observedReferenceIds = arrayOrEmpty(result.observedReferenceIds);
+  const referenceRetrievalSource = referenceRetrievalSourceFor(result, observedReferenceIds);
   const expectedTables = arrayOrEmpty(result.expectedTables);
   const observedTables = arrayOrEmpty(result.observedTables);
   const expectedSqlContains = arrayOrEmpty(result.expectedSqlContains);
@@ -274,6 +277,7 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     expectedReferenceIds,
     observedReferenceIds,
     referenceRetrievalPassed: result.referenceRetrievalPassed,
+    referenceRetrievalSource,
     expectedTables,
     observedTables,
     tableSelectionPassed: result.tableSelectionPassed,
@@ -335,6 +339,20 @@ function blockingValidationFailuresFor(validation: BenchmarkResult['validationRe
 
 function arrayOrEmpty(value: string[] | undefined): string[] {
   return Array.isArray(value) ? value : [];
+}
+
+function referenceRetrievalSourceFor(
+  result: BenchmarkResult,
+  observedReferenceIds: string[],
+): ReferenceCardCaseAcceptance['referenceRetrievalSource'] {
+  if (
+    result.referenceRetrievalSource === 'explicit_probe'
+    || result.referenceRetrievalSource === 'sql_grounding'
+    || result.referenceRetrievalSource === 'none'
+  ) {
+    return result.referenceRetrievalSource;
+  }
+  return observedReferenceIds.length > 0 ? 'legacy' : 'none';
 }
 
 function formatList(values: string[]): string {
