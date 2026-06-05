@@ -11,3 +11,5 @@ coverage/
 *.tsbuildinfo
 .worktrees/
 .delegate/
+dbt/manifest.json
+dbt/catalog.json

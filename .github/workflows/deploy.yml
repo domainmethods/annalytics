@@ -50,6 +50,8 @@ jobs:
         run: |
           test -n "${PROJECT_ID}" || (echo "Missing GCP_PROJECT_ID secret" && exit 1)
           test -n "${FILE_SEARCH_STORE_ID}" || (echo "Missing FILE_SEARCH_STORE_ID secret" && exit 1)
+          test -f dbt/manifest.json || (echo "Missing dbt/manifest.json; provide implementation-specific dbt artifacts before deploy" && exit 1)
+          test -f dbt/catalog.json || (echo "Missing dbt/catalog.json; provide implementation-specific dbt artifacts before deploy" && exit 1)
           gcloud config set project "${PROJECT_ID}"
 
       - name: Build and push Docker image

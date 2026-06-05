@@ -58,7 +58,7 @@ export interface ReferenceCardAcceptanceResult {
 }
 
 export function isReferenceCardAcceptanceCase(result: BenchmarkResult): boolean {
-  return result.corpusId.startsWith('revenue-ref-') || (result.expectedReferenceIds?.length ?? 0) > 0;
+  return result.corpusId.includes('-ref-') || (result.expectedReferenceIds?.length ?? 0) > 0;
 }
 
 export function evaluateReferenceCardAcceptance(

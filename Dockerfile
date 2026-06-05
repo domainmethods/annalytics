@@ -13,6 +13,6 @@ COPY --from=builder /app/dist/ dist/
 COPY --from=builder /app/node_modules/ node_modules/
 COPY --from=builder /app/package.json ./
 # dbt artifacts (manifest.json, catalog.json) must exist at build time.
-# Generate with `dbt compile && dbt docs generate` or commit to dbt/ directory.
+# Generate with `dbt compile && dbt docs generate` and provide them in dbt/.
 COPY dbt/ dbt/
 CMD ["dist/app.js"]
