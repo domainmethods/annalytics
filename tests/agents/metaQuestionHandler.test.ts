@@ -71,7 +71,7 @@ describe('handleMetaQuestion', () => {
 
     // Verify the prompt includes key context
     const callArgs = mockGenerateContent.mock.calls[0][0];
-    expect(callArgs.model).toBe('gemini-3.0-flash');
+    expect(callArgs.model).toBe('gemini-flash-latest');
     const promptText = callArgs.contents[0].parts[0].text;
     expect(promptText).toContain('What is total revenue by region?');
     expect(promptText).toContain('revenue-definition.md');

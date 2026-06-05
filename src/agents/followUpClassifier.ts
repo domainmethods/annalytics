@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { ThreadMessage } from '../types.js';
+import { getFlashModel } from './modelConfig.js';
 
 const FollowUpSchema = z.object({
   intent: z.enum(['new_query', 'refinement', 'meta_question', 'discrepancy']),
@@ -31,7 +32,7 @@ Intent types:
 - discrepancy: "If X, how come Y?" investigation`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-flash',
+    model: getFlashModel(),
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',

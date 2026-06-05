@@ -177,7 +177,7 @@ describe('resumeFromEscalation', () => {
       originalQuestion: 'What is revenue?',
       clarifiedQuestion: 'What is revenue?',
       humanResponse: 'Use LEFT JOIN on user_id',
-      finalSql: 'SELECT SUM(amount) FROM orders',
+      failedSql: 'SELECT SUM(amount) FROM orders',
       supervisorNotes: 'Not sure about joins',
       apiKey: 'test-key',
     });

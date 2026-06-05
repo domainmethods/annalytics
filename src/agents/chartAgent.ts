@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { getFlashModel } from './modelConfig.js';
 
 export interface ChartSpecInput {
   question: string;
@@ -43,7 +44,7 @@ Rules:
 - Include proper axis labels from column names`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.0-flash',
+      model: getFlashModel(),
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: {
         responseMimeType: 'application/json',

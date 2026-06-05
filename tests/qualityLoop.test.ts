@@ -80,6 +80,12 @@ describe('qualityLoop', () => {
     expect(result.verdict).toBe('pass');
     expect(result.retryCount).toBe(0);
     expect(result.failureHistory).toHaveLength(0);
+    expect(result.validationHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ attempt: 0, layer: 'l1', valid: true }),
+      expect.objectContaining({ attempt: 0, layer: 'l2', valid: true }),
+      expect.objectContaining({ attempt: 0, layer: 'l3', valid: true, bytesProcessed: 1000 }),
+      expect.objectContaining({ attempt: 0, layer: 'l4', valid: true }),
+    ]));
     expect(result.sqlResult).toEqual(baseSqlResult);
     expect(result.finalConfidence).toBe('high');
     expect(result.bytesProcessed).toBe(1000);
@@ -201,6 +207,9 @@ describe('qualityLoop', () => {
 
     expect(result.verdict).toBe('cost_exceeded');
     expect(result.failureHistory).toHaveLength(0);
+    expect(result.validationHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ attempt: 0, layer: 'l4', valid: false, detail: 'Cost exceeded' }),
+    ]));
     expect(result.retryCount).toBe(0);
     expect(result.supervisorNotes).toBeTruthy();
   });
@@ -214,6 +223,10 @@ describe('qualityLoop', () => {
     // Should still pass — L2 is advisory only
     expect(result.verdict).toBe('pass');
     expect(result.failureHistory).toHaveLength(0);
+    expect(result.validationHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ attempt: 0, layer: 'l2', valid: false, detail: 'Parse error' }),
+      expect.objectContaining({ attempt: 0, layer: 'l3', valid: true }),
+    ]));
     expect(result.retryCount).toBe(0);
     expect(mockDryRun).toHaveBeenCalledTimes(1); // L3 was still reached
     expect(mockReviewSql).toHaveBeenCalledTimes(1); // Supervisor was still reached

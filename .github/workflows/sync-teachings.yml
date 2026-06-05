@@ -1,16 +1,33 @@
-name: Sync Teachings
+name: Sync Knowledge
 on:
   push:
     branches: [main]
     paths:
       - 'teachings/**/*.yml'
       - 'teachings/**/*.yaml'
+      - 'references/**/*.yml'
+      - 'references/**/*.yaml'
+      - 'src/teachings/**'
+      - 'src/references/**'
+      - 'scripts/knowledgeSupport.ts'
+      - 'scripts/knowledgeSync.ts'
+      - 'scripts/validate-knowledge.ts'
+      - 'scripts/sync-knowledge.ts'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - uses: actions/setup-node@v4
         with:
@@ -19,9 +36,14 @@ jobs:
 
       - run: npm ci
 
-      - name: Sync teachings to File Search
+      - name: Validate knowledge
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: npm run knowledge:validate
+
+      - name: Sync knowledge to File Search
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY_CI }}
           FILE_SEARCH_STORE_ID: ${{ secrets.FILE_SEARCH_STORE_ID }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-        run: npx tsx scripts/sync-teachings.ts
+        run: npm run knowledge:sync

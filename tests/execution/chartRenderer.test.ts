@@ -16,19 +16,21 @@ vi.mock('vega-lite', () => ({
   compile: vi.fn(() => ({ spec: {} })),
 }));
 
-vi.mock('sharp', () => ({
-  default: vi.fn(() => ({
-    png: vi.fn().mockReturnThis(),
-    resize: vi.fn().mockReturnThis(),
-    toBuffer: vi.fn().mockResolvedValue(Buffer.from('fake-png')),
-  })),
+vi.mock('@resvg/resvg-js', () => ({
+  Resvg: vi.fn(function () {
+    return {
+      render: vi.fn(() => ({
+        asPng: vi.fn(() => Buffer.from('fake-png')),
+      })),
+    };
+  }),
 }));
 
 import { isChartable, renderChart } from '../../src/execution/chartRenderer.js';
 import type { QueryResult } from '../../src/types.js';
 import { compile } from 'vega-lite';
 import * as vega from 'vega';
-import sharp from 'sharp';
+import { Resvg } from '@resvg/resvg-js';
 
 function makeResult(overrides: Partial<QueryResult> = {}): QueryResult {
   return {
@@ -104,13 +106,38 @@ describe('isChartable', () => {
     });
     expect(isChartable(result)).toBe(false);
   });
+
+  it('true when the first row has nulls but later rows have chartable values', () => {
+    const result = makeResult({
+      rows: [
+        { day: null, count: null },
+        { day: '2026-06-01', count: 10 },
+        { day: '2026-06-02', count: 20 },
+      ],
+      columnNames: ['day', 'count'],
+      totalRows: 3,
+    });
+    expect(isChartable(result)).toBe(true);
+  });
+
+  it('false when only one mixed-type column has both numeric and non-numeric values', () => {
+    const result = makeResult({
+      rows: [
+        { mixed: 10, empty: null },
+        { mixed: 'not-a-number', empty: null },
+      ],
+      columnNames: ['mixed', 'empty'],
+      totalRows: 2,
+    });
+    expect(isChartable(result)).toBe(false);
+  });
 });
 
 describe('renderChart', () => {
   const compileMock = compile as ReturnType<typeof vi.fn>;
   const ViewMock = vega.View as unknown as ReturnType<typeof vi.fn>;
   const parseMock = vega.parse as ReturnType<typeof vi.fn>;
-  const sharpMock = sharp as unknown as ReturnType<typeof vi.fn>;
+  const ResvgMock = Resvg as unknown as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -124,10 +151,12 @@ describe('renderChart', () => {
       };
     });
     compileMock.mockReturnValue({ spec: {} });
-    sharpMock.mockReturnValue({
-      png: vi.fn().mockReturnThis(),
-      resize: vi.fn().mockReturnThis(),
-      toBuffer: vi.fn().mockResolvedValue(Buffer.from('fake-png')),
+    ResvgMock.mockImplementation(function () {
+      return {
+        render: vi.fn(() => ({
+          asPng: vi.fn(() => Buffer.from('fake-png')),
+        })),
+      };
     });
   });
 
@@ -139,6 +168,7 @@ describe('renderChart', () => {
     ];
     const result = await renderChart(spec, rows);
     expect(result).toBeInstanceOf(Buffer);
+    expect(ResvgMock).toHaveBeenCalled();
   });
 
   it('returns null when vega-lite compile throws', async () => {

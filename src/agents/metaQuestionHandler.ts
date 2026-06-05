@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { ResponseContext } from '../types.js';
+import { getFlashModel } from './modelConfig.js';
 
 export async function handleMetaQuestion(
   followUpQuestion: string,
@@ -46,7 +47,7 @@ In your response:
 USER'S FOLLOW-UP QUESTION: ${followUpQuestion}`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.0-flash',
+    model: getFlashModel(),
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   });
 

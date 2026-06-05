@@ -1,29 +1,25 @@
-import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
-import { parseTeachingFile } from '../src/teachings/parser.js';
 import { syncTeachingsToFileSearch } from '../src/teachings/fileSearchSync.js';
 import { buildSummaries } from '../src/teachings/summaryMap.js';
 import { initFirestore, getDb } from '../src/state/firestore.js';
+import { loadTeachingsFromDir, validateTeachingsForSync } from './validate-teachings.js';
 
 async function main() {
-  const teachingsDir = join(process.cwd(), 'teachings');
-  const files = await readdir(teachingsDir);
-  const yamlFiles = files.filter(f => f.endsWith('.yml') || f.endsWith('.yaml'));
-
-  if (yamlFiles.length === 0) {
+  const rootDir = process.cwd();
+  const teachingsDir = join(rootDir, 'teachings');
+  const allTeachings = await loadTeachingsFromDir(teachingsDir);
+  if (allTeachings.length === 0) {
     console.log('No teaching YAML files found');
     return;
   }
 
-  // Parse all teaching files
-  const allTeachings = [];
-  for (const file of yamlFiles) {
-    const content = await readFile(join(teachingsDir, file), 'utf-8');
-    const teachings = parseTeachingFile(content);
-    allTeachings.push(...teachings);
+  console.log(`Parsed ${allTeachings.length} teachings`);
+  const validationErrors = await validateTeachingsForSync(rootDir);
+  if (validationErrors.length > 0) {
+    console.error('Teaching validation failed:');
+    for (const error of validationErrors) console.error(`- ${error}`);
+    process.exit(1);
   }
-
-  console.log(`Parsed ${allTeachings.length} teachings from ${yamlFiles.length} files`);
 
   // Sync to File Search
   const storeId = process.env.FILE_SEARCH_STORE_ID;

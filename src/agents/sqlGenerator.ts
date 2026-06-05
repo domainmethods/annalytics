@@ -4,6 +4,7 @@ import type { SqlGenerationResult, ThreadMessage } from '../types.js';
 import type { GroundingCitation } from './types.js';
 import { assessQuality } from '../dbt/quality.js';
 import { formatSampleRowsForPrompt } from '../dbt/sampleRowCache.js';
+import { getProModel } from './modelConfig.js';
 
 export interface GenerateSqlOptions {
   question: string;
@@ -71,9 +72,10 @@ ${schemaSections.join('\n\n')}
 
   // Add File Search context hint
   if (opts.fileSearchStoreId) {
-    prompt += `\nTEACHINGS:
-(Relevant teachings are automatically retrieved via Gemini File Search.
-Follow sanctioned SQL patterns when they exist for the question type.)\n`;
+    prompt += `\nKNOWLEDGE CONTEXT:
+Relevant teachings and reference cards are automatically retrieved via Gemini File Search.
+Follow sanctioned SQL patterns from teachings when they exist.
+Follow reference-card constraints for canonical tables, metrics, grains, required filters, exclusions, and avoid-table guidance when they apply.\n`;
   }
 
   // Add negative example if provided
@@ -122,7 +124,7 @@ function buildContents(
 
 export async function generateSql(opts: GenerateSqlOptions): Promise<SqlGenerationResult> {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-  const model = opts.model || 'gemini-3.0-pro';
+  const model = opts.model || getProModel();
 
   let systemPrompt = buildSystemPrompt(opts);
 

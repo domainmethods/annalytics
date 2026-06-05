@@ -68,7 +68,7 @@ describe('handleDbtStatus', () => {
     expect(mockGenerateContent).not.toHaveBeenCalled();
   });
 
-  it('uses Flash model', async () => {
+  it('uses the configured Flash model default', async () => {
     mockGenerateContent.mockResolvedValue({
       text: 'All models are running fine.',
     });
@@ -76,6 +76,6 @@ describe('handleDbtStatus', () => {
     await handleDbtStatus('Any issues?', sampleHistory, 'test-api-key');
 
     const callArgs = mockGenerateContent.mock.calls[0][0];
-    expect(callArgs.model).toBe('gemini-3.0-flash');
+    expect(callArgs.model).toBe('gemini-flash-latest');
   });
 });

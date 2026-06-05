@@ -1,3 +1,5 @@
+import { getProModel } from './agents/modelConfig.js';
+
 export interface AppConfig {
   slack: {
     botToken: string;
@@ -60,7 +62,7 @@ export function loadConfig(): AppConfig {
     },
     gemini: {
       apiKey: requireEnv('GEMINI_API_KEY'),
-      model: process.env.GEMINI_MODEL || 'gemini-3.0-pro',
+      model: getProModel(),
       fileSearchStoreId: process.env.FILE_SEARCH_STORE_ID || undefined,
     },
     gcp: {

@@ -1,0 +1,153 @@
+reference_cards:
+  - id: revenue-canonical-definition
+    title: Canonical Revenue Definition
+    domain: revenue
+    grain: order
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    required_filters:
+      - order_status = 'completed'
+    exclusions:
+      - cancelled orders
+      - refunded orders
+    avoid_tables:
+      - analytics.fct_revenue
+    aliases:
+      - revenue
+      - sales
+      - gross revenue
+      - total revenue
+    routing_triggers:
+      - total revenue
+      - revenue last month
+      - gross sales
+      - sales this month
+    owner: finance-analytics
+    freshness_sla: refreshed daily after dbt build
+    related_teachings:
+      - revenue-monthly
+    updated: "2026-06-04"
+
+  - id: revenue-monthly-grain
+    title: Monthly Revenue Grain
+    domain: revenue
+    grain: month
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    required_filters:
+      - order_status = 'completed'
+      - group by DATE_TRUNC(order_date, MONTH)
+      - order by revenue_month
+    exclusions:
+      - daily order grain
+      - raw timestamp grouping
+    avoid_tables:
+      - analytics.fct_revenue
+    aliases:
+      - monthly revenue
+      - revenue by month
+      - month over month revenue
+    routing_triggers:
+      - show monthly revenue
+      - revenue this year by month
+      - revenue trend
+      - month over month sales
+    owner: finance-analytics
+    freshness_sla: refreshed daily after dbt build
+    related_teachings:
+      - revenue-monthly
+    updated: "2026-06-04"
+
+  - id: revenue-customer-lifetime-value
+    title: Customer Lifetime Value Revenue
+    domain: revenue
+    grain: customer
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    required_filters:
+      - order_status = 'completed'
+      - group by customer_id
+      - sum total_amount across customer orders
+    exclusions:
+      - cancelled orders
+      - refunded orders
+      - one-order-only interpretation
+    avoid_tables:
+      - analytics.fct_revenue
+    aliases:
+      - customer lifetime value
+      - lifetime value
+      - customer revenue
+      - LTV
+      - CLV
+    routing_triggers:
+      - top customers by lifetime value
+      - customer LTV
+      - lifetime revenue by customer
+      - top 10 customers by value
+    owner: finance-analytics
+    freshness_sla: refreshed daily after dbt build
+    related_teachings:
+      - revenue-monthly
+    updated: "2026-06-04"
+
+  - id: revenue-refunds-exclusions
+    title: Revenue Refund and Cancellation Exclusions
+    domain: revenue
+    grain: order
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    required_filters:
+      - order_status = 'completed'
+      - exclude refunded orders unless the user explicitly asks for refunds
+    exclusions:
+      - refunded orders
+      - cancelled orders
+      - refund adjustments counted as revenue
+    avoid_tables:
+      - analytics.fct_revenue
+    aliases:
+      - refunds
+      - cancelled revenue
+      - net revenue exclusions
+      - refund exclusions
+    routing_triggers:
+      - should refunds count in revenue
+      - exclude refunds from revenue
+      - revenue without cancelled orders
+      - net revenue rules
+    owner: finance-analytics
+    freshness_sla: refreshed daily after dbt build
+    related_teachings:
+      - revenue-monthly
+    updated: "2026-06-04"
+
+  - id: revenue-ambiguous-intake
+    title: Ambiguous Revenue Intake
+    domain: revenue
+    grain: clarification
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    required_filters:
+      - ask for time window when the user only says revenue
+      - ask for grain when the user does not specify summary, trend, or customer view
+    exclusions:
+      - arbitrary default time windows
+      - unqualified revenue SQL
+    avoid_tables:
+      - analytics.fct_revenue
+    aliases:
+      - revenue
+      - sales
+      - money
+      - income
+    routing_triggers:
+      - revenue
+      - sales
+      - how is revenue
+      - tell me about revenue
+    owner: finance-analytics
+    freshness_sla: refreshed daily after dbt build
+    related_teachings:
+      - revenue-monthly
+    updated: "2026-06-04"
