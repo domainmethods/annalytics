@@ -6,6 +6,7 @@ export interface ReferenceProbeOptions {
   apiKey: string;
   fileSearchStoreId: string;
   model: string;
+  attempts?: number;
 }
 
 export interface ReferenceProbeResult {
@@ -40,51 +41,60 @@ export async function probeReferenceCards(options: ReferenceProbeOptions): Promi
     };
   }
 
-  try {
-    const ai = new GoogleGenAI({ apiKey: options.apiKey });
-    const response = await ai.models.generateContent({
-      model: options.model,
-      contents: [{
-        role: 'user',
-        parts: [{ text: buildReferenceProbePrompt(options.question) }],
-      }],
-      config: {
-        systemInstruction: [
-          'You identify synced ReferenceCard documents relevant to benchmark questions.',
-          'Use Gemini File Search retrieval context and cite retrieved ReferenceCard chunks.',
-          'Do not infer ReferenceCard IDs from schema names, prompt wording, or prior knowledge.',
-          'Return only JSON matching the requested schema.',
-        ].join(' '),
-        responseMimeType: 'application/json',
-        responseJsonSchema: referenceProbeJsonSchema,
-        tools: [{
-          fileSearch: {
-            fileSearchStoreNames: [options.fileSearchStoreId],
-          },
+  const ai = new GoogleGenAI({ apiKey: options.apiKey });
+  const referenceIds = new Set<string>();
+  const citations = new Set<string>();
+  const errors = new Set<string>();
+  const attempts = Math.max(1, options.attempts ?? 2);
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const response = await ai.models.generateContent({
+        model: options.model,
+        contents: [{
+          role: 'user',
+          parts: [{ text: buildReferenceProbePrompt(options.question) }],
         }],
-      },
-    });
+        config: {
+          systemInstruction: [
+            'You identify synced ReferenceCard documents relevant to benchmark questions.',
+            'Use Gemini File Search retrieval context and cite retrieved ReferenceCard chunks.',
+            'Do not infer ReferenceCard IDs from schema names, prompt wording, or prior knowledge.',
+            'Return only JSON matching the requested schema.',
+          ].join(' '),
+          responseMimeType: 'application/json',
+          responseJsonSchema: referenceProbeJsonSchema,
+          tools: [{
+            fileSearch: {
+              fileSearchStoreNames: [options.fileSearchStoreId],
+            },
+          }],
+        },
+      });
 
-    const citations = extractGroundingCitations(response);
-    const referenceIds = extractReferenceIdsFromCitations(citations);
-    const parseError = validateProbeJson(response.text);
-
-    return {
-      referenceIds,
-      citations: citations.map(citation => citation.sourceFile).filter(Boolean),
-      ...(parseError ? { error: parseError } : {}),
-    };
-  } catch (err) {
-    return {
-      referenceIds: [],
-      citations: [],
-      error: `Reference probe failed: ${sanitizeProbeError(
+      const groundingCitations = extractGroundingCitations(response);
+      for (const id of extractReferenceIdsFromCitations(groundingCitations)) {
+        referenceIds.add(id);
+      }
+      for (const citation of groundingCitations) {
+        if (citation.sourceFile) citations.add(citation.sourceFile);
+      }
+      const parseError = validateProbeJson(response.text);
+      if (parseError) errors.add(parseError);
+    } catch (err) {
+      errors.add(`Reference probe failed: ${sanitizeProbeError(
         err,
         options.apiKey,
         options.fileSearchStoreId,
-      )}`,
-    };
+      )}`);
+    }
   }
+
+  return {
+    referenceIds: [...referenceIds].sort(),
+    citations: [...citations].sort(),
+    ...(errors.size > 0 ? { error: [...errors].join('; ') } : {}),
+  };
 }
 
 function buildReferenceProbePrompt(question: string): string {

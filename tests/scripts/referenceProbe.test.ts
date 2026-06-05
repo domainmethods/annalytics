@@ -71,6 +71,43 @@ describe('probeReferenceCards', () => {
     });
   });
 
+  it('unions cited ReferenceCards across bounded probe attempts', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          reference_ids: [],
+          rationale: 'No citation on first attempt',
+        }),
+        candidates: [{ groundingMetadata: { groundingChunks: [] } }],
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          reference_ids: ['revenue-monthly-grain'],
+          rationale: 'Second attempt retrieved the governing card',
+        }),
+        candidates: [{
+          groundingMetadata: {
+            groundingChunks: [{
+              retrievedContext: {
+                text: '# ReferenceCard: revenue-monthly-grain\nMonthly revenue',
+              },
+            }],
+          },
+        }],
+      });
+
+    const result = await probeReferenceCards({
+      question: 'monthly revenue',
+      apiKey: 'api-key',
+      fileSearchStoreId: 'fileSearchStores/revenue',
+      model: 'gemini-pro-latest',
+    });
+
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+    expect(result.referenceIds).toEqual(['revenue-monthly-grain']);
+    expect(result.citations).toEqual(['reference_card:revenue-monthly-grain']);
+  });
+
   it('records malformed JSON without discarding cited ReferenceCards', async () => {
     mockGenerateContent.mockResolvedValue({
       text: 'not json',
