@@ -1,11 +1,14 @@
-import * as vega from 'vega';
-import { compile } from 'vega-lite';
 import { Resvg } from '@resvg/resvg-js';
 import type { QueryResult } from '../types.js';
 
 const MAX_CHART_ROWS = 1000;
 const CHART_WIDTH = 800;
 const CHART_HEIGHT = 500;
+
+type VegaModule = typeof import('vega');
+type VegaLiteModule = typeof import('vega-lite');
+
+let vegaModules: Promise<{ vega: VegaModule; compile: VegaLiteModule['compile'] }> | null = null;
 
 export function isChartable(result: QueryResult): boolean {
   if (result.rows.length < 2) return false;
@@ -33,6 +36,7 @@ export async function renderChart(
       height: CHART_HEIGHT,
     };
 
+    const { vega, compile } = await loadVegaModules();
     const vegaSpec = compile(specWithData as any).spec;
     const view = new vega.View(vega.parse(vegaSpec), { renderer: 'none' });
     const svg = await view.toSVG();
@@ -49,4 +53,16 @@ export async function renderChart(
     console.debug('[ChartRenderer] Error rendering chart:', error);
     return null;
   }
+}
+
+async function loadVegaModules(): Promise<{ vega: VegaModule; compile: VegaLiteModule['compile'] }> {
+  vegaModules ??= Promise.all([
+    import('vega'),
+    import('vega-lite'),
+  ]).then(([vega, vegaLite]) => ({
+    vega,
+    compile: vegaLite.compile,
+  }));
+
+  return vegaModules;
 }

@@ -372,6 +372,43 @@ describe('syncTeachingsToFileSearch', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain('File Search verification failed');
     expect(result.errors[0]).toContain('reference_card:revenue-canonical-definition');
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not delete or reupload documents that time out without STATE_FAILED', async () => {
+    const processingDocument = {
+      name: 'stores/test/documents/processing-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_PROCESSING',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-processing',
+        response: { documentName: processingDocument.name },
+      };
+    });
+    mockListDocuments.mockResolvedValue([processingDocument]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', {
+      ...syncTestOptions(),
+      activeDocumentPollAttempts: 1,
+      maxIndexingAttempts: 2,
+    });
+
+    expect(result.uploaded).toBe(1);
+    expect(result.verified).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('not STATE_ACTIVE');
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
   });
 
   it('reuploads documents that reach STATE_FAILED during active readback', async () => {

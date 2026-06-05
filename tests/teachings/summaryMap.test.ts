@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSummaries, getTeachingSummaries, _resetCache } from '../../src/teachings/summaryMap.js';
+import { buildKnowledgeSummaries, buildSummaries, getKnowledgeSummaries, getTeachingSummaries, _resetCache } from '../../src/teachings/summaryMap.js';
+import type { ReferenceCard } from '../../src/references/types.js';
 import type { Teaching } from '../../src/teachings/types.js';
 
 const mockGet = vi.fn();
@@ -31,6 +32,24 @@ const churnTeaching: Teaching = {
   updated: '2026-02-10',
 };
 
+const revenueCard: ReferenceCard = {
+  id: 'revenue-canonical-definition',
+  title: 'Canonical Revenue Definition',
+  domain: 'revenue',
+  grain: 'order',
+  canonical_table: 'analytics.fct_orders',
+  canonical_metric: 'total_amount',
+  required_filters: ["order_status = 'completed'"],
+  exclusions: ['cancelled orders'],
+  avoid_tables: [],
+  aliases: ['revenue', 'sales'],
+  routing_triggers: ['total revenue'],
+  owner: 'finance',
+  freshness_sla: 'daily',
+  related_teachings: [],
+  updated: '2026-06-04',
+};
+
 describe('buildSummaries', () => {
   it('extracts term, definition, and canonical_table from teachings', () => {
     const summaries = buildSummaries([revenueTeaching, churnTeaching]);
@@ -53,6 +72,32 @@ describe('buildSummaries', () => {
     const summaries = buildSummaries([churnTeaching]);
 
     expect(summaries[0].canonical_table).toBe('analytics.dim_customers');
+  });
+});
+
+describe('buildKnowledgeSummaries', () => {
+  it('combines teaching and ReferenceCard summaries for intake classification', () => {
+    const summaries = buildKnowledgeSummaries([revenueTeaching], [revenueCard]);
+
+    expect(summaries).toEqual([
+      {
+        term: 'revenue',
+        definition: 'Revenue always uses fct_orders with order_status = completed.',
+        canonical_table: 'analytics.fct_orders',
+        kind: 'teaching',
+        id: 'revenue-monthly',
+        aliases: ['monthly revenue'],
+      },
+      expect.objectContaining({
+        term: 'Canonical Revenue Definition',
+        canonical_table: 'analytics.fct_orders',
+        canonical_metric: 'total_amount',
+        kind: 'reference_card',
+        id: 'revenue-canonical-definition',
+        aliases: ['revenue', 'sales'],
+        routing_triggers: ['total revenue'],
+      }),
+    ]);
   });
 });
 
@@ -109,5 +154,22 @@ describe('getTeachingSummaries', () => {
 
     const second = await getTeachingSummaries();
     expect(second).toEqual(newSummaries);
+  });
+
+  it('falls back to legacy teaching summaries when knowledge summaries are absent', async () => {
+    const timestamp = new Date('2026-02-10');
+    const summaries = [{ term: 'revenue', definition: 'def', canonical_table: 'tbl' }];
+
+    mockGet
+      .mockResolvedValueOnce({ exists: false })
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({
+          summaries,
+          lastUpdatedAt: { toDate: () => timestamp },
+        }),
+      });
+
+    await expect(getKnowledgeSummaries()).resolves.toEqual(summaries);
   });
 });

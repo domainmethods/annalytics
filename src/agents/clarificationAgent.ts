@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { ClarificationResult } from './types.js';
-import type { TeachingSummary } from '../teachings/types.js';
+import type { KnowledgeSummary } from '../teachings/types.js';
 import type { ThreadMessage } from '../types.js';
 import { getFlashModel } from './modelConfig.js';
 
@@ -20,7 +20,7 @@ const ClarificationSchema = z.object({
 export async function classifyQuestion(
   question: string,
   threadContext: ThreadMessage[],
-  teachingSummaries: TeachingSummary[],
+  teachingSummaries: KnowledgeSummary[],
   apiKey: string,
 ): Promise<ClarificationResult> {
   const ai = new GoogleGenAI({ apiKey });
@@ -41,10 +41,8 @@ export async function classifyQuestion(
   return JSON.parse(response.text!) as ClarificationResult;
 }
 
-function buildClarificationPrompt(summaries: TeachingSummary[]): string {
-  const summaryLines = summaries.map(
-    s => `- ${s.term}: ${s.definition} (table: ${s.canonical_table})`,
-  );
+function buildClarificationPrompt(summaries: KnowledgeSummary[]): string {
+  const summaryLines = summaries.map(formatSummaryLine);
 
   return `You are a data analyst intake specialist. Evaluate whether the following question has enough specificity to generate an accurate SQL query against our data warehouse.
 
@@ -57,6 +55,7 @@ Classify and respond with the confidence level:
 - LOW: Question is too vague — ask 1-2 targeted clarifying questions
 
 When the question matches a known business term exactly, prefer HIGH confidence.
+When the question asks for multiple known metrics and the available context defines those metrics, classify as HIGH and include all matching metrics in resolved_question.
 When the topic is established in thread context, avoid redundant clarification.
 If the user says "just guess" or "best guess is fine", always classify as HIGH.
 
@@ -65,6 +64,20 @@ If the question involves forecasting, prediction, or time-series projection, set
 If the question involves anomalies, outliers, unusual patterns, spikes, or deviations, set bqml_hint to "anomaly".
 If the question involves text summarization, classification, or generation from data, set bqml_hint to "generate".
 Otherwise, leave bqml_hint as null.`;
+}
+
+function formatSummaryLine(summary: KnowledgeSummary): string {
+  const terms = [
+    summary.term,
+    ...(summary.aliases ?? []),
+    ...(summary.routing_triggers ?? []),
+  ].filter(Boolean);
+  const labels = [...new Set(terms)].join(', ');
+  const kind = summary.kind === 'reference_card' ? 'ReferenceCard' : 'Teaching';
+  const id = summary.id ? ` ${summary.id}` : '';
+  const metric = summary.canonical_metric ? `, metric: ${summary.canonical_metric}` : '';
+
+  return `- ${kind}${id}: ${labels}: ${summary.definition} (table: ${summary.canonical_table}${metric})`;
 }
 
 function buildContents(

@@ -272,7 +272,11 @@ async function verifyActiveDocuments(
   fileSearchStoreName: string,
   targets: UploadedDocumentTarget[],
   options: ResolvedSyncOptions,
-): Promise<{ active: UploadedDocumentTarget[]; missing: UploadedDocumentTarget[] }> {
+): Promise<{
+  active: UploadedDocumentTarget[];
+  failed: UploadedDocumentTarget[];
+  missing: UploadedDocumentTarget[];
+}> {
   let activeKeys = new Set<string>();
   let failedKeys = new Set<string>();
   for (let attempt = 1; attempt <= options.activeDocumentPollAttempts; attempt++) {
@@ -285,7 +289,7 @@ async function verifyActiveDocuments(
       if (documentStates.includes('STATE_FAILED')) failedKeys.add(targetKey(target));
     }
     if (activeKeys.size === targets.length) {
-      return { active: targets, missing: [] };
+      return { active: targets, failed: [], missing: [] };
     }
     if (failedKeys.size > 0) {
       break;
@@ -297,7 +301,10 @@ async function verifyActiveDocuments(
 
   return {
     active: targets.filter(target => activeKeys.has(targetKey(target))),
-    missing: targets.filter(target => !activeKeys.has(targetKey(target))),
+    failed: targets.filter(target => failedKeys.has(targetKey(target))),
+    missing: targets.filter(target =>
+      !activeKeys.has(targetKey(target)) && !failedKeys.has(targetKey(target)),
+    ),
   };
 }
 
@@ -396,7 +403,7 @@ export async function syncMarkdownDocumentsToFileSearch(
     for (const target of verification.active) {
       verifiedTargets.set(targetKey(target), target);
     }
-    pendingVerification = verification.missing;
+    pendingVerification = [...verification.missing, ...verification.failed];
     if (pendingVerification.length === 0) break;
 
     if (indexingAttempt >= resolvedOptions.maxIndexingAttempts) {
@@ -408,9 +415,11 @@ export async function syncMarkdownDocumentsToFileSearch(
       break;
     }
 
-    await deleteDocumentsByTargets(ai, fileSearchStoreName, pendingVerification);
+    if (verification.failed.length > 0) {
+      await deleteDocumentsByTargets(ai, fileSearchStoreName, verification.failed);
+    }
     const retryPending: UploadedDocumentTarget[] = [];
-    for (const target of pendingVerification) {
+    for (const target of verification.failed) {
       const document = documentsByDisplayName.get(target.displayName);
       if (!document) continue;
       try {
@@ -421,7 +430,7 @@ export async function syncMarkdownDocumentsToFileSearch(
         result.errors.push(`${document.id}: ${errorText(err)}`);
       }
     }
-    pendingVerification = retryPending;
+    pendingVerification = [...verification.missing, ...retryPending];
   }
   result.verified = new Set(
     [...verifiedTargets.values()].map(target => target.displayName),

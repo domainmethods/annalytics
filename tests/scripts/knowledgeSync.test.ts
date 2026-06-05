@@ -38,7 +38,7 @@ teachings:
 }
 
 describe('runKnowledgeSync', () => {
-  it('syncs reference cards to File Search without requiring Firestore config', async () => {
+  it('syncs reference cards to File Search and skips summary sync when project config is absent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
     await writeReferenceCard(root);
     const syncDocuments = vi.fn().mockResolvedValue({
@@ -65,7 +65,43 @@ describe('runKnowledgeSync', () => {
     expect(syncDocuments.mock.calls[0][1]).toBe('fileSearchStores/revenue');
     expect(persistTeachingSummaries).not.toHaveBeenCalled();
     expect(logger.log).toHaveBeenCalledWith('Uploaded: 1, Verified: 1, Errors: 0');
-    expect(result.summarySync).toBe('skipped_no_teachings');
+    expect(logger.warn).toHaveBeenCalledWith('Skipping Firestore knowledge summary sync: GCP_PROJECT_ID is not set');
+    expect(result.summarySync).toBe('skipped_no_project');
+  });
+
+  it('persists ReferenceCard summaries when project config is present', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
+    await writeReferenceCard(root);
+    const syncDocuments = vi.fn().mockResolvedValue({
+      uploaded: 1,
+      verified: 1,
+      deleted: 0,
+      errors: [],
+    });
+    const persistKnowledgeSummaries = vi.fn();
+    const logger = silentLogger();
+
+    const result = await runKnowledgeSync({
+      rootDir: root,
+      env: {
+        FILE_SEARCH_STORE_ID: 'fileSearchStores/revenue',
+        GEMINI_API_KEY: 'gemini-key',
+        GCP_PROJECT_ID: 'analytics-project',
+      },
+      syncDocuments,
+      persistKnowledgeSummaries,
+      logger,
+    });
+
+    expect(persistKnowledgeSummaries).toHaveBeenCalledTimes(1);
+    expect(persistKnowledgeSummaries.mock.calls[0][0]).toBe('analytics-project');
+    expect(persistKnowledgeSummaries.mock.calls[0][1][0]).toEqual(expect.objectContaining({
+      kind: 'reference_card',
+      id: 'revenue-canonical-definition',
+      canonical_table: 'analytics.fct_orders',
+    }));
+    expect(logger.log).toHaveBeenCalledWith('Updated knowledge summary map: 1 entries');
+    expect(result.summarySync).toBe('persisted');
   });
 
   it('warns instead of failing when optional Firestore summary sync fails', async () => {
@@ -78,7 +114,7 @@ describe('runKnowledgeSync', () => {
       deleted: 0,
       errors: [],
     });
-    const persistTeachingSummaries = vi.fn().mockRejectedValue(new Error('Firestore API disabled'));
+    const persistKnowledgeSummaries = vi.fn().mockRejectedValue(new Error('Firestore API disabled'));
     const logger = silentLogger();
 
     const result = await runKnowledgeSync({
@@ -89,15 +125,15 @@ describe('runKnowledgeSync', () => {
         GCP_PROJECT_ID: 'analytics-project',
       },
       syncDocuments,
-      persistTeachingSummaries,
+      persistKnowledgeSummaries,
       logger,
     });
 
     expect(syncDocuments).toHaveBeenCalledTimes(1);
-    expect(persistTeachingSummaries).toHaveBeenCalledTimes(1);
+    expect(persistKnowledgeSummaries).toHaveBeenCalledTimes(1);
     expect(result.summarySync).toBe('failed_optional');
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('Skipping Firestore teaching summary sync'),
+      expect.stringContaining('Skipping Firestore knowledge summary sync'),
     );
   });
 

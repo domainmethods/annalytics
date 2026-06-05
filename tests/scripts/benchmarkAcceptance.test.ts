@@ -329,6 +329,7 @@ describe('formatReferenceCardAcceptanceReport', () => {
 
     expect(report).toContain('# ReferenceCard Acceptance - 2026-06-04');
     expect(report).toContain('**Decision:** `ACCEPTED`');
+    expect(report).toContain('## ReferenceCard Scorecard');
     expect(report).toContain('| Git SHA | abc123 |');
     expect(report).toContain('| revenue-ref-001 | pass | true | true | true | true | pass |');
     expect(report).toContain('Expand to one next high-confusion domain.');

@@ -150,7 +150,7 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
   lines.push(`| File Search Store | ${escapeMarkdown(result.metadata?.fileSearchStoreId ?? '(missing)')} |`);
   lines.push('');
 
-  lines.push('## Revenue Scorecard');
+  lines.push('## ReferenceCard Scorecard');
   lines.push('');
   lines.push('| Corpus ID | Status | Retrieval | Tables | SQL Shape | L1/L3/L4 | L2 |');
   lines.push('|-----------|--------|-----------|--------|-----------|----------|----|');
