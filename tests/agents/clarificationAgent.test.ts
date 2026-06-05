@@ -136,6 +136,7 @@ describe('classifyQuestion', () => {
     expect(call.config.systemInstruction).toContain('revenue, sales');
     expect(call.config.systemInstruction).toContain('total revenue');
     expect(call.config.systemInstruction).toContain('metric: total_amount');
+    expect(call.config.systemInstruction).toContain('multiple known metrics');
   });
 
   it('uses GEMINI_FLASH_MODEL when configured', async () => {

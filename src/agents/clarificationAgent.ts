@@ -55,6 +55,7 @@ Classify and respond with the confidence level:
 - LOW: Question is too vague — ask 1-2 targeted clarifying questions
 
 When the question matches a known business term exactly, prefer HIGH confidence.
+When the question asks for multiple known metrics and the available context defines those metrics, classify as HIGH and include all matching metrics in resolved_question.
 When the topic is established in thread context, avoid redundant clarification.
 If the user says "just guess" or "best guess is fine", always classify as HIGH.
 
