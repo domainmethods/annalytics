@@ -37,6 +37,10 @@ function result(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
     expectedReferenceIds: ['revenue-canonical-definition'],
     observedReferenceIds: ['revenue-canonical-definition'],
     referenceRetrievalPassed: true,
+    referenceProbeReferenceIds: ['revenue-canonical-definition'],
+    sqlGroundingReferenceIds: [],
+    referenceProbeCitations: ['reference_card:revenue-canonical-definition'],
+    referenceRetrievalSource: 'explicit_probe',
     expectedTables: ['analytics.fct_orders'],
     observedTables: ['analytics.fct_orders'],
     tableSelectionPassed: true,
@@ -172,6 +176,20 @@ describe('evaluateReferenceCardAcceptance', () => {
       failureClass: 'retrieval_miss',
       detail: expect.stringContaining('observed (none)'),
     }));
+  });
+
+  it('falls back to legacy retrieval source for old benchmark JSON', () => {
+    const legacy = {
+      ...result(),
+      referenceProbeReferenceIds: undefined,
+      sqlGroundingReferenceIds: undefined,
+      referenceProbeCitations: undefined,
+      referenceRetrievalSource: undefined,
+    } as BenchmarkResult;
+
+    const acceptance = evaluateReferenceCardAcceptance(run([legacy]));
+
+    expect(acceptance.cases[0].referenceRetrievalSource).toBe('legacy');
   });
 
   it('classifies SQL-derived table mismatches', () => {
@@ -331,7 +349,7 @@ describe('formatReferenceCardAcceptanceReport', () => {
     expect(report).toContain('**Decision:** `ACCEPTED`');
     expect(report).toContain('## ReferenceCard Scorecard');
     expect(report).toContain('| Git SHA | abc123 |');
-    expect(report).toContain('| revenue-ref-001 | pass | true | true | true | true | pass |');
+    expect(report).toContain('| revenue-ref-001 | pass | true | explicit_probe | true | true | true | pass |');
     expect(report).toContain('Expand to one next high-confusion domain.');
   });
 

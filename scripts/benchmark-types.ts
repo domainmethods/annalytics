@@ -41,6 +41,11 @@ export interface BenchmarkResult {
   expectedReferenceIds?: string[];
   observedReferenceIds: string[];
   referenceRetrievalPassed: boolean | null;
+  referenceProbeReferenceIds?: string[];
+  sqlGroundingReferenceIds?: string[];
+  referenceProbeCitations?: string[];
+  referenceRetrievalSource?: 'explicit_probe' | 'sql_grounding' | 'none';
+  referenceProbeError?: string;
   expectedTables?: string[];
   observedTables: string[];
   tableSelectionPassed: boolean | null;

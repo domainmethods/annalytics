@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
+  combineReferenceIds,
   extractTablesFromSql,
   extractReferenceIdsFromCitations,
+  referenceRetrievalSource,
   sqlShapePassed,
   tableSelectionPassed,
   referenceRetrievalPassed,
@@ -150,6 +152,26 @@ describe('reference retrieval helpers', () => {
     )).toBe(false);
 
     expect(referenceRetrievalPassed(undefined, [])).toBeNull();
+  });
+
+  it('combines explicit probe and SQL grounding reference IDs deterministically', () => {
+    expect(combineReferenceIds(
+      ['revenue-monthly-grain', 'revenue-canonical-definition'],
+      ['revenue-canonical-definition'],
+      undefined,
+    )).toEqual([
+      'revenue-canonical-definition',
+      'revenue-monthly-grain',
+    ]);
+  });
+
+  it('reports the strongest retrieval evidence source', () => {
+    expect(referenceRetrievalSource(
+      ['revenue-canonical-definition'],
+      ['revenue-monthly-grain'],
+    )).toBe('explicit_probe');
+    expect(referenceRetrievalSource([], ['revenue-monthly-grain'])).toBe('sql_grounding');
+    expect(referenceRetrievalSource([], [])).toBe('none');
   });
 });
 

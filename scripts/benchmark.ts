@@ -17,15 +17,18 @@ import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
+  combineReferenceIds,
   extractTablesFromSql,
   extractReferenceIdsFromCitations,
   getGitDirty,
   getGitSha,
   referenceRetrievalPassed,
+  referenceRetrievalSource,
   sqlShapePassed,
   tableSelectionPassed,
   validationResultsFromFailures,
 } from './benchmarkSupport.js';
+import { probeReferenceCards } from './referenceProbe.js';
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -180,6 +183,10 @@ async function main() {
           expectedReferenceIds: entry.expectedReferenceIds,
           observedReferenceIds: [],
           referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),
+          referenceProbeReferenceIds: [],
+          sqlGroundingReferenceIds: [],
+          referenceProbeCitations: [],
+          referenceRetrievalSource: 'none',
           expectedTables: entry.expectedTables,
           observedTables: [],
           tableSelectionPassed: tableSelectionPassed(entry.expectedTables, []),
@@ -203,7 +210,26 @@ async function main() {
         continue;
       }
 
-      // Step 2: Quality loop
+      // Step 2: explicit File Search ReferenceCard probe for benchmark provenance
+      const referenceProbe = fileSearchStoreId
+        ? await probeReferenceCards({
+            question: clarification.resolved_question || entry.question,
+            apiKey: apiKey!,
+            fileSearchStoreId,
+            model: geminiModel,
+          })
+        : {
+            referenceIds: [],
+            citations: [],
+            error: 'Reference probe skipped: FILE_SEARCH_STORE_ID is missing',
+          };
+      console.log(
+        `  reference probe: ${referenceProbe.referenceIds.length} refs${
+          referenceProbe.error ? ' (error recorded)' : ''
+        }`,
+      );
+
+      // Step 3: Quality loop
       const loopStart = Date.now();
       const quality = await qualityLoop(
         {
@@ -221,8 +247,12 @@ async function main() {
       );
       const loopMs = Date.now() - loopStart;
       const totalMs = Date.now() - totalStart;
-      const observedReferenceIds = extractReferenceIdsFromCitations(
+      const sqlGroundingReferenceIds = extractReferenceIdsFromCitations(
         quality.sqlResult.groundingCitations,
+      );
+      const observedReferenceIds = combineReferenceIds(
+        referenceProbe.referenceIds,
+        sqlGroundingReferenceIds,
       );
       const observedTables = extractTablesFromSql(
         quality.sqlResult.sql,
@@ -250,6 +280,14 @@ async function main() {
           entry.expectedReferenceIds,
           observedReferenceIds,
         ),
+        referenceProbeReferenceIds: referenceProbe.referenceIds,
+        sqlGroundingReferenceIds,
+        referenceProbeCitations: referenceProbe.citations,
+        referenceRetrievalSource: referenceRetrievalSource(
+          referenceProbe.referenceIds,
+          sqlGroundingReferenceIds,
+        ),
+        ...(referenceProbe.error ? { referenceProbeError: referenceProbe.error } : {}),
         expectedTables: entry.expectedTables,
         observedTables,
         tableSelectionPassed: tableSelectionPassed(
@@ -293,6 +331,10 @@ async function main() {
         expectedReferenceIds: entry.expectedReferenceIds,
         observedReferenceIds: [],
         referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),
+        referenceProbeReferenceIds: [],
+        sqlGroundingReferenceIds: [],
+        referenceProbeCitations: [],
+        referenceRetrievalSource: 'none',
         expectedTables: entry.expectedTables,
         observedTables: [],
         tableSelectionPassed: tableSelectionPassed(entry.expectedTables, []),
