@@ -41,8 +41,14 @@ describe('runKnowledgeSync', () => {
   it('syncs reference cards to File Search without requiring Firestore config', async () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
     await writeReferenceCard(root);
-    const syncDocuments = vi.fn().mockResolvedValue({ uploaded: 1, deleted: 0, errors: [] });
+    const syncDocuments = vi.fn().mockResolvedValue({
+      uploaded: 1,
+      verified: 1,
+      deleted: 0,
+      errors: [],
+    });
     const persistTeachingSummaries = vi.fn();
+    const logger = silentLogger();
 
     const result = await runKnowledgeSync({
       rootDir: root,
@@ -52,12 +58,13 @@ describe('runKnowledgeSync', () => {
       },
       syncDocuments,
       persistTeachingSummaries,
-      logger: silentLogger(),
+      logger,
     });
 
     expect(syncDocuments).toHaveBeenCalledTimes(1);
     expect(syncDocuments.mock.calls[0][1]).toBe('fileSearchStores/revenue');
     expect(persistTeachingSummaries).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith('Uploaded: 1, Verified: 1, Errors: 0');
     expect(result.summarySync).toBe('skipped_no_teachings');
   });
 
@@ -65,7 +72,12 @@ describe('runKnowledgeSync', () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
     await writeReferenceCard(root);
     await writeTeaching(root);
-    const syncDocuments = vi.fn().mockResolvedValue({ uploaded: 2, deleted: 0, errors: [] });
+    const syncDocuments = vi.fn().mockResolvedValue({
+      uploaded: 2,
+      verified: 2,
+      deleted: 0,
+      errors: [],
+    });
     const persistTeachingSummaries = vi.fn().mockRejectedValue(new Error('Firestore API disabled'));
     const logger = silentLogger();
 

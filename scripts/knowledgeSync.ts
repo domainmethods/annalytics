@@ -20,6 +20,7 @@ export type SummarySyncStatus =
 
 export interface KnowledgeSyncResult {
   uploaded: number;
+  verified: number;
   deleted: number;
   errors: string[];
   summarySync: SummarySyncStatus;
@@ -74,7 +75,7 @@ export async function runKnowledgeSync(
   }
 
   const result = await syncDocuments(documents, storeId, apiKey);
-  logger.log(`Uploaded: ${result.uploaded}, Errors: ${result.errors.length}`);
+  logger.log(`Uploaded: ${result.uploaded}, Verified: ${result.verified}, Errors: ${result.errors.length}`);
   if (result.errors.length > 0) {
     throw new Error(`Sync errors:\n${result.errors.map(error => `- ${error}`).join('\n')}`);
   }

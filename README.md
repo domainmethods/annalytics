@@ -54,7 +54,9 @@ The GitHub workflow is named **Sync Knowledge** and uploads ReferenceCards plus 
 
 `FILE_SEARCH_STORE_ID` must point to an existing Gemini File Search store, for example `fileSearchStores/<store-name>`. Store creation is separate from document upload: a store can exist while containing zero synced documents.
 
-For acceptance runs, `FILE_SEARCH_STORE_ID` is required because the benchmark corpus expects ReferenceCard retrieval evidence. If upload calls return Gemini API errors, do not record an `ACCEPTED` decision; rerun sync and verify documents are retrievable first.
+For acceptance runs, `FILE_SEARCH_STORE_ID` is required because the benchmark corpus expects ReferenceCard retrieval evidence. `npm run knowledge:sync` retries transient Gemini File Search upload errors, polls upload operations, retries documents that fail indexing, and verifies uploaded documents reach `STATE_ACTIVE` before cleaning up replaced documents. If sync still reports upload or verification errors, do not record an `ACCEPTED` decision; rerun sync and verify documents are retrievable first.
+
+Repeated `500 INTERNAL`, `503 UNAVAILABLE`, `504 DEADLINE_EXCEEDED`, or `429 RESOURCE_EXHAUSTED` responses usually indicate transient Gemini File Search upload instability, not Firestore or Slack setup. The sync must still fail after retry exhaustion because a store ID existing is not the same thing as successful upload and indexing.
 
 ## Slack App Configuration
 

@@ -209,7 +209,9 @@ As of 2026-06-05:
 - Runtime secret values are intentionally excluded from Terraform state. Cloud Run binds `slack-bot-token`, `slack-signing-secret`, and `gemini-api-key` at deploy time.
 - `references/` and `scripts/sync-knowledge.ts` are the primary knowledge authoring/sync path. Legacy teaching-only sync remains for compatibility but is not the main onboarding path.
 - `scripts/setup-check.ts` records offline setup guardrails for stale model IDs, required files, env var presence without secret values, dbt artifact presence, ReferenceCard/dbt alignment, workflow consistency, and Terraform boundary drift.
-- This does not repair the revenue acceptance failures, File Search upload `500 INTERNAL` responses, or the dm-website/domainmethods dbt schema mismatch. The active next tranche remains scoped repair of the failing evidence categories before adding another ReferenceCard domain.
+- A 2026-06-05 File Search investigation reran `npm run knowledge:sync` with the existing store and uploaded all 5 revenue ReferenceCards. Store readback showed all 5 documents in `STATE_ACTIVE`, and a Gemini File Search retrieval probe returned `reference_card:revenue-monthly-grain`, indicating the earlier `500 INTERNAL` responses were transient Gemini upload instability rather than Firestore, Slack, gcloud, or Secret Manager setup.
+- File Search sync is hardened to retry transient upload failures, poll upload operations, re-upload documents that reach failed indexing state, and verify `STATE_ACTIVE` document readback before cleaning up replaced documents and reporting success.
+- This does not repair the revenue acceptance failures or the dm-website/domainmethods dbt schema mismatch. The active next tranche remains scoped repair of the failing evidence categories before adding another ReferenceCard domain.
 
 ## Relationship to Existing Docs
 
