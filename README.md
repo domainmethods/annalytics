@@ -238,7 +238,8 @@ terraform apply \
   -var="project_id=your-gcp-project" \
   -var="slack_bot_token=xoxb-..." \
   -var="slack_signing_secret=..." \
-  -var="gemini_api_key=..."
+  -var="gemini_api_key=..." \
+  -var="file_search_store_id=fileSearchStores/..."
 ```
 
 This provisions:
@@ -248,13 +249,15 @@ This provisions:
 - Secret Manager secrets for Slack and Gemini credentials
 - Artifact Registry for Docker images
 - Firestore database
+- Firestore composite indexes required by app query paths
 
-Terraform currently provisions the Firestore database and IAM, but the composite
-indexes are tracked separately in `infra/firestore.indexes.json`. Deploy those
-indexes before serving production traffic; otherwise multi-field Firestore
-queries can fail at runtime with missing-index errors.
+Terraform is the primary infrastructure path for Firestore indexes. The
+`infra/firestore.indexes.json` file mirrors the same index set for Firebase CLI
+or `gcloud` based maintenance. Keep both files in sync when adding a Firestore
+query that needs a new composite index.
 
-If your Firebase CLI project config points at `infra/firestore.indexes.json`:
+For one-off index deployment without Terraform, point Firebase CLI project config
+at `infra/firestore.indexes.json` and run:
 
 ```bash
 firebase deploy --only firestore:indexes --project "$PROJECT_ID"

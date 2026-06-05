@@ -30,6 +30,11 @@ variable "gemini_api_key" {
   sensitive = true
 }
 
+variable "file_search_store_id" {
+  type    = string
+  default = ""
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -52,6 +57,158 @@ resource "google_firestore_database" "default" {
   name        = "(default)"
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Composite Firestore indexes required by state query paths.
+resource "google_firestore_index" "response_context_thread_created_at" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "response_context"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "threadTs"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "createdAt"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "response_context_thread_feedback_created_at" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "response_context"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "threadTs"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "negativeFeedback"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "createdAt"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "clarification_state_thread_state" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "clarification_state"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "threadTs"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "state"
+    order      = "ASCENDING"
+  }
+}
+
+resource "google_firestore_index" "escalation_state_original_thread_pipeline_state" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "escalation_state"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "originalThreadTs"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "pipelineState"
+    order      = "ASCENDING"
+  }
+}
+
+resource "google_firestore_index" "escalation_state_escalation_pipeline_state" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "escalation_state"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "escalationTs"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "pipelineState"
+    order      = "ASCENDING"
+  }
+}
+
+resource "google_firestore_index" "dbt_run_history_model_started_at" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "dbt_run_history"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "model"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "runStartedAt"
+    order      = "DESCENDING"
+  }
+}
+
+resource "google_firestore_index" "dbt_run_history_status_started_at" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "dbt_run_history"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "status"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "runStartedAt"
+    order      = "ASCENDING"
+  }
+}
+
+resource "google_firestore_index" "teaching_candidates_status_generated_at" {
+  project    = var.project_id
+  database   = google_firestore_database.default.name
+  collection = "teaching_candidates"
+
+  query_scope = "COLLECTION"
+
+  fields {
+    field_path = "status"
+    order      = "ASCENDING"
+  }
+
+  fields {
+    field_path = "generatedAt"
+    order      = "DESCENDING"
+  }
 }
 
 # Service account for Cloud Run
@@ -176,6 +333,7 @@ resource "google_cloud_run_v2_service" "anna_lytics" {
 
       env { name = "GCP_PROJECT_ID"; value = var.project_id }
       env { name = "PORT";           value = "3000" }
+      env { name = "FILE_SEARCH_STORE_ID"; value = var.file_search_store_id }
 
       ports { container_port = 3000 }
     }
