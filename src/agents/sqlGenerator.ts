@@ -75,6 +75,7 @@ ${schemaSections.join('\n\n')}
     prompt += `\nKNOWLEDGE CONTEXT:
 Relevant teachings and reference cards are automatically retrieved via Gemini File Search.
 Follow sanctioned SQL patterns from teachings when they exist.
+When the user's metric, domain term, or routing trigger matches a retrieved ReferenceCard, treat that card as authoritative.
 Follow reference-card constraints for canonical tables, metrics, grains, required filters, exclusions, and avoid-table guidance when they apply.\n`;
   }
 
@@ -228,11 +229,30 @@ function extractGroundingCitations(response: any): GroundingCitation[] {
     return chunks
       .filter((c: any) => c.retrievedContext)
       .map((c: any) => ({
-        sourceFile: c.retrievedContext.uri ?? '',
+        sourceFile: citationSourceFile(c.retrievedContext),
         chunkText: c.retrievedContext.text ?? '',
         relevanceScore: c.retrievedContext?.score ?? 1.0,
       }));
   } catch {
     return [];
   }
+}
+
+function citationSourceFile(retrievedContext: any): string {
+  const uri = retrievedContext?.uri;
+  if (typeof uri === 'string' && uri.trim()) return uri;
+
+  const title = retrievedContext?.title;
+  if (typeof title === 'string' && title.trim()) return title;
+
+  const text = retrievedContext?.text;
+  if (typeof text !== 'string') return '';
+
+  const referenceMatch = text.match(/ReferenceCard:\s*([a-z0-9-]+)/i);
+  if (referenceMatch) return `reference_card:${referenceMatch[1]}`;
+
+  const teachingMatch = text.match(/Teaching:\s*([a-z0-9-]+)/i);
+  if (teachingMatch) return `teaching:${teachingMatch[1]}`;
+
+  return '';
 }

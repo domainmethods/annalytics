@@ -16,7 +16,7 @@
 | Gemini Model | gemini-3.0-pro |
 | File Search Store | mock-file-search-store |
 
-## Revenue Scorecard
+## ReferenceCard Scorecard
 
 | Corpus ID | Status | Retrieval | Tables | SQL Shape | L1/L3/L4 | L2 |
 |-----------|--------|-----------|--------|-----------|----------|----|

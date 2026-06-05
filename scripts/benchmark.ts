@@ -5,7 +5,7 @@ import { initBigQuery } from '../src/validation/dryRun.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { qualityLoop } from '../src/qualityLoop.js';
 import { parseDbtArtifacts } from '../src/dbt/parser.js';
-import type { TeachingSummary } from '../src/teachings/types.js';
+import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
 import { getFlashModel, getJudgeModel, getProModel } from '../src/agents/modelConfig.js';
@@ -13,7 +13,7 @@ import {
   assertGenerateContentModelsAvailable,
   validateBenchmarkAcceptanceInputs,
 } from './benchmarkPreflight.js';
-import { loadLocalTeachingSummaries } from './benchmarkInputs.js';
+import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
@@ -98,9 +98,9 @@ async function main() {
   // Initialize BigQuery for dry-run validation.
   initBigQuery(projectId!);
 
-  // Load local teaching summaries. Benchmark runs should not require Firestore.
-  const teachingSummaries: TeachingSummary[] = await loadLocalTeachingSummaries(root);
-  console.log(`Loaded ${teachingSummaries.length} local teaching summaries`);
+  // Load local knowledge summaries. Benchmark runs should not require Firestore.
+  const knowledgeSummaries: KnowledgeSummary[] = await loadLocalKnowledgeSummaries(root);
+  console.log(`Loaded ${knowledgeSummaries.length} local knowledge summaries`);
 
   // Load dbt artifacts when available.
   let tables: TableContext[] = [];
@@ -155,7 +155,7 @@ async function main() {
       const clarification = await classifyQuestion(
         entry.question,
         [],           // no thread context in benchmark
-        teachingSummaries,
+        knowledgeSummaries,
         apiKey!,
       );
       const clarifyMs = Date.now() - clarifyStart;

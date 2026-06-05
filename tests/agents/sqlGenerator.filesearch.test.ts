@@ -75,6 +75,7 @@ describe('generateSql — File Search integration', () => {
     expect(call.config.systemInstruction).toContain('KNOWLEDGE CONTEXT');
     expect(call.config.systemInstruction).toContain('teachings');
     expect(call.config.systemInstruction).toContain('reference cards');
+    expect(call.config.systemInstruction).toContain('treat that card as authoritative');
   });
 
   it('does NOT include tools when store ID is not provided', async () => {
@@ -121,6 +122,42 @@ describe('generateSql — File Search integration', () => {
     expect(result.groundingCitations).toHaveLength(1);
     expect(result.groundingCitations[0].sourceFile).toBe('revenue-monthly');
     expect(result.groundingCitations[0].chunkText).toContain('fct_orders');
+  });
+
+  it('derives citation source names from synced markdown headers when uri is absent', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify(baseResponse),
+      candidates: [{
+        groundingMetadata: {
+          groundingChunks: [
+            {
+              retrievedContext: {
+                uri: '',
+                text: '# ReferenceCard: revenue-canonical-definition\nCanonical table: analytics.fct_orders',
+              },
+            },
+            {
+              retrievedContext: {
+                text: '# Teaching: revenue-monthly\nUse completed orders',
+              },
+            },
+          ],
+        },
+      }],
+    });
+
+    const result = await generateSql({
+      question: 'revenue?',
+      tables: [mockTable],
+      threadContext: [],
+      apiKey: 'key',
+      fileSearchStoreId: 'stores/my-store',
+    });
+
+    expect(result.groundingCitations.map(c => c.sourceFile)).toEqual([
+      'reference_card:revenue-canonical-definition',
+      'teaching:revenue-monthly',
+    ]);
   });
 
   it('falls back gracefully when File Search errors', async () => {

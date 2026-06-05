@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { classifyQuestion } from '../../src/agents/clarificationAgent.js';
 import type { ClarificationResult } from '../../src/agents/types.js';
-import type { TeachingSummary } from '../../src/teachings/types.js';
+import type { KnowledgeSummary, TeachingSummary } from '../../src/teachings/types.js';
 import type { ThreadMessage } from '../../src/types.js';
 
 const mockGenerateContent = vi.fn();
@@ -106,6 +106,36 @@ describe('classifyQuestion', () => {
     expect(call.config.systemInstruction).toContain('revenue');
     expect(call.config.systemInstruction).toContain('analytics.fct_orders');
     expect(call.config.systemInstruction).toContain('churn');
+  });
+
+  it('includes ReferenceCard aliases and routing triggers in the prompt', async () => {
+    mockLLMResponse({
+      route: 'data_query',
+      confidence: 'high',
+      reasoning: 'clear',
+      ambiguities: [],
+      assumptions: [],
+      clarifying_questions: [],
+      resolved_question: 'query',
+    });
+    const knowledgeSummaries: KnowledgeSummary[] = [{
+      kind: 'reference_card',
+      id: 'revenue-canonical-definition',
+      term: 'Canonical Revenue Definition',
+      definition: 'Canonical revenue metric.',
+      canonical_table: 'analytics.fct_orders',
+      canonical_metric: 'total_amount',
+      aliases: ['revenue', 'sales'],
+      routing_triggers: ['total revenue'],
+    }];
+
+    await classifyQuestion('total revenue?', [], knowledgeSummaries, 'key');
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    expect(call.config.systemInstruction).toContain('ReferenceCard revenue-canonical-definition');
+    expect(call.config.systemInstruction).toContain('revenue, sales');
+    expect(call.config.systemInstruction).toContain('total revenue');
+    expect(call.config.systemInstruction).toContain('metric: total_amount');
   });
 
   it('uses GEMINI_FLASH_MODEL when configured', async () => {

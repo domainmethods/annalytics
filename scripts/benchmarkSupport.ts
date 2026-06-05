@@ -159,8 +159,13 @@ export function sqlShapePassed(
   if (!expectedSqlContains || expectedSqlContains.length === 0) return null;
   if (!generatedSql) return false;
   const normalizedSql = normalizeSqlFragment(generatedSql);
+  const identifierTolerantSql = stripIdentifierQualifiers(normalizedSql);
   return expectedSqlContains.every(fragment =>
-    normalizedSql.includes(normalizeSqlFragment(fragment)),
+    normalizedSql.includes(normalizeSqlFragment(fragment))
+    || (
+      !fragment.includes('.')
+      && identifierTolerantSql.includes(stripIdentifierQualifiers(normalizeSqlFragment(fragment)))
+    ),
   );
 }
 
@@ -173,9 +178,19 @@ export function clarificationPassed(
 }
 
 function normalizeSqlFragment(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+  return value.toLowerCase().replace(/`/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripIdentifierQualifiers(value: string): string {
+  let previous = value;
+  let next = previous.replace(/\b[a-z_][a-z0-9_]*\s*\.\s*([a-z_][a-z0-9_]*)\b/g, '$1');
+  while (next !== previous) {
+    previous = next;
+    next = previous.replace(/\b[a-z_][a-z0-9_]*\s*\.\s*([a-z_][a-z0-9_]*)\b/g, '$1');
+  }
+  return next;
 }

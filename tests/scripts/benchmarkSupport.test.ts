@@ -208,6 +208,17 @@ describe('deterministic benchmark expectation helpers', () => {
     expect(sqlShapePassed(['select'], null)).toBe(false);
   });
 
+  it('matches column fragments when generated SQL qualifies identifiers with aliases', () => {
+    const sql = `
+      SELECT COUNT(DISTINCT sessions.client_key) AS unique_visitors
+      FROM \`analytics.fct_sessions\` AS sessions
+    `;
+
+    expect(sqlShapePassed(['COUNT(DISTINCT client_key)'], sql)).toBe(true);
+    expect(sqlShapePassed(['analytics.fct_sessions'], sql)).toBe(true);
+    expect(sqlShapePassed(['analytics.fct_orders'], sql)).toBe(false);
+  });
+
   it('checks expected clarification confidence when a corpus case declares it', () => {
     expect(clarificationPassed('low', 'low')).toBe(true);
     expect(clarificationPassed('low', 'high')).toBe(false);

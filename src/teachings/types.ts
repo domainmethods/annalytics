@@ -18,3 +18,11 @@ export interface TeachingSummary {
   definition: string;
   canonical_table: string;
 }
+
+export interface KnowledgeSummary extends TeachingSummary {
+  kind?: 'teaching' | 'reference_card';
+  id?: string;
+  aliases?: string[];
+  routing_triggers?: string[];
+  canonical_metric?: string;
+}
