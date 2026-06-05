@@ -10,16 +10,16 @@ This document records the current development trajectory for Anna Lytics after r
 
 The next development cycle should continue to prioritize trust infrastructure over feature expansion.
 
-The **Revenue ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evidence Acceptance** analyzer are implemented. The **Revenue ReferenceCard Acceptance Run** has a recorded `NEEDS_REVISION` decision as of 2026-06-04.
+The **ReferenceCard v1 Trust Tranche** and the deterministic **ReferenceCard Evidence Acceptance** analyzer are implemented for template use. The repository includes starter revenue examples and mock acceptance artifacts, but a real deployment must choose and align one implementation-specific domain before recording acceptance.
 
-The active next tranche is scoped repair of the failing evidence categories from that acceptance report: benchmark/runtime configuration, ReferenceCard retrieval metadata, table selection, SQL shape, and validation metadata.
+The active next tranche is scoped implementation alignment: replace starter ReferenceCards and benchmark corpus with one real business domain, provide matching dbt artifacts, sync File Search, deploy, and run the acceptance analyzer with real evidence.
 
-Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until a revised revenue pilot run records an `ACCEPTED` decision or this document is updated with new evidence and rationale.
+Do not add another reference-card domain, revive Phase 3 feature expansion, or promote a new runtime behavior until the first implementation-specific pilot run records an `ACCEPTED` decision or this document is updated with new evidence and rationale.
 
-After the revenue pilot decision is recorded, the trajectory branches:
+After the first implementation-specific pilot decision is recorded, the trajectory branches:
 
-- If the revenue pilot is `ACCEPTED`, the next product tranche may add exactly one additional high-confusion ReferenceCard domain.
-- If the revenue pilot is `NEEDS_REVISION`, the next tranche should be scoped repair of the failing evidence category: card content, prompt behavior, retrieval, table selection, SQL shape, or validation metadata.
+- If the pilot is `ACCEPTED`, the next product tranche may add exactly one additional high-confusion ReferenceCard domain.
+- If the pilot is `NEEDS_REVISION`, the next tranche should be scoped repair of the failing evidence category: card content, prompt behavior, retrieval, table selection, SQL shape, or validation metadata.
 
 ## Strategic Rationale
 
@@ -35,13 +35,15 @@ Borrow from Anthropic's self-service analytics approach at the operating-model l
 
 ## Current Tranche
 
-### Revenue ReferenceCard Acceptance Run
+### Implementation ReferenceCard Acceptance Run
 
-Convert the implemented revenue ReferenceCard and deterministic analyzer into recorded evidence before expanding scope.
+Convert one implementation-specific ReferenceCard domain and the deterministic analyzer into recorded evidence before expanding scope.
 
 Scope:
 
-- Execute the real revenue benchmark that emits ReferenceCard retrieval, table-selection, SQL-shape, validation-layer, and provenance fields.
+- Replace starter ReferenceCards and benchmark corpus with one real implementation domain.
+- Provide dbt artifacts that contain the tables referenced by those cards and corpus.
+- Execute the real benchmark that emits ReferenceCard retrieval, table-selection, SQL-shape, validation-layer, and provenance fields.
 - Run `scripts/benchmark-analyze.ts` against the saved benchmark JSON.
 - Review the generated `*-referencecard-acceptance.md` report.
 - Update this document with the dated acceptance decision, benchmark artifact path, evidence source, and next branch.
@@ -53,15 +55,13 @@ Acceptance criteria:
 - The acceptance report returns either `ACCEPTED` or `NEEDS_REVISION`.
 - This governance document records the decision and whether the next tranche is one-domain expansion or scoped repair.
 
-Recorded decision on 2026-06-04:
+Template decision on 2026-06-05:
 
-- Decision: `NEEDS_REVISION`.
-- Benchmark JSON: `benchmarks/results/2026-06-04.json`.
-- Summary report: `benchmarks/results/2026-06-04-summary.md`.
-- Acceptance report: `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
-- Evidence source: setup-enabled local benchmark rerun using git SHA `5c727002aa91d3f58762396408ccf2354792c5c2`, dirty state `true`, `GCP_PROJECT_ID=dm-website-426721`, `FILE_SEARCH_STORE_ID=fileSearchStores/annalyticsknowledge-s7el62hneuh6`, generated dbt artifact hashes, and `npx tsx scripts/benchmark-analyze.ts benchmarks/results/2026-06-04.json`.
-- Evidence summary: the analyzer evaluated 5 revenue ReferenceCard cases and returned `NEEDS_REVISION`; failures included ReferenceCard retrieval misses, table mismatches, SQL-shape mismatches, one quality-loop exhaustion, and final validation failures for the refunds/exclusions case. The run loaded the dm-website/domainmethods dbt artifacts, which do not expose the expected `analytics.fct_orders`, `analytics.fct_revenue`, or `analytics.dim_customers` tables referenced by the revenue ReferenceCards and corpus.
-- Next branch: scoped repair of the failing evidence categories before any additional ReferenceCard domain is added. First repair should either provide the intended revenue warehouse dbt artifacts/File Search content or retarget the revenue ReferenceCards and corpus to the actual dm-website dbt schema.
+- Decision: keep implementation-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, and benchmark evidence out of the template repository.
+- Rationale: Anna Lytics is intended to be reused across analytics teams and warehouse schemas. The template should document the path for an implementation to provide its own knowledge and artifacts without embedding one client's business model or infrastructure identifiers.
+- Starter content: `references/revenue.yml` and `benchmarks/corpus.json` remain sample content that implementations must replace or consciously keep.
+- Mock evidence: `benchmarks/mock-results/` exercises the deterministic acceptance analyzer without external services or client identifiers.
+- Next branch: an implementation repo or branch should align its own cards, corpus, dbt artifacts, File Search store, and deploy target before running a real acceptance benchmark.
 
 ### ReferenceCard v1 Foundation
 
@@ -180,27 +180,22 @@ Every update should include:
 
 As of 2026-06-04:
 
-- The `Revenue ReferenceCard v1 Trust Tranche` is implemented.
+- The `ReferenceCard v1 Trust Tranche` is implemented with starter sample content.
 - The deterministic `ReferenceCard Evidence Acceptance` analyzer is implemented by `scripts/benchmarkAcceptance.ts`, `scripts/benchmark-analyze.ts`, and focused benchmark script tests.
-- The `Revenue ReferenceCard Acceptance Run` produced `benchmarks/results/2026-06-04.json`, `benchmarks/results/2026-06-04-summary.md`, and `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
-- The selected next tranche is scoped repair of the `NEEDS_REVISION` acceptance evidence.
-- Mock acceptance artifacts live under `benchmarks/mock-results/` and exercise both `ACCEPTED` and `NEEDS_REVISION` analyzer branches without external services. They do not count as live revenue acceptance evidence.
-- Live-run preflight on 2026-06-04 used the active gcloud project as `GCP_PROJECT_ID` and ran `npx tsx scripts/benchmark.ts`; the run stopped before benchmark execution because `GEMINI_API_KEY` was not present in the local environment. A continuation check on 2026-06-04 confirmed no local `.env` file beyond `.env.example`, no `benchmarks/results/*.json` artifact, no visible GitHub repository secrets for the active repo, and no Gemini/File Search-relevant Secret Manager names in the active gcloud project.
-- The acceptance run resumed on 2026-06-04 by explicitly sourcing a gitignored repo-root `.env` with `GCP_PROJECT_ID` and `GEMINI_API_KEY` present. `FILE_SEARCH_STORE_ID` was not present. The live benchmark reached corpus execution and wrote a real result artifact, but all cases exhausted because `gemini-3.0-flash` was not available for `generateContent` in the configured API surface.
-- A later setup pass on 2026-06-04 enabled Firestore and Secret Manager APIs in `dm-website-426721`, created a Firestore Native `(default)` database in `us-west1`, deployed the required composite Firestore indexes, generated dm-website/domainmethods dbt artifacts, created a Gemini File Search store ID in the gitignored local `.env`, and reran `npx tsx scripts/benchmark.ts`.
-- That rerun produced a real benchmark artifact and acceptance report with metadata for `FILE_SEARCH_STORE_ID`, dbt manifest hash, and dbt catalog hash, but the report still returned `NEEDS_REVISION`. File Search document upload remained blocked by Gemini API `500 INTERNAL` responses during sync probes, leaving the store empty; additionally, the live dm-website/domainmethods dbt schema does not contain the revenue pilot's expected `analytics.fct_orders`, `analytics.fct_revenue`, or `analytics.dim_customers` tables.
+- Mock acceptance artifacts live under `benchmarks/mock-results/` and exercise both `ACCEPTED` and `NEEDS_REVISION` analyzer branches without external services. They do not count as live implementation acceptance evidence.
+- Real acceptance artifacts should be generated and committed only in an implementation repository or branch that intentionally carries implementation-specific schema, project, and File Search context.
 - Failed escalation SQL is tracked as `failedSql`, not `finalSql`, when generating teaching candidates.
 - Chart rendering uses `@resvg/resvg-js` to preserve distroless runtime compatibility.
 - Chartability scans across result rows rather than trusting the first row.
 - The quality loop emits validation-layer history for benchmark reporting.
 - Teaching validation exists before File Search sync.
 - Sync workflow uses Google GitHub Actions OIDC authentication before GCP-backed validation and Firestore sync.
-- The Revenue ReferenceCard v1 Trust Tranche is implemented by `references/revenue.yml`, `src/references/`, knowledge sync scripts, and benchmark reference-card retrieval fields.
+- ReferenceCard support is implemented by `references/`, `src/references/`, knowledge sync scripts, and benchmark reference-card retrieval fields.
 - Legacy teaching-only sync preserves `reference_card:*` documents by deleting only `teaching:*` documents; full knowledge sync remains responsible for replacing the shared store.
 - Knowledge sync validates environment and initializes Firestore before mutating File Search, reducing partial-sync failure states.
-- Benchmark table observations are derived from generated SQL rather than model-reported `tables_used`; revenue ReferenceCard cases include table-specific SQL-shape expectations.
+- Benchmark table observations are derived from generated SQL rather than model-reported `tables_used`; ReferenceCard cases can include table-specific SQL-shape expectations.
 - Pull request CI runs `scripts/validate-knowledge.ts` so malformed teaching or reference YAML is caught before merge, while missing dbt artifacts skip only artifact-aware checks.
-- Evidence source for this update: `benchmarks/results/2026-06-04.json`, `benchmarks/results/2026-06-04-summary.md`, and `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
+- Evidence source for this update: `benchmarks/mock-results/`, `scripts/benchmarkAcceptance.ts`, and `scripts/benchmark-analyze.ts`.
 
 As of 2026-06-05:
 
@@ -209,9 +204,10 @@ As of 2026-06-05:
 - Runtime secret values are intentionally excluded from Terraform state. Cloud Run binds `slack-bot-token`, `slack-signing-secret`, and `gemini-api-key` at deploy time.
 - `references/` and `scripts/sync-knowledge.ts` are the primary knowledge authoring/sync path. Legacy teaching-only sync remains for compatibility but is not the main onboarding path.
 - `scripts/setup-check.ts` records offline setup guardrails for stale model IDs, required files, env var presence without secret values, dbt artifact presence, ReferenceCard/dbt alignment, workflow consistency, and Terraform boundary drift.
-- A 2026-06-05 File Search investigation reran `npm run knowledge:sync` with the existing store and uploaded all 5 revenue ReferenceCards. Store readback showed all 5 documents in `STATE_ACTIVE`, and a Gemini File Search retrieval probe returned `reference_card:revenue-monthly-grain`, indicating the earlier `500 INTERNAL` responses were transient Gemini upload instability rather than Firestore, Slack, gcloud, or Secret Manager setup.
+- File Search investigation showed successful sync requires more than a store ID: upload operations must complete and uploaded documents must read back as `STATE_ACTIVE`.
 - File Search sync is hardened to retry transient upload failures, poll upload operations, re-upload documents that reach failed indexing state, and verify `STATE_ACTIVE` document readback before cleaning up replaced documents and reporting success.
-- This does not repair the revenue acceptance failures or the dm-website/domainmethods dbt schema mismatch. The active next tranche remains scoped repair of the failing evidence categories before adding another ReferenceCard domain.
+- Template boundary: do not commit implementation-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, or benchmark evidence to this repository unless it has intentionally become an implementation repo.
+- A real implementation-specific acceptance decision is still required before adding another ReferenceCard domain.
 
 ## Relationship to Existing Docs
 

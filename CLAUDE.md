@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anna Lytics is a Slack bot that translates natural-language questions into BigQuery SQL using Gemini 3.0 Pro, with dbt metadata as the semantic layer. It runs on Cloud Run, uses Firestore for state, and communicates via Bolt.js (HTTP mode with ExpressReceiver).
+Anna Lytics is a Slack bot that translates natural-language questions into BigQuery SQL using configurable Gemini model aliases, with dbt metadata as the semantic layer. It runs on Cloud Run, uses Firestore for state, and communicates via Bolt.js (HTTP mode with ExpressReceiver).
 
 ## Trajectory Governance
 
 Before proposing or implementing Phase 3+ product work, read `docs/trajectory-governance.md`. That document is the governing roadmap checkpoint for current tranche selection, deferred features, and maintenance rules.
 
-Current guidance: prioritize trust infrastructure over feature expansion. The active next tranche is typed `ReferenceCard v1` for one high-confusion domain, benchmark hardening with provenance and validation-layer visibility, and teaching validation gates before File Search sync. Do not revive broad charts, BQML expansion, domain agents, or automatic correction harvesting as the active next tranche unless `docs/trajectory-governance.md` is updated first with the new rationale and evidence.
+Current guidance: prioritize trust infrastructure over feature expansion. The active next tranche is an implementation-specific typed `ReferenceCard v1` pilot for one high-confusion domain, benchmark hardening with provenance and validation-layer visibility, and teaching validation gates before File Search sync. Do not commit client-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, or benchmark evidence to this template unless the repository has intentionally become an implementation repo. Do not revive broad charts, BQML expansion, domain agents, or automatic correction harvesting as the active next tranche unless `docs/trajectory-governance.md` is updated first with the new rationale and evidence.
 
 When adversarial audits, benchmark results, production incidents, or analyst review change the development trajectory, update `docs/trajectory-governance.md` in the same change set.
 

@@ -29,7 +29,7 @@ const requiredFiles = [
   '.github/workflows/sync-teachings.yml',
   'infra/main.tf',
   'infra/firestore.indexes.json',
-  'references/revenue.yml',
+  'references/README.md',
 ];
 
 const envVars = [

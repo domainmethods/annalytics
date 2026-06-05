@@ -128,7 +128,7 @@ reference_cards:
     await expect(validateKnowledgeForSync(root)).resolves.toEqual([]);
   });
 
-  it('reports unsupported reference card domains and unknown related teachings', async () => {
+  it('does not hard-code the allowed reference-card domain for template implementations', async () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-'));
     await mkdir(join(root, 'references'), { recursive: true });
     await writeFile(join(root, 'references', 'churn.yml'), `
@@ -147,9 +147,7 @@ reference_cards:
     updated: "2026-06-04"
 `);
 
-    await expect(validateKnowledgeForSync(root)).resolves.toEqual([
-      'Reference card churn-card has unsupported domain: churn',
-    ]);
+    await expect(validateKnowledgeForSync(root)).resolves.toEqual([]);
   });
 
   it('validates related teachings when teachings are loaded', async () => {

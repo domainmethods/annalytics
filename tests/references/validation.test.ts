@@ -98,7 +98,7 @@ describe('validateReferenceCardIntegrity', () => {
     expect(errors).toContain('Reference card revenue-canonical-definition references unknown related teaching: unknown-teaching');
   });
 
-  it('accepts the revenue pilot cards', () => {
+  it('accepts the starter revenue sample cards', () => {
     const yaml = readFileSync('references/revenue.yml', 'utf-8');
     const cards = parseReferenceCardFile(yaml);
 

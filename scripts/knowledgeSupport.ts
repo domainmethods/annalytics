@@ -71,7 +71,6 @@ export async function validateKnowledgeForSync(rootDir = process.cwd()): Promise
   const referenceErrors = validateReferenceCards(referenceCards, {
     validTableNames: validTableNames ?? undefined,
     validTeachingIds: teachings.length > 0 ? new Set(teachings.map(t => t.id)) : undefined,
-    allowedDomains: new Set(['revenue']),
   });
   const errors = [...teachingErrors, ...referenceErrors];
 

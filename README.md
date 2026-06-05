@@ -35,6 +35,8 @@ The bot has two knowledge sources:
 - **dbt artifacts** in `dbt/manifest.json` and `dbt/catalog.json`. These are loaded at startup and become the allowed table/column context.
 - **Knowledge YAML** in `references/` and optionally `teachings/`. `references/` is the current primary authoring surface for typed ReferenceCards. Legacy teachings remain supported for summary-map compatibility and approved escalation learnings.
 
+This repository is a template. The included ReferenceCards and benchmark corpus are starter examples, not a prescription for every implementation. Replace them with one narrow implementation-specific domain before syncing File Search or recording an acceptance decision.
+
 Run validation before syncing or deploying:
 
 ```bash
@@ -126,7 +128,7 @@ dbt compile && dbt docs generate
 cp target/manifest.json target/catalog.json /path/to/annalytics/dbt/
 ```
 
-The committed dbt artifacts must align with `references/` and `benchmarks/corpus.json`. If ReferenceCards mention tables absent from the copied dbt artifacts, `npm run knowledge:validate` fails. Either use artifacts that contain the pilot tables or retarget the ReferenceCards and benchmark corpus to the actual warehouse schema before committing.
+The implementation dbt artifacts must align with `references/` and `benchmarks/corpus.json`. If ReferenceCards mention tables absent from the copied dbt artifacts, `npm run knowledge:validate` fails. The template gitignores `dbt/manifest.json` and `dbt/catalog.json` so client schema is not accidentally committed here; implementation repositories can choose their own artifact delivery model.
 
 Run the local setup preflight without printing secret values:
 
@@ -200,6 +202,8 @@ Pushing to `main` triggers `.github/workflows/deploy.yml`:
 2. Builds and pushes the Docker image to Artifact Registry.
 3. Deploys Cloud Run with explicit project, region, service account, env vars, Secret Manager bindings, port, and unauthenticated Slack endpoint access.
 
+Deployment requires `dbt/manifest.json` and `dbt/catalog.json` to be present in the build workspace. The template workflow fails fast with a clear message if an implementation has not provided those artifacts.
+
 Required GitHub secrets:
 
 | Secret | Description |
@@ -243,7 +247,7 @@ The bot reads dbt metadata from files baked into the container image. To update 
 2. Copy `target/manifest.json` and `target/catalog.json` to `dbt/`.
 3. Run `npm run knowledge:validate`.
 4. Run `npm run setup:check`.
-5. Commit and push to `main`.
+5. Commit and push the implementation-specific changes only in the implementation repo or branch where committing those artifacts is intentional.
 
 The `/refresh-metadata` endpoint exists as a placeholder for future live reload support.
 
@@ -282,7 +286,7 @@ All configuration is via environment variables. See `.env.example` for the local
 src/                 Runtime app, agents, validation, Slack handlers, and Firestore state
 references/          Primary typed ReferenceCard knowledge YAML
 teachings/           Optional legacy teaching YAML, when present
-dbt/                 Committed dbt manifest/catalog artifacts
+dbt/                 Implementation-provided dbt manifest/catalog artifacts
 scripts/             Validation, sync, benchmark, and setup guardrail scripts
 benchmarks/          Benchmark corpus and generated result artifacts
 infra/               Optional persistent GCP setup, not runtime deploy

@@ -28,7 +28,7 @@
     "question": "revenue",
     "category": "ambiguous",
     "source": "manual",
-    "notes": "Too vague — should trigger LOW confidence clarification"
+    "notes": "Too vague - should trigger LOW confidence clarification"
   },
   {
     "id": "seed-005",
@@ -44,7 +44,7 @@
     "category": "time_series",
     "source": "manual",
     "expectedTables": ["analytics.fct_revenue"],
-    "notes": "BQML forecast intent — should trigger bqml_hint: forecast and generate ML.FORECAST SQL"
+    "notes": "BQML forecast intent - should trigger bqml_hint: forecast and generate ML.FORECAST SQL"
   },
   {
     "id": "seed-007",
@@ -52,7 +52,7 @@
     "category": "time_series",
     "source": "manual",
     "expectedTables": ["analytics.fct_user_activity"],
-    "notes": "BQML anomaly intent — should trigger bqml_hint: anomaly and generate ML.DETECT_ANOMALIES SQL"
+    "notes": "BQML anomaly intent - should trigger bqml_hint: anomaly and generate ML.DETECT_ANOMALIES SQL"
   },
   {
     "id": "revenue-ref-001",

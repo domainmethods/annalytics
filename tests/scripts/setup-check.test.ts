@@ -58,20 +58,7 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       'resource "google_secret_manager_secret" "runtime" {}',
     ].join('\n'),
     'infra/firestore.indexes.json': '{ "indexes": [], "fieldOverrides": [] }',
-    'references/revenue.yml': [
-      'reference_cards:',
-      '  - id: revenue-canonical-definition',
-      '    title: Canonical Revenue Definition',
-      '    domain: revenue',
-      '    grain: order',
-      '    canonical_table: analytics.fct_orders',
-      '    canonical_metric: total_amount',
-      '    aliases: [revenue]',
-      '    routing_triggers: [total revenue]',
-      '    owner: finance-analytics',
-      '    freshness_sla: daily',
-      '    updated: "2026-06-04"',
-    ].join('\n'),
+    'references/README.md': 'Add implementation-specific ReferenceCards here before syncing File Search.',
   };
 
   for (const [path, content] of Object.entries({ ...files, ...overrides })) {
@@ -113,6 +100,20 @@ describe('runSetupCheck', () => {
 
   it('reports ReferenceCard table mismatches when dbt artifacts are present', async () => {
     const root = await createRepoFixture({
+      'references/revenue.yml': [
+        'reference_cards:',
+        '  - id: revenue-canonical-definition',
+        '    title: Canonical Revenue Definition',
+        '    domain: revenue',
+        '    grain: order',
+        '    canonical_table: analytics.fct_orders',
+        '    canonical_metric: total_amount',
+        '    aliases: [revenue]',
+        '    routing_triggers: [total revenue]',
+        '    owner: finance-analytics',
+        '    freshness_sla: daily',
+        '    updated: "2026-06-04"',
+      ].join('\n'),
       'dbt/manifest.json': JSON.stringify({
         nodes: {
           'model.analytics.fct_revenue': {
@@ -149,7 +150,7 @@ describe('runSetupCheck', () => {
     const result = await runSetupCheck({
       rootDir: root,
       env: {
-        GCP_PROJECT_ID: 'dm-website-426721',
+        GCP_PROJECT_ID: 'example-project',
         GEMINI_API_KEY: 'super-secret-gemini-key',
         FILE_SEARCH_STORE_ID: 'fileSearchStores/private-store',
         SLACK_BOT_TOKEN: 'xoxb-secret',
