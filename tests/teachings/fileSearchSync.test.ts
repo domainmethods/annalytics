@@ -163,6 +163,7 @@ describe('syncTeachingsToFileSearch', () => {
   it('cleans up replaced File Search documents after new upload is verified', async () => {
     const newDocument = activeDocument('reference_card:revenue-canonical-definition');
     mockListDocuments
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([newDocument])
       .mockResolvedValueOnce([
         { name: 'stores/test/documents/old-1' },
@@ -196,6 +197,7 @@ describe('syncTeachingsToFileSearch', () => {
   it('teaching-only sync preserves reference-card documents in the shared store', async () => {
     const newTeachingDocument = activeDocument('teaching:revenue-monthly');
     mockListDocuments
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([newTeachingDocument])
       .mockResolvedValueOnce([
         {
@@ -288,7 +290,14 @@ describe('syncTeachingsToFileSearch', () => {
     expect(mockUpload).toHaveBeenCalledTimes(1);
   });
 
-  it('does not clean up existing documents when upload errors remain', async () => {
+  it('does not run final cleanup when upload errors remain', async () => {
+    mockListDocuments.mockResolvedValue([
+      {
+        name: 'stores/test/documents/unrelated-reference-card',
+        displayName: 'reference_card:unrelated',
+        state: 'STATE_ACTIVE',
+      },
+    ]);
     mockUpload.mockRejectedValue(new Error('{"error":{"code":500,"status":"INTERNAL"}}'));
 
     const result = await syncMarkdownDocumentsToFileSearch([
@@ -303,6 +312,84 @@ describe('syncTeachingsToFileSearch', () => {
     expect(result.verified).toBe(0);
     expect(result.errors).toHaveLength(1);
     expect(mockDeleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('deletes same-displayName documents before upload so replacement sync can materialize', async () => {
+    const existingDocument = {
+      name: 'stores/test/documents/existing-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    const replacementDocument = {
+      name: 'stores/test/documents/replacement-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    let storeDocuments = [existingDocument];
+    mockListDocuments.mockImplementation(async () => [...storeDocuments]);
+    mockDeleteDocument.mockImplementation(async ({ name }) => {
+      storeDocuments = storeDocuments.filter(document => document.name !== name);
+      return {};
+    });
+    mockUpload.mockImplementationOnce(async (params) => {
+      if (storeDocuments.some(document => document.displayName === params.config.displayName)) {
+        return {
+          name: 'operations/replacement-hidden-by-existing-document',
+          response: { documentName: replacementDocument.name },
+        };
+      }
+      storeDocuments.push(replacementDocument);
+      return {
+        name: 'operations/replacement-reference-card',
+        response: { documentName: replacementDocument.name },
+      };
+    });
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', syncTestOptions());
+
+    expect(result.uploaded).toBe(1);
+    expect(result.verified).toBe(1);
+    expect(result.active).toBe(1);
+    expect(result.deleted).toBe(1);
+    expect(result.errors).toHaveLength(0);
+    expect(storeDocuments).toEqual([replacementDocument]);
+    expect(mockDeleteDocument.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpload.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('fails before upload when same-displayName pre-upload cleanup does not converge', async () => {
+    mockListDocuments.mockResolvedValue([
+      {
+        name: 'stores/test/documents/stuck-reference-card',
+        displayName: 'reference_card:revenue-canonical-definition',
+        state: 'STATE_ACTIVE',
+      },
+    ]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', {
+      ...syncTestOptions(),
+      cleanupPollAttempts: 2,
+    });
+
+    expect(result.uploaded).toBe(0);
+    expect(result.verified).toBe(0);
+    expect(result.active).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('File Search pre-upload cleanup did not converge');
+    expect(mockUpload).not.toHaveBeenCalled();
   });
 
   it('polls unfinished upload operations until completion', async () => {
@@ -418,7 +505,9 @@ describe('syncTeachingsToFileSearch', () => {
         response: { documentName: newDocumentName },
       };
     });
-    mockListDocuments.mockResolvedValue([oldActiveDuplicate]);
+    mockListDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([oldActiveDuplicate]);
 
     const result = await syncMarkdownDocumentsToFileSearch([
       {
@@ -453,7 +542,9 @@ describe('syncTeachingsToFileSearch', () => {
         response: { documentName: processingDocument.name },
       };
     });
-    mockListDocuments.mockResolvedValue([processingDocument]);
+    mockListDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([processingDocument]);
 
     const result = await syncMarkdownDocumentsToFileSearch([
       {
@@ -498,6 +589,7 @@ describe('syncTeachingsToFileSearch', () => {
         };
       });
     mockListDocuments
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([failedDocument])
       .mockResolvedValue([activeRetryDocument]);
 
@@ -543,6 +635,7 @@ describe('syncTeachingsToFileSearch', () => {
       };
     });
     mockListDocuments
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([newDocument])
       .mockResolvedValueOnce([newDocument, oldDuplicate, failedDuplicate])
       .mockResolvedValue([newDocument]);
@@ -590,6 +683,7 @@ describe('syncTeachingsToFileSearch', () => {
       };
     });
     mockListDocuments
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([newDocument])
       .mockResolvedValueOnce([newDocument, oldDuplicate])
       .mockResolvedValueOnce([newDocument, oldDuplicate])
@@ -614,7 +708,7 @@ describe('syncTeachingsToFileSearch', () => {
       config: { force: true },
     });
     expect(sleep).toHaveBeenCalled();
-    expect(mockListDocuments).toHaveBeenCalledTimes(4);
+    expect(mockListDocuments).toHaveBeenCalledTimes(5);
   });
 
   it('records an actionable error when cleanup readback does not converge', async () => {
@@ -635,7 +729,10 @@ describe('syncTeachingsToFileSearch', () => {
         response: { fileSearchStoreDocument: { name: newDocument.name } },
       };
     });
-    mockListDocuments.mockResolvedValue([newDocument, oldDuplicate]);
+    mockListDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([newDocument])
+      .mockResolvedValue([newDocument, oldDuplicate]);
 
     const result = await syncMarkdownDocumentsToFileSearch([
       {
