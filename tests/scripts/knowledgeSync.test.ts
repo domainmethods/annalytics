@@ -44,6 +44,7 @@ describe('runKnowledgeSync', () => {
     const syncDocuments = vi.fn().mockResolvedValue({
       uploaded: 1,
       verified: 1,
+      active: 1,
       deleted: 0,
       errors: [],
     });
@@ -64,7 +65,7 @@ describe('runKnowledgeSync', () => {
     expect(syncDocuments).toHaveBeenCalledTimes(1);
     expect(syncDocuments.mock.calls[0][1]).toBe('fileSearchStores/revenue');
     expect(persistTeachingSummaries).not.toHaveBeenCalled();
-    expect(logger.log).toHaveBeenCalledWith('Uploaded: 1, Verified: 1, Errors: 0');
+    expect(logger.log).toHaveBeenCalledWith('Uploaded: 1, Verified: 1, Active: 1, Deleted: 0, Errors: 0');
     expect(logger.warn).toHaveBeenCalledWith('Skipping Firestore knowledge summary sync: GCP_PROJECT_ID is not set');
     expect(result.summarySync).toBe('skipped_no_project');
   });
@@ -75,6 +76,7 @@ describe('runKnowledgeSync', () => {
     const syncDocuments = vi.fn().mockResolvedValue({
       uploaded: 1,
       verified: 1,
+      active: 1,
       deleted: 0,
       errors: [],
     });
@@ -111,6 +113,7 @@ describe('runKnowledgeSync', () => {
     const syncDocuments = vi.fn().mockResolvedValue({
       uploaded: 2,
       verified: 2,
+      active: 2,
       deleted: 0,
       errors: [],
     });

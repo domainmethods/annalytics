@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { syncMarkdownDocumentsToFileSearch, syncTeachingsToFileSearch } from '../../src/teachings/fileSearchSync.js';
+import {
+  extractUploadedDocumentName,
+  syncMarkdownDocumentsToFileSearch,
+  syncTeachingsToFileSearch,
+} from '../../src/teachings/fileSearchSync.js';
 import type { Teaching } from '../../src/teachings/types.js';
 
 const mockUpload = vi.fn();
@@ -64,9 +68,32 @@ function syncTestOptions() {
     uploadRetryBaseDelayMs: 0,
     operationPollIntervalMs: 0,
     activeDocumentPollIntervalMs: 0,
+    cleanupPollIntervalMs: 0,
     sleep: vi.fn(),
   };
 }
+
+describe('extractUploadedDocumentName', () => {
+  it('extracts direct and nested document names from SDK response shapes', () => {
+    expect(extractUploadedDocumentName({
+      documentName: 'stores/test/documents/direct-document-name',
+    })).toBe('stores/test/documents/direct-document-name');
+
+    expect(extractUploadedDocumentName({
+      name: 'stores/test/documents/direct-name',
+    })).toBe('stores/test/documents/direct-name');
+
+    expect(extractUploadedDocumentName({
+      document: { name: 'stores/test/documents/nested-document-name' },
+    })).toBe('stores/test/documents/nested-document-name');
+
+    expect(extractUploadedDocumentName({
+      fileSearchStoreDocument: {
+        documentName: 'stores/test/documents/nested-file-search-document-name',
+      },
+    })).toBe('stores/test/documents/nested-file-search-document-name');
+  });
+});
 
 describe('syncTeachingsToFileSearch', () => {
   beforeEach(() => {
@@ -150,9 +177,10 @@ describe('syncTeachingsToFileSearch', () => {
         displayName: 'reference_card:revenue-canonical-definition',
         markdown: '# ReferenceCard: revenue-canonical-definition',
       },
-    ], 'stores/test', 'key');
+    ], 'stores/test', 'key', syncTestOptions());
 
     expect(result.deleted).toBe(2);
+    expect(result.active).toBe(1);
     expect(mockListDocuments).toHaveBeenCalledWith({ parent: 'stores/test' });
     expect(mockDeleteDocument).toHaveBeenCalledWith({
       name: 'stores/test/documents/old-1',
@@ -182,7 +210,7 @@ describe('syncTeachingsToFileSearch', () => {
       ])
       .mockImplementation(async () => uploadedDisplayNames.map(activeDocument));
 
-    const result = await syncTeachingsToFileSearch([teaching1], 'stores/test', 'key');
+    const result = await syncTeachingsToFileSearch([teaching1], 'stores/test', 'key', syncTestOptions());
 
     expect(result.deleted).toBe(1);
     expect(mockDeleteDocument).toHaveBeenCalledTimes(1);
@@ -376,6 +404,42 @@ describe('syncTeachingsToFileSearch', () => {
     expect(mockUpload).toHaveBeenCalledTimes(1);
   });
 
+  it('does not let an older active duplicate satisfy a named new upload', async () => {
+    const newDocumentName = 'stores/test/documents/new-reference-card';
+    const oldActiveDuplicate = {
+      name: 'stores/test/documents/old-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-new-reference-card',
+        response: { documentName: newDocumentName },
+      };
+    });
+    mockListDocuments.mockResolvedValue([oldActiveDuplicate]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', {
+      ...syncTestOptions(),
+      activeDocumentPollAttempts: 1,
+      maxIndexingAttempts: 1,
+    });
+
+    expect(result.uploaded).toBe(1);
+    expect(result.verified).toBe(0);
+    expect(result.active).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('not STATE_ACTIVE');
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
+  });
+
   it('does not delete or reupload documents that time out without STATE_FAILED', async () => {
     const processingDocument = {
       name: 'stores/test/documents/processing-reference-card',
@@ -453,5 +517,142 @@ describe('syncTeachingsToFileSearch', () => {
       name: 'stores/test/documents/failed-reference-card',
       config: { force: true },
     });
+  });
+
+  it('deletes old active duplicates and failed documents after the new upload is active', async () => {
+    const newDocument = {
+      name: 'stores/test/documents/new-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    const oldDuplicate = {
+      name: 'stores/test/documents/old-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    const failedDuplicate = {
+      name: 'stores/test/documents/failed-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_FAILED',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-new-reference-card',
+        response: { documentName: newDocument.name },
+      };
+    });
+    mockListDocuments
+      .mockResolvedValueOnce([newDocument])
+      .mockResolvedValueOnce([newDocument, oldDuplicate, failedDuplicate])
+      .mockResolvedValue([newDocument]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', syncTestOptions());
+
+    expect(result.uploaded).toBe(1);
+    expect(result.verified).toBe(1);
+    expect(result.active).toBe(1);
+    expect(result.deleted).toBe(2);
+    expect(result.errors).toHaveLength(0);
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: oldDuplicate.name,
+      config: { force: true },
+    });
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: failedDuplicate.name,
+      config: { force: true },
+    });
+  });
+
+  it('polls cleanup until duplicate deletion disappears from readback', async () => {
+    const sleep = vi.fn();
+    const newDocument = {
+      name: 'stores/test/documents/new-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    const oldDuplicate = {
+      name: 'stores/test/documents/old-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-new-reference-card',
+        response: { document: { name: newDocument.name } },
+      };
+    });
+    mockListDocuments
+      .mockResolvedValueOnce([newDocument])
+      .mockResolvedValueOnce([newDocument, oldDuplicate])
+      .mockResolvedValueOnce([newDocument, oldDuplicate])
+      .mockResolvedValue([newDocument]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', {
+      ...syncTestOptions(),
+      cleanupPollAttempts: 3,
+      sleep,
+    });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.active).toBe(1);
+    expect(mockDeleteDocument).toHaveBeenCalledWith({
+      name: oldDuplicate.name,
+      config: { force: true },
+    });
+    expect(sleep).toHaveBeenCalled();
+    expect(mockListDocuments).toHaveBeenCalledTimes(4);
+  });
+
+  it('records an actionable error when cleanup readback does not converge', async () => {
+    const newDocument = {
+      name: 'stores/test/documents/new-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    const oldDuplicate = {
+      name: 'stores/test/documents/old-reference-card',
+      displayName: 'reference_card:revenue-canonical-definition',
+      state: 'STATE_ACTIVE',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-new-reference-card',
+        response: { fileSearchStoreDocument: { name: newDocument.name } },
+      };
+    });
+    mockListDocuments.mockResolvedValue([newDocument, oldDuplicate]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', {
+      ...syncTestOptions(),
+      cleanupPollAttempts: 2,
+    });
+
+    expect(result.uploaded).toBe(1);
+    expect(result.verified).toBe(1);
+    expect(result.active).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('File Search cleanup did not converge');
+    expect(result.errors[0]).toContain('active documents');
   });
 });
