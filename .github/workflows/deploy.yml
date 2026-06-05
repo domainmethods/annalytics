@@ -8,8 +8,9 @@ on:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  REGION: us-central1
+  REGION: us-west1
   SERVICE_NAME: anna-lytics
+  FILE_SEARCH_STORE_ID: ${{ secrets.FILE_SEARCH_STORE_ID }}
 
 jobs:
   test:
@@ -21,9 +22,10 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx tsx scripts/validate-knowledge.ts
-      - run: npx tsc --noEmit
-      - run: npx vitest run
+      - run: npm run knowledge:validate
+      - run: npm run setup:check
+      - run: npm run typecheck
+      - run: npm test
 
   deploy:
     needs: test
@@ -44,17 +46,29 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Validate deploy configuration
+        run: |
+          test -n "${PROJECT_ID}" || (echo "Missing GCP_PROJECT_ID secret" && exit 1)
+          test -n "${FILE_SEARCH_STORE_ID}" || (echo "Missing FILE_SEARCH_STORE_ID secret" && exit 1)
+          gcloud config set project "${PROJECT_ID}"
+
       - name: Build and push Docker image
         run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
-          docker build -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:${{ github.sha }} .
-          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:${{ github.sha }}
-          docker tag ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:${{ github.sha }} \
-            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:latest
-          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:latest
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+          docker build -t "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}" .
+          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}"
+          docker tag "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}" \
+            "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:latest"
+          docker push "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:latest"
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy ${{ env.SERVICE_NAME }} \
-            --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/anna-lytics/anna-lytics:${{ github.sha }} \
-            --region ${{ env.REGION }}
+          gcloud run deploy "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}" \
+            --region "${REGION}" \
+            --service-account "${SERVICE_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID},GEMINI_MODEL=gemini-pro-latest,GEMINI_FLASH_MODEL=gemini-flash-latest,GEMINI_JUDGE_MODEL=gemini-pro-latest" \
+            --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
+            --port 3000 \
+            --allow-unauthenticated

@@ -202,6 +202,15 @@ As of 2026-06-04:
 - Pull request CI runs `scripts/validate-knowledge.ts` so malformed teaching or reference YAML is caught before merge, while missing dbt artifacts skip only artifact-aware checks.
 - Evidence source for this update: `benchmarks/results/2026-06-04.json`, `benchmarks/results/2026-06-04-summary.md`, and `benchmarks/results/2026-06-04-referencecard-acceptance.md`.
 
+As of 2026-06-05:
+
+- Setup and deployment guidance was simplified as trust-infrastructure maintenance, not Phase 3 product expansion.
+- Direct `gcloud run deploy` is the supported runtime deployment path. Terraform is optional and limited to persistent GCP setup: APIs, Firestore, Firestore indexes, Artifact Registry, service account/IAM, and empty Secret Manager containers.
+- Runtime secret values are intentionally excluded from Terraform state. Cloud Run binds `slack-bot-token`, `slack-signing-secret`, and `gemini-api-key` at deploy time.
+- `references/` and `scripts/sync-knowledge.ts` are the primary knowledge authoring/sync path. Legacy teaching-only sync remains for compatibility but is not the main onboarding path.
+- `scripts/setup-check.ts` records offline setup guardrails for stale model IDs, required files, env var presence without secret values, dbt artifact presence, ReferenceCard/dbt alignment, workflow consistency, and Terraform boundary drift.
+- This does not repair the revenue acceptance failures, File Search upload `500 INTERNAL` responses, or the dm-website/domainmethods dbt schema mismatch. The active next tranche remains scoped repair of the failing evidence categories before adding another ReferenceCard domain.
+
 ## Relationship to Existing Docs
 
 - `.spec-workflow/steering/product.md` remains the product overview.
