@@ -9,10 +9,21 @@ import { initBigQuery } from './validation/dryRun.js';
 import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMentions } from './handlers/mentions.js';
-import { shouldRespond, checkClarificationReply } from './handlers/messages.js';
+import {
+  canMessageEventReachPipeline,
+  shouldRespond,
+  checkClarificationReply,
+} from './handlers/messages.js';
 import { checkEscalationResponse, resumeFromEscalation } from './handlers/escalationResponse.js';
 import { checkOverdueEscalations } from './handlers/escalationLifecycle.js';
 import { checkRateLimit } from './state/rateLimiter.js';
+import { releaseThreadLock } from './state/threadLock.js';
+import {
+  claimSlackEvent,
+  extractSlackEventId,
+  markSlackEventVisible,
+  releaseSlackEventClaim,
+} from './state/slackEventDedupe.js';
 import { preflightChecks } from './handlers/preflightChecks.js';
 import { recordFeedback, getResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
@@ -94,107 +105,132 @@ registerCommands(app, getConfig, getTables);
 registerMentions(app, getConfig, getTables);
 
 // Message handler (thread follow-ups in channels + DMs)
-app.event('message', async ({ event, client }) => {
+app.event('message', async ({ event, body, client }) => {
   // Skip bot messages, message_changed, etc.
   if ('bot_id' in event || 'subtype' in event) return;
 
   const msg = event as GenericMessageEvent;
+  if (!canMessageEventReachPipeline(msg)) return;
 
-  // Non-blocking lifecycle check: reminders + timeouts for pending escalations
-  checkOverdueEscalations(client, config.escalation).catch(err =>
-    rootLogger.error({ error: (err as Error).message }, 'escalation.lifecycle.error'),
-  );
+  const eventId = extractSlackEventId(body);
+  let visibleResponse = false;
+  let lockHeld = false;
+  const shouldProcess = await claimSlackEvent(eventId);
+  if (!shouldProcess) return;
 
-  // Check for pending clarification reply FIRST
-  const clarificationReply = await checkClarificationReply(msg);
-  if (clarificationReply) {
-    // Resume pipeline with clarified question
+  try {
+    // Non-blocking lifecycle check: reminders + timeouts for pending escalations
+    checkOverdueEscalations(client, config.escalation).catch(err =>
+      rootLogger.error({ error: (err as Error).message }, 'escalation.lifecycle.error'),
+    );
+
+    // Check for pending clarification reply FIRST
+    const clarificationReply = await checkClarificationReply(msg);
+    if (clarificationReply) {
+      visibleResponse = true;
+      await markSlackEventVisible(eventId).catch(() => {});
+      // Resume pipeline with clarified question
+      await runPipeline({
+        question: clarificationReply.clarifiedQuestion,
+        channel: clarificationReply.channel,
+        threadTs: clarificationReply.threadTs,
+        statusMsgTs: clarificationReply.clarifyingMessageTs,
+        client,
+        tables: getTables(),
+        config: toPipelineConfig(config),
+      });
+      return;
+    }
+
+    // Check for escalation response (data team replying in escalation channel or DM)
+    const isEscalationChannel = config.escalation.channelId && msg.channel === config.escalation.channelId;
+    const isEscalationDm = config.escalation.mode === 'dm' && config.escalation.analystUserId;
+    if ((isEscalationChannel || isEscalationDm) && msg.thread_ts) {
+      const escalationCtx = await checkEscalationResponse(msg);
+      if (escalationCtx) {
+        visibleResponse = true;
+        await markSlackEventVisible(eventId).catch(() => {});
+        await resumeFromEscalation(escalationCtx, client, getTables(), toPipelineConfig(config));
+        return;
+      }
+    }
+
+    const respond = await shouldRespond(msg);
+    if (!respond) return;
+
+    const threadTs = msg.thread_ts || msg.ts;
+
+    // Rate limit check
+    const rateCheck = await checkRateLimit(msg.user, config.limits.rateLimitPerHour);
+    if (!rateCheck.allowed) {
+      await client.chat.postMessage({
+        channel: msg.channel,
+        thread_ts: threadTs,
+        text: `You've hit the query limit (${config.limits.rateLimitPerHour}/hour). Resets in ${rateCheck.retryAfterMinutes} minutes.`,
+      });
+      visibleResponse = true;
+      await markSlackEventVisible(eventId).catch(() => {});
+      return;
+    }
+
+    // Preflight: lock + clarification + escalation guards
+    const passed = await preflightChecks(msg.channel, threadTs, client);
+    if (!passed) return;
+    lockHeld = true;
+
+    const statusMsg = await client.chat.postMessage({
+      channel: msg.channel,
+      thread_ts: threadTs,
+      text: 'Understanding your question...',
+    });
+    visibleResponse = true;
+    await markSlackEventVisible(eventId).catch(() => {});
+
+    // Follow-up intent routing for thread replies
+    if (msg.thread_ts) {
+      try {
+        const threadMessages = await client.conversations.replies({
+          channel: msg.channel,
+          ts: threadTs,
+          oldest: threadTs,
+        });
+        const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
+          summarizeOlder: true,
+          stripQueryResults: true,
+          maxTokens: 1000,
+        });
+        if (threadContext.length > 0) {
+          const { intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
+          if (intent !== 'new_query') {
+            await routeFollowUp(
+              intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
+              client, toPipelineConfig(config), getTables(),
+            );
+            await releaseThreadLock(threadTs).catch(() => {});
+            lockHeld = false;
+            return;
+          }
+        }
+      } catch {
+        // Classification failed — fall through to standard pipeline
+      }
+    }
+
+    lockHeld = false;
     await runPipeline({
-      question: clarificationReply.clarifiedQuestion,
-      channel: clarificationReply.channel,
-      threadTs: clarificationReply.threadTs,
-      statusMsgTs: clarificationReply.clarifyingMessageTs,
+      question: msg.text || '',
+      channel: msg.channel,
+      threadTs,
+      statusMsgTs: statusMsg.ts!,
       client,
       tables: getTables(),
       config: toPipelineConfig(config),
     });
-    return;
+  } catch (error) {
+    if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
+    if (lockHeld) await releaseThreadLock(msg.thread_ts || msg.ts).catch(() => {});
+    throw error;
   }
-
-  // Check for escalation response (data team replying in escalation channel or DM)
-  const isEscalationChannel = config.escalation.channelId && msg.channel === config.escalation.channelId;
-  const isEscalationDm = config.escalation.mode === 'dm' && config.escalation.analystUserId;
-  if ((isEscalationChannel || isEscalationDm) && msg.thread_ts) {
-    const escalationCtx = await checkEscalationResponse(msg);
-    if (escalationCtx) {
-      await resumeFromEscalation(escalationCtx, client, getTables(), toPipelineConfig(config));
-      return;
-    }
-  }
-
-  const respond = await shouldRespond(msg);
-  if (!respond) return;
-
-  const threadTs = msg.thread_ts || msg.ts;
-
-  // Rate limit check
-  const rateCheck = await checkRateLimit(msg.user, config.limits.rateLimitPerHour);
-  if (!rateCheck.allowed) {
-    await client.chat.postMessage({
-      channel: msg.channel,
-      thread_ts: threadTs,
-      text: `You've hit the query limit (${config.limits.rateLimitPerHour}/hour). Resets in ${rateCheck.retryAfterMinutes} minutes.`,
-    });
-    return;
-  }
-
-  // Preflight: lock + clarification + escalation guards
-  const passed = await preflightChecks(msg.channel, threadTs, client);
-  if (!passed) return;
-
-  const statusMsg = await client.chat.postMessage({
-    channel: msg.channel,
-    thread_ts: threadTs,
-    text: 'Understanding your question...',
-  });
-
-  // Follow-up intent routing for thread replies
-  if (msg.thread_ts) {
-    try {
-      const threadMessages = await client.conversations.replies({
-        channel: msg.channel,
-        ts: threadTs,
-        oldest: threadTs,
-      });
-      const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
-        summarizeOlder: true,
-        stripQueryResults: true,
-        maxTokens: 1000,
-      });
-      if (threadContext.length > 0) {
-        const { intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
-        if (intent !== 'new_query') {
-          await routeFollowUp(
-            intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
-            client, toPipelineConfig(config), getTables(),
-          );
-          return;
-        }
-      }
-    } catch {
-      // Classification failed — fall through to standard pipeline
-    }
-  }
-
-  await runPipeline({
-    question: msg.text || '',
-    channel: msg.channel,
-    threadTs,
-    statusMsgTs: statusMsg.ts!,
-    client,
-    tables: getTables(),
-    config: toPipelineConfig(config),
-  });
 });
 
 // Feedback button handlers — record to Firestore

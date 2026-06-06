@@ -11,11 +11,35 @@ vi.mock('../../src/state/clarificationState.js', () => ({
 
 import { botHasRepliedInThread } from '../../src/state/responseContext.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
-import { shouldRespond, checkClarificationReply } from '../../src/handlers/messages.js';
+import {
+  canMessageEventReachPipeline,
+  shouldRespond,
+  checkClarificationReply,
+} from '../../src/handlers/messages.js';
 
 const mockBotHasReplied = vi.mocked(botHasRepliedInThread);
 const mockGetClarification = vi.mocked(getClarificationState);
 const mockDeleteClarification = vi.mocked(deleteClarificationState);
+
+describe('canMessageEventReachPipeline', () => {
+  it('allows direct messages and group direct messages without a thread', () => {
+    expect(canMessageEventReachPipeline({ channel_type: 'im' } as any)).toBe(true);
+    expect(canMessageEventReachPipeline({ channel_type: 'mpim' } as any)).toBe(true);
+  });
+
+  it('allows thread replies so clarification, escalation, and follow-up routing can run', () => {
+    expect(canMessageEventReachPipeline({
+      channel_type: 'channel',
+      thread_ts: 'thread-1',
+    } as any)).toBe(true);
+  });
+
+  it('filters bare channel messages before Firestore-backed dedupe', () => {
+    expect(canMessageEventReachPipeline({
+      channel_type: 'channel',
+    } as any)).toBe(false);
+  });
+});
 
 describe('shouldRespond', () => {
   beforeEach(() => {
@@ -24,6 +48,11 @@ describe('shouldRespond', () => {
 
   it('responds to DMs (channel_type === "im")', async () => {
     const result = await shouldRespond({ channel_type: 'im' } as any);
+    expect(result).toBe(true);
+  });
+
+  it('responds to group DMs (channel_type === "mpim")', async () => {
+    const result = await shouldRespond({ channel_type: 'mpim' } as any);
     expect(result).toBe(true);
   });
 

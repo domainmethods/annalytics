@@ -64,7 +64,13 @@ Repeated `500 INTERNAL`, `503 UNAVAILABLE`, `504 DEADLINE_EXCEEDED`, or `429 RES
 
 Configure the Slack app before deploying the Cloud Run service.
 
-Event Subscriptions request URL:
+In the Slack app configuration at https://api.slack.com/apps, select your app
+and configure these sections.
+
+### Event Subscriptions
+
+Go to **Features -> Event Subscriptions**, turn on **Enable Events**, and set
+the request URL:
 
 ```text
 https://<your-cloud-run-url>/slack/events
@@ -78,13 +84,40 @@ Subscribe to these bot events:
 - `message.im`
 - `message.mpim`
 
-Slash command:
+Plain 1:1 DMs are delivered through `message.im`. Group DMs are delivered
+through `message.mpim`. Channel messages require `app_mention` unless the bot
+has already participated in the thread.
+
+### App Home Messages
+
+Go to **Features -> App Home** and enable the **Messages** tab. If users see
+`Sending messages to this app has been turned off`, the Messages tab or message
+input for the app is disabled in this section. Enable **Allow users to send
+Slash commands and messages from the messages tab** before testing DMs.
+
+### Slash Command
+
+Go to **Features -> Slash Commands** and create:
 
 ```text
 /anna -> https://<your-cloud-run-url>/slack/events
 ```
 
-Bot token scopes:
+### Interactivity
+
+Go to **Features -> Interactivity & Shortcuts**, turn on interactivity, and use
+the same request URL:
+
+```text
+https://<your-cloud-run-url>/slack/events
+```
+
+This is required for feedback buttons, reasoning toggles, and output override
+buttons.
+
+### OAuth Scopes
+
+Go to **Features -> OAuth & Permissions** and add these bot token scopes:
 
 ```text
 app_mentions:read
@@ -96,6 +129,21 @@ groups:history
 im:history
 mpim:history
 ```
+
+After changing scopes, event subscriptions, slash commands, App Home settings,
+or interactivity settings, reinstall the app to the workspace from
+**Settings -> Install App**.
+
+### Slack Smoke Tests
+
+After deployment and app reinstall:
+
+1. Confirm `GET https://<your-cloud-run-url>/health` returns `200 OK`.
+2. Confirm Slack verifies the Event Subscriptions request URL.
+3. Open the app's Messages tab and send a DM. If Slack says message sending is
+   turned off, recheck **Features -> App Home -> Messages**.
+4. Mention the bot in a private test channel with `@Anna Lytics <question>`.
+5. Run `/anna <question>` in the same test channel.
 
 ## Local Development
 
@@ -193,6 +241,21 @@ npm run infra:validate
 ## Deployment
 
 The standard region is `us-west1`.
+
+### Firestore TTL Policy
+
+The runtime stores short-lived locks, clarification state, escalation state, and
+Slack event dedupe records in Firestore with `expiresAt` timestamps. Enable TTL
+for the Slack event dedupe collection so old retry markers are pruned
+automatically:
+
+```bash
+gcloud firestore fields ttls update expiresAt \
+  --collection-group=slack_event_dedupe \
+  --database="(default)" \
+  --enable-ttl \
+  --project "$PROJECT_ID"
+```
 
 ### Automatic
 

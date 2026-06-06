@@ -41,9 +41,17 @@ export async function checkClarificationReply(
   };
 }
 
+function isDirectMessageSurface(event: MessageEvent): boolean {
+  return event.channel_type === 'im' || event.channel_type === 'mpim';
+}
+
+export function canMessageEventReachPipeline(event: MessageEvent): boolean {
+  return isDirectMessageSurface(event) || Boolean(event.thread_ts);
+}
+
 export async function shouldRespond(event: MessageEvent): Promise<boolean> {
   // Always respond in DMs
-  if (event.channel_type === 'im') return true;
+  if (isDirectMessageSurface(event)) return true;
 
   // For channel messages: only respond in threads where bot has participated
   if (event.thread_ts) {
