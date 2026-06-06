@@ -140,6 +140,34 @@ describe('runKnowledgeSync', () => {
     );
   });
 
+  it('fails when File Search sync counts do not converge', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
+    await writeReferenceCard(root);
+    const syncDocuments = vi.fn().mockResolvedValue({
+      uploaded: 1,
+      verified: 1,
+      active: 0,
+      deleted: 0,
+      errors: [],
+    });
+    const persistKnowledgeSummaries = vi.fn();
+    const logger = silentLogger();
+
+    await expect(runKnowledgeSync({
+      rootDir: root,
+      env: {
+        FILE_SEARCH_STORE_ID: 'fileSearchStores/revenue',
+        GEMINI_API_KEY: 'gemini-key',
+        GCP_PROJECT_ID: 'analytics-project',
+      },
+      syncDocuments,
+      persistKnowledgeSummaries,
+      logger,
+    })).rejects.toThrow('File Search sync did not converge');
+
+    expect(persistKnowledgeSummaries).not.toHaveBeenCalled();
+  });
+
   it('still fails when required File Search config is missing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-sync-'));
     await writeReferenceCard(root);

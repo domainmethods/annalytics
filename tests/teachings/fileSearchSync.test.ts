@@ -166,8 +166,8 @@ describe('syncTeachingsToFileSearch', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([newDocument])
       .mockResolvedValueOnce([
-        { name: 'stores/test/documents/old-1' },
-        { name: 'stores/test/documents/old-2' },
+        { name: 'stores/test/documents/old-1', displayName: 'reference_card:old-1' },
+        { name: 'stores/test/documents/old-2', displayName: 'reference_card:old-2' },
         newDocument,
       ])
       .mockImplementation(async () => uploadedDisplayNames.map(activeDocument));
@@ -218,6 +218,41 @@ describe('syncTeachingsToFileSearch', () => {
     expect(mockDeleteDocument).toHaveBeenCalledTimes(1);
     expect(mockDeleteDocument).toHaveBeenCalledWith({
       name: 'stores/test/documents/teaching-old',
+      config: { force: true },
+    });
+  });
+
+  it('full knowledge sync preserves unmanaged documents in the shared store', async () => {
+    const newDocument = activeDocument('reference_card:revenue-canonical-definition');
+    const unmanagedDocument = {
+      name: 'stores/test/documents/external-runbook',
+      displayName: 'external:runbook',
+      state: 'STATE_ACTIVE',
+    };
+    mockUpload.mockImplementationOnce(async (params) => {
+      uploadedDisplayNames.push(params.config.displayName);
+      return {
+        name: 'operations/upload-new-reference-card',
+        response: { documentName: newDocument.name },
+      };
+    });
+    mockListDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([newDocument])
+      .mockResolvedValue([newDocument, unmanagedDocument]);
+
+    const result = await syncMarkdownDocumentsToFileSearch([
+      {
+        id: 'revenue-canonical-definition',
+        displayName: 'reference_card:revenue-canonical-definition',
+        markdown: '# ReferenceCard: revenue-canonical-definition',
+      },
+    ], 'stores/test', 'key', syncTestOptions());
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.active).toBe(1);
+    expect(mockDeleteDocument).not.toHaveBeenCalledWith({
+      name: unmanagedDocument.name,
       config: { force: true },
     });
   });
