@@ -10,6 +10,16 @@ import {
   buildFeedbackAckBlocks,
   feedbackReasonById,
 } from '../slack/feedbackBlocks.js';
+import { rootLogger } from '../logging.js';
+
+/**
+ * Shown when we can no longer reconstruct an answer's details (malformed
+ * compound key, evicted ResponseContext, or a failed escalation-state write
+ * after the card already posted). Single-sourced so the user-facing wording
+ * stays identical across every degrade path.
+ */
+const REASK_MESSAGE =
+  "I can't pull this answer's details anymore — please re-ask and I'll take another run at it.";
 
 /** Bolt's `respond` updates the ephemeral message via its response_url. */
 export type RespondFn = (message: {
@@ -74,10 +84,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   // would corrupt the Firestore doc.
   const parts = compoundKey.split('_');
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    await respond({
-      replace_original: true,
-      text: "I can't pull this answer's details anymore — please re-ask and I'll take another run at it.",
-    });
+    await respond({ replace_original: true, text: REASK_MESSAGE });
     return;
   }
   const [threadTs, statusMsgTs] = parts;
@@ -104,10 +111,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
 
   const ctx = await getResponseContext(compoundKey);
   if (!ctx) {
-    await respond({
-      replace_original: true,
-      text: "I can't pull this answer's details anymore — please re-ask and I'll take another run at it.",
-    });
+    await respond({ replace_original: true, text: REASK_MESSAGE });
     return;
   }
 
@@ -128,28 +132,46 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     }) as unknown as KnownBlock[],
   });
 
-  await saveEscalationState({
-    escalationId: `esc_fb_${ctx.traceId}`,
-    originalThreadTs: threadTs,
-    originalChannel: channel,
-    trigger: 'user_negative_feedback',
-    behavior: 'best_effort_verify',
-    stageToResume: 'supervisor_review',
-    context: {
-      clarifiedQuestion: ctx.clarifiedQuestion,
-      userQuestion: ctx.clarifiedQuestion,
-      groundingCitations: ctx.groundingCitations,
-      previousSql: ctx.generatedSql,
-      supervisorNotes: ctx.supervisorNotes,
-      feedbackReason: reason.label,
-      feedbackUserId: userId,
-    },
-    escalationChannel: target,
-    escalationTs: escalationMsg.ts!,
-    statusMsgTs,
-    bestEffortSql: ctx.generatedSql,
-    traceId: ctx.traceId,
-  }, config.escalation?.timeoutHours ?? 4);
+  const escalationId = `esc_fb_${ctx.traceId}`;
+
+  // The escalation card is already posted (above). If the state write fails now,
+  // we must NOT leave the user's ephemeral prompt un-replaced: without an ack
+  // they may re-click, and since no state was saved hasPendingEscalation stays
+  // false → a duplicate card posts, and the analyst's reply can't be matched.
+  // Mirror escalationResponse.ts's downstream-failure idiom: log + degrade
+  // gracefully rather than propagate. We log identifiers only (traceId/
+  // escalationId), never the SQL body, matching the sibling's level of detail.
+  try {
+    await saveEscalationState({
+      escalationId,
+      originalThreadTs: threadTs,
+      originalChannel: channel,
+      trigger: 'user_negative_feedback',
+      behavior: 'best_effort_verify',
+      stageToResume: 'supervisor_review',
+      context: {
+        clarifiedQuestion: ctx.clarifiedQuestion,
+        userQuestion: ctx.clarifiedQuestion,
+        groundingCitations: ctx.groundingCitations,
+        previousSql: ctx.generatedSql,
+        supervisorNotes: ctx.supervisorNotes,
+        feedbackReason: reason.label,
+        feedbackUserId: userId,
+      },
+      escalationChannel: target,
+      escalationTs: escalationMsg.ts!,
+      statusMsgTs,
+      bestEffortSql: ctx.generatedSql,
+      traceId: ctx.traceId,
+    }, config.escalation?.timeoutHours ?? 4);
+  } catch (err) {
+    rootLogger.error(
+      { error: (err as Error).message, traceId: ctx.traceId, escalationId },
+      'feedback.escalation.state_save_failed',
+    );
+    await respond({ replace_original: true, text: REASK_MESSAGE });
+    return;
+  }
 
   await respond({
     replace_original: true,

@@ -99,7 +99,11 @@ describe('handleFeedbackReason', () => {
     });
 
     expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-    expect(client.chat.postMessage.mock.calls[0][0].channel).toBe('C_ESC');
+    const cardArg = client.chat.postMessage.mock.calls[0][0];
+    expect(cardArg.channel).toBe('C_ESC');
+    // The escalation card must surface the reason label so the analyst sees why
+    // it was flagged — locks in the reason.label → stuckDescription mapping.
+    expect(JSON.stringify(cardArg.blocks)).toContain('Wrong number');
 
     expect(mockSaveEscalationState).toHaveBeenCalledTimes(1);
     const [state, timeoutHours] = mockSaveEscalationState.mock.calls[0];
@@ -116,6 +120,27 @@ describe('handleFeedbackReason', () => {
 
     expect(respond).toHaveBeenCalledTimes(1);
     expect(respond.mock.calls[0][0].replace_original).toBe(true);
+  });
+
+  it('degrades gracefully when the escalation card posted but the state save fails', async () => {
+    // The card is posted before saveEscalationState. If the write throws after
+    // that, the handler must NOT propagate (which would leave the ephemeral
+    // prompt un-replaced); it logs and responds with a re-ask degrade instead.
+    mockSaveEscalationState.mockRejectedValue(new Error('firestore down'));
+    const client = makeClient();
+    const respond = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      handleFeedbackReason({
+        reasonId: 'wrong_number', compoundKey, userId: 'U1', channel: 'C1', client, respond, config: makeConfig(),
+      }),
+    ).resolves.toBeUndefined();
+
+    // Card was posted (the partial-write window we're protecting against).
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    // User is not left without a response — degrade ack fired.
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(respond.mock.calls[0][0].text).toMatch(/re-ask/i);
   });
 
   it('does not double-escalate when one is already pending', async () => {
