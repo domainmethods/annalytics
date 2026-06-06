@@ -254,6 +254,83 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     expect(statusPosts().filter(t => t === 'Understanding your question...')).toHaveLength(1);
   });
 
+  // ── Slack retries can arrive concurrently before the first acks ──
+  it('processes concurrent duplicate deliveries (retry race) only once', async () => {
+    mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+
+    const deliver = () =>
+      handleMessageEvent({
+        event: dmEvent('show signups by week'),
+        body: bodyWithEventId('EvRace'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+    await Promise.all([deliver(), deliver()]); // both in flight at once
+
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    expect(statusPosts().filter(t => t === 'Understanding your question...')).toHaveLength(1);
+  });
+
+  // ── Rate limit blocks the pipeline with a user-visible message ──
+  it('blocks at the rate limit with a message and no pipeline run', async () => {
+    // Seed the user at the cap so the next message is refused.
+    firestoreStore.set('rate_limits/U1', {
+      queryCount: config.limits.rateLimitPerHour,
+      windowStart: { toDate: () => new Date() },
+    });
+    mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+
+    await handleMessageEvent({
+      event: dmEvent('show revenue'),
+      body: bodyWithEventId('EvRate'),
+      client: mockClient,
+      config,
+      getTables,
+    });
+
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+    expect(statusPosts().some(t => t.includes('query limit'))).toBe(true);
+  });
+
+  // ── A recognized clarification reply resumes the pipeline ──
+  it('resumes the pipeline with the clarified question when a thread reply answers a clarification', async () => {
+    firestoreQueryResults.set('clarification_state', {
+      empty: false,
+      docs: [{
+        data: () => ({
+          clarificationId: 'clar-9',
+          threadTs: '1700000000.000900',
+          channel: 'D123',
+          originalQuestion: 'revenue?',
+          clarifyingMessageTs: '1700000000.000800',
+          state: 'awaiting_reply',
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        }),
+        ref: { delete: vi.fn(async () => {}) },
+      }],
+    });
+
+    await handleMessageEvent({
+      // A genuine thread reply (carries thread_ts) → checkClarificationReply claims it.
+      event: dmEvent('last quarter', { thread_ts: '1700000000.000900', ts: '1700000000.000950' }),
+      body: bodyWithEventId('EvClarReply'),
+      client: mockClient,
+      config,
+      getTables,
+    });
+
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
+      question: 'revenue? (Clarification: last quarter)',
+      threadTs: '1700000000.000900',
+      statusMsgTs: '1700000000.000800',
+    });
+    // No new status message — it resumes on the existing clarifying message.
+    expect(statusPosts()).not.toContain('Understanding your question...');
+  });
+
   // ── Bug #4 (RED→GREEN): a pending clarification must never silently drop ──
   it('does not silently drop a DM while a clarification is pending', async () => {
     // A clarification is pending for this thread, but the incoming DM is a fresh
