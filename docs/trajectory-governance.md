@@ -211,6 +211,13 @@ As of 2026-06-05:
 - Template boundary: do not commit implementation-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, or benchmark evidence to this repository unless it has intentionally become an implementation repo.
 - A real implementation-specific acceptance decision is still required before adding another ReferenceCard domain.
 
+As of 2026-06-06:
+
+- Negative-feedback escalation (👎 → reason prompt → analyst) shipped as trust infrastructure: it satisfies guardrail #1 (trust before surface area) and guardrail #3 (human-reviewed knowledge before automatic learning).
+- Boundary it respects: it routes a human's correction to a human analyst and reuses the existing teaching-CANDIDATE flow only. It does NOT auto-promote feedback into production retrieval, and it does NOT lower the pipeline's escalation threshold.
+- Both of those remain deferred under the "Automatic correction harvesting from binary feedback" line; reviving either still requires updating this document first.
+- Evidence source for this update: `docs/superpowers/specs/2026-06-06-negative-feedback-escalation-design.md`.
+
 ## Relationship to Existing Docs
 
 - `.spec-workflow/steering/product.md` remains the product overview.
