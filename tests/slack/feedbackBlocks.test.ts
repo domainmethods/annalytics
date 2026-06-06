@@ -16,11 +16,14 @@ describe('buildFeedbackReasonBlocks', () => {
     expect(actions).toBeDefined();
     expect(actions.elements).toHaveLength(FEEDBACK_REASONS.length);
 
-    for (const el of actions.elements) {
+    actions.elements.forEach((el: any, i: number) => {
       expect(el.type).toBe('button');
       expect(el.action_id).toMatch(new RegExp(`^${FEEDBACK_REASON_PREFIX}`));
       expect(el.value).toBe(compoundKey);
-    }
+      // The visible label is load-bearing — a later task embeds reason.label into
+      // the human-facing escalation card, so a label/id drift must fail here.
+      expect(el.text.text).toBe(FEEDBACK_REASONS[i].label);
+    });
   });
 
   it('encodes each reason id in its action_id', () => {

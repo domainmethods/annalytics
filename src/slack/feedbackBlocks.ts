@@ -1,4 +1,4 @@
-import type { KnownBlock, SectionBlock, ActionsBlock } from '@slack/types';
+import type { KnownBlock, ActionsBlock } from '@slack/types';
 
 export const FEEDBACK_REASON_PREFIX = 'fb_reason_';
 
@@ -28,6 +28,12 @@ export function feedbackReasonById(id: string): FeedbackReason | undefined {
  * can load the persisted ResponseContext; the reason id is encoded in the action_id.
  */
 export function buildFeedbackReasonBlocks(compoundKey: string): KnownBlock[] {
+  const elements: ActionsBlock['elements'] = FEEDBACK_REASONS.map(reason => ({
+    type: 'button',
+    action_id: `${FEEDBACK_REASON_PREFIX}${reason.id}`,
+    text: { type: 'plain_text', text: reason.label },
+    value: compoundKey,
+  }));
   return [
     {
       type: 'section',
@@ -35,17 +41,12 @@ export function buildFeedbackReasonBlocks(compoundKey: string): KnownBlock[] {
         type: 'mrkdwn',
         text: 'Thanks for the flag — what was off? This routes it to the right fix.',
       },
-    } as SectionBlock,
+    },
     {
       type: 'actions',
       block_id: `${FEEDBACK_REASON_PREFIX}actions`,
-      elements: FEEDBACK_REASONS.map(reason => ({
-        type: 'button',
-        action_id: `${FEEDBACK_REASON_PREFIX}${reason.id}`,
-        text: { type: 'plain_text', text: reason.label },
-        value: compoundKey,
-      })),
-    } as ActionsBlock,
+      elements,
+    },
   ];
 }
 
@@ -54,6 +55,6 @@ export function buildFeedbackAckBlocks(message: string): KnownBlock[] {
     {
       type: 'section',
       text: { type: 'mrkdwn', text: message },
-    } as SectionBlock,
+    },
   ];
 }
