@@ -93,6 +93,7 @@ export function buildFeedbackActions(
   threadTs?: string,
   statusMsgTs?: string,
   overrides: OverrideButtons = {},
+  sqlShown = false,
 ): ActionsBlock {
   const elements: ActionsBlock['elements'] = [
     {
@@ -111,11 +112,13 @@ export function buildFeedbackActions(
 
   if (threadTs && statusMsgTs) {
     const compoundKey = `${threadTs}_${statusMsgTs}`;
-    // Reasoning and Show SQL are detail toggles, not output overrides — they
-    // surface the same answer's "why" and "what ran" regardless of result
-    // shape — so both are always present when the toggle keys exist. The SQL is
-    // hidden by default to declutter the answer; one click reveals it (loaded
-    // from persisted ResponseContext, no re-query) for trust/verification.
+    // Reasoning and the SQL toggle are detail toggles, not output overrides —
+    // they surface the same answer's "why" and "what ran" regardless of result
+    // shape — so both are always present when the toggle keys exist. The SQL
+    // toggle flips in place: it reads "Show SQL" while hidden and "Hide SQL"
+    // once the panel is open, so the feedback row stays visible alongside the
+    // revealed SQL (additive, not a swap). The SQL itself is loaded from
+    // persisted ResponseContext — no re-query — for trust/verification.
     elements.push(
       {
         type: 'button',
@@ -123,12 +126,19 @@ export function buildFeedbackActions(
         action_id: `show_reasoning_${traceId}`,
         value: compoundKey,
       },
-      {
-        type: 'button',
-        text: { type: 'plain_text', text: 'Show SQL' },
-        action_id: `show_sql_${traceId}`,
-        value: compoundKey,
-      },
+      sqlShown
+        ? {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Hide SQL' },
+            action_id: `hide_sql_${traceId}`,
+            value: compoundKey,
+          }
+        : {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Show SQL' },
+            action_id: `show_sql_${traceId}`,
+            value: compoundKey,
+          },
     );
     if (overrides.table ?? true) {
       elements.push({

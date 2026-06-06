@@ -25,18 +25,21 @@ const baseContext: ResponseContext = {
 };
 
 describe('buildSqlBlocks', () => {
-  it('renders the persisted SQL in a code block with a Hide SQL button', () => {
+  it('renders the persisted SQL in a single bare code-block section', () => {
     const blocks = buildSqlBlocks(baseContext);
     const text = JSON.stringify(blocks);
+
+    // Additive design: the panel is just the SQL section — the "Hide SQL"
+    // control lives in the feedback row, not here.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe('section');
 
     // The exact persisted query, fenced as a code block.
     expect(text).toContain('SELECT SUM(amount) FROM `analytics.orders`');
     expect((blocks[0] as any).text.text).toContain('```');
 
-    // Hide SQL button carries the compound key so the toggle can reload context.
-    const actions = blocks[1] as any;
-    expect(actions.elements[0].action_id).toBe('hide_sql_trace-abc');
-    expect(actions.elements[0].value).toBe('thread-1_status-1');
+    // No buttons are rendered inside the SQL panel.
+    expect(text).not.toContain('hide_sql_');
   });
 
   it('tags every block with the SQL_BLOCK_PREFIX so Hide SQL can strip them', () => {

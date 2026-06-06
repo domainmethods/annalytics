@@ -170,12 +170,15 @@ app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
     (b: any) => !b.block_id?.startsWith(REASONING_BLOCK_PREFIX),
   );
 
-  // Re-add the feedback actions with show_reasoning/show_sql buttons. Rebuild
-  // the override set from the persisted result shape so we don't resurrect
-  // buttons the original answer suppressed (e.g. Table/CSV on a zero-row result).
+  // Re-add the feedback actions with reasoning/SQL toggle buttons. Rebuild the
+  // override set from the persisted result shape so we don't resurrect buttons
+  // the original answer suppressed (e.g. Table/CSV on a zero-row result). The
+  // SQL panel is additive and survives the reasoning toggle, so detect whether
+  // it's still showing and flip the SQL button to match (Hide SQL vs Show SQL).
   const [threadTs, statusMsgTs] = compoundKey.split('_');
   const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
-  withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides));
+  const sqlShown = withoutReasoning.some((b: any) => b.block_id?.startsWith(SQL_BLOCK_PREFIX));
+  withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, sqlShown));
 
   await client.chat.update({
     channel,
@@ -185,10 +188,10 @@ app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
   });
 });
 
-// "Show SQL" toggle — appends the SQL panel to the message. Mirrors the
-// reasoning toggle: the feedback row (which holds the Show SQL button) is
-// swapped out for the SQL panel, which carries its own "Hide SQL" button. The
-// SQL is read from persisted ResponseContext — no re-query.
+// "Show SQL" toggle — reveals the SQL panel *additively*: the feedback row stays
+// visible (its SQL button flips to "Hide SQL") and the bare SQL section is
+// inserted just above it. The SQL is read from persisted ResponseContext — no
+// re-query.
 app.action(/show_sql_.*/, async ({ action, ack, body, client }) => {
   await ack();
   const btn = action as { value?: string; action_id: string };
@@ -202,22 +205,33 @@ app.action(/show_sql_.*/, async ({ action, ack, body, client }) => {
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
 
-  // Remove the feedback actions block that contains the show_sql button
+  // Drop the existing feedback row (it holds the "Show SQL" button) so we can
+  // re-render it in the "Hide SQL" state below the SQL panel.
   const currentBlocks: any[] = (body as any).message?.blocks || [];
   const withoutFeedback = currentBlocks.filter(
-    (b: any) => !(b.type === 'actions' && b.elements?.some((e: any) => e.action_id?.startsWith('show_sql_'))),
+    (b: any) =>
+      !(b.type === 'actions' && b.elements?.some((e: any) => e.action_id?.startsWith('thumbs_up_'))),
   );
   const sqlBlocks = buildSqlBlocks(ctx);
+
+  // Rebuild the feedback row with sqlShown=true so its SQL button reads
+  // "Hide SQL". Keep the result-shape-aware override set intact.
+  const [threadTs, statusMsgTs] = compoundKey.split('_');
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  const feedback = buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, true);
 
   await client.chat.update({
     channel,
     ts: messageTs,
     text: (body as any).message?.text || '',
-    blocks: [...withoutFeedback, ...sqlBlocks],
+    blocks: [...withoutFeedback, ...sqlBlocks, feedback],
   });
 });
 
-// "Hide SQL" toggle — removes the SQL panel and restores the feedback row.
+// "Hide SQL" toggle — removes the SQL panel and flips the feedback row's button
+// back to "Show SQL". The feedback row was already visible (additive design), so
+// we strip both the SQL section and the stale feedback row, then re-render the
+// feedback row in the hidden state.
 app.action(/hide_sql_.*/, async ({ action, ack, body, client }) => {
   await ack();
   const btn = action as { value?: string; action_id: string };
@@ -231,16 +245,19 @@ app.action(/hide_sql_.*/, async ({ action, ack, body, client }) => {
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
 
-  // Remove all SQL panel blocks by block_id prefix
+  // Remove the SQL panel (by block_id prefix) and the current feedback row.
   const currentBlocks: any[] = (body as any).message?.blocks || [];
   const withoutSql = currentBlocks.filter(
-    (b: any) => !b.block_id?.startsWith(SQL_BLOCK_PREFIX),
+    (b: any) =>
+      !b.block_id?.startsWith(SQL_BLOCK_PREFIX) &&
+      !(b.type === 'actions' && b.elements?.some((e: any) => e.action_id?.startsWith('thumbs_up_'))),
   );
 
-  // Re-add the feedback actions with the result-shape-aware override set.
+  // Re-add the feedback actions in the hidden state with the result-shape-aware
+  // override set.
   const [threadTs, statusMsgTs] = compoundKey.split('_');
   const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
-  withoutSql.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides));
+  withoutSql.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, false));
 
   await client.chat.update({
     channel,

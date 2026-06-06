@@ -99,6 +99,18 @@ describe('buildFeedbackActions', () => {
     expect(ids).not.toContain('override_csv_trace-123');
   });
 
+  it('renders the SQL toggle as "Hide SQL" when sqlShown is true (additive panel)', () => {
+    // When the SQL panel is open it sits above a still-visible feedback row, so
+    // the SQL button flips in place to the hide_sql_ action.
+    const block = buildFeedbackActions('trace-123', 'thread-1', 'status-1', {}, true);
+    const ids = block.elements.map((e) => (e as any).action_id);
+    expect(ids).toContain('hide_sql_trace-123');
+    expect(ids).not.toContain('show_sql_trace-123');
+    // The rest of the feedback row is unchanged.
+    expect(ids).toContain('thumbs_up_trace-123');
+    expect(ids).toContain('show_reasoning_trace-123');
+  });
+
   it('suppresses Table and CSV but keeps Summary when asked', () => {
     const block = buildFeedbackActions('trace-123', 'thread-1', 'status-1', {
       table: false,
