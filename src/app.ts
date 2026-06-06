@@ -11,10 +11,10 @@ import { registerCommands } from './handlers/commands.js';
 import { registerMentions } from './handlers/mentions.js';
 import {
   canMessageEventReachPipeline,
-  getImmediateHelpResponse,
   shouldRespond,
   checkClarificationReply,
 } from './handlers/messages.js';
+import { maybeHandleSlackIntake } from './handlers/slackIntake.js';
 import { checkEscalationResponse, resumeFromEscalation } from './handlers/escalationResponse.js';
 import { checkOverdueEscalations } from './handlers/escalationLifecycle.js';
 import { checkRateLimit } from './state/rateLimiter.js';
@@ -179,16 +179,17 @@ app.event('message', async ({ event, body, client }) => {
     if (!passed) return;
     lockHeld = true;
 
-    const immediateHelp = getImmediateHelpResponse(msg.text);
-    if (immediateHelp) {
-      await client.chat.postMessage({
-        channel: msg.channel,
-        thread_ts: threadTs,
-        text: immediateHelp,
-      });
+    const handledByIntake = await maybeHandleSlackIntake({
+      text: msg.text || '',
+      channel: msg.channel,
+      threadTs,
+      apiKey: config.gemini.apiKey,
+      client,
+      markVisible: () => markSlackEventVisible(eventId),
+      releaseLock: () => releaseThreadLock(threadTs),
+    });
+    if (handledByIntake) {
       visibleResponse = true;
-      await markSlackEventVisible(eventId).catch(() => {});
-      await releaseThreadLock(threadTs).catch(() => {});
       lockHeld = false;
       return;
     }

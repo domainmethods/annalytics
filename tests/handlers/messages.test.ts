@@ -13,7 +13,6 @@ import { botHasRepliedInThread } from '../../src/state/responseContext.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
 import {
   canMessageEventReachPipeline,
-  getImmediateHelpResponse,
   shouldRespond,
   checkClarificationReply,
 } from '../../src/handlers/messages.js';
@@ -82,21 +81,6 @@ describe('shouldRespond', () => {
       type: 'message',
     } as any);
     expect(result).toBe(false);
-  });
-});
-
-describe('getImmediateHelpResponse', () => {
-  it('returns a fast help response for short greetings and help prompts', () => {
-    expect(getImmediateHelpResponse('hi')).toContain('metric and timeframe');
-    expect(getImmediateHelpResponse('Hello!')).toContain('metric and timeframe');
-    expect(getImmediateHelpResponse('help')).toContain('metric and timeframe');
-    expect(getImmediateHelpResponse('what can you do?')).toContain('metric and timeframe');
-  });
-
-  it('does not intercept substantive analytics questions', () => {
-    expect(getImmediateHelpResponse('hi, show me leads last month')).toBeNull();
-    expect(getImmediateHelpResponse('show revenue by month')).toBeNull();
-    expect(getImmediateHelpResponse('why did traffic change?')).toBeNull();
   });
 });
 

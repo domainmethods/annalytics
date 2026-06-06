@@ -10,7 +10,7 @@ import {
   markSlackEventVisible,
   releaseSlackEventClaim,
 } from '../state/slackEventDedupe.js';
-import { getImmediateHelpResponse } from './messages.js';
+import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
 
 export function registerMentions(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
@@ -44,16 +44,17 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       if (!passed) return;
       lockHeld = true;
 
-      const immediateHelp = getImmediateHelpResponse(question);
-      if (immediateHelp) {
-        await client.chat.postMessage({
-          channel: event.channel,
-          thread_ts: threadTs,
-          text: immediateHelp,
-        });
+      const handledByIntake = await maybeHandleSlackIntake({
+        text: question,
+        channel: event.channel,
+        threadTs,
+        apiKey: config.gemini.apiKey,
+        client,
+        markVisible: () => markSlackEventVisible(eventId),
+        releaseLock: () => releaseThreadLock(threadTs),
+      });
+      if (handledByIntake) {
         visibleResponse = true;
-        await markSlackEventVisible(eventId).catch(() => {});
-        await releaseThreadLock(threadTs).catch(() => {});
         lockHeld = false;
         return;
       }
