@@ -24,7 +24,11 @@ const FALLBACK_RESULT: SlackIntakeResult = {
 };
 
 const MAX_RESPONSE_CHARS = 320;
-const INTAKE_TIMEOUT_MS = 2_000;
+// Flash structured-output latency for this classification is ~1.7-2.2s warm and
+// higher on a cold start. A 2s cap silently dropped real greetings into the
+// analytics pipeline (fail-open), so the timeout must clear that band with
+// headroom while still bounding a genuinely hung call.
+const INTAKE_TIMEOUT_MS = 8_000;
 
 export async function classifySlackIntake(
   text: string,

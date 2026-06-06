@@ -150,6 +150,28 @@ describe('classifySlackIntake', () => {
     });
   });
 
+  it('does not time out a typical Flash structured-output call under the default timeout', async () => {
+    // Real warm Flash latency for this call is ~1.7-2.2s and cold starts are
+    // slower; the default timeout must clear that band so greetings are not
+    // silently dropped into the analytics pipeline.
+    vi.useFakeTimers();
+    mockGenerateContent.mockReturnValue(new Promise((resolve) => {
+      setTimeout(() => resolve(modelText(JSON.stringify({
+        route: 'immediate_response',
+        responseText: 'Hi. Ask me an analytics question with a metric and timeframe.',
+        reasoning: 'Greeting.',
+      }))), 3000);
+    }));
+
+    const resultPromise = classifySlackIntake('hi', 'api-key'); // default timeout
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(resultPromise).resolves.toMatchObject({
+      route: 'immediate_response',
+      responseText: 'Hi. Ask me an analytics question with a metric and timeframe.',
+    });
+  });
+
   it('preserves conversational prose that incidentally contains select and from', async () => {
     mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
       route: 'immediate_response',
