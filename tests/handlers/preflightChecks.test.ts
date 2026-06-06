@@ -60,12 +60,21 @@ describe('preflightChecks', () => {
     expect(mockHasPendingClarification).not.toHaveBeenCalled();
   });
 
-  it('returns false and releases lock when pending clarification', async () => {
+  it('returns false, posts a nudge, and releases lock when pending clarification', async () => {
     mockHasPendingClarification.mockResolvedValue(true);
 
     const result = await preflightChecks('C123', '1234.5678', mockClient);
 
     expect(result).toBe(false);
+    // Must surface the block to the user — never a silent drop (a regression
+    // that left DMs unanswered while a clarification was open).
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123',
+        thread_ts: '1234.5678',
+        text: expect.stringContaining('earlier question'),
+      }),
+    );
     expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
     // Should not check escalation
     expect(mockGetEscalationByThread).not.toHaveBeenCalled();
