@@ -99,6 +99,25 @@ describe('preflightChecks', () => {
     expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
   });
 
+  it('releases the lock and propagates when the clarification guard throws', async () => {
+    // A Firestore blip after the lock is acquired must not leave the thread
+    // wedged: the caller only assumes lock ownership on a `true` return, so
+    // preflightChecks must release on the throw path itself.
+    mockHasPendingClarification.mockRejectedValue(new Error('Firestore error'));
+
+    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+  });
+
+  it('releases the lock and propagates when the escalation guard throws', async () => {
+    mockGetEscalationByThread.mockRejectedValue(new Error('Firestore error'));
+
+    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+  });
+
   it('returns true when escalation is expired (null returned)', async () => {
     // getEscalationByThread returns null for expired escalations
     mockGetEscalationByThread.mockResolvedValue(null);

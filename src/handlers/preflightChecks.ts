@@ -25,37 +25,49 @@ export async function preflightChecks(
     return false;
   }
 
-  // Guard 2: Pending clarification
-  //
-  // We reach here only when the incoming message was NOT recognized as the
-  // clarification reply (checkClarificationReply ran first and returned null) —
-  // e.g. a fresh top-level DM that arrives while an earlier clarifying question
-  // is still open. Returning false silently here left the user with no feedback
-  // at all (indistinguishable from the bot being down). Surface the block the
-  // same way Guards 1 and 3 do: a structured log plus a user-visible nudge.
-  const pendingClarification = await hasPendingClarification(threadTs);
-  if (pendingClarification) {
-    rootLogger.warn({ threadTs }, 'preflight.pending_clarification_block');
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
-    });
-    await releaseThreadLock(threadTs);
-    return false;
-  }
+  // From here on the lock is held. The caller (messageHandler) only assumes
+  // ownership of the lock once we return `true`, so any error thrown by a guard
+  // below would otherwise leak the lock for its full TTL and wedge the thread.
+  // Guarantee release on the throw path the same way the explicit `false`
+  // branches do — we own the lock until ownership transfers on `return true`.
+  try {
+    // Guard 2: Pending clarification
+    //
+    // We reach here only when the incoming message was NOT recognized as the
+    // clarification reply (checkClarificationReply ran first and returned null) —
+    // e.g. a fresh top-level DM that arrives while an earlier clarifying question
+    // is still open. Returning false silently here left the user with no feedback
+    // at all (indistinguishable from the bot being down). Surface the block the
+    // same way Guards 1 and 3 do: a structured log plus a user-visible nudge.
+    const pendingClarification = await hasPendingClarification(threadTs);
+    if (pendingClarification) {
+      rootLogger.warn({ threadTs }, 'preflight.pending_clarification_block');
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+      });
+      await releaseThreadLock(threadTs);
+      return false;
+    }
 
-  // Guard 3: Pending escalation
-  const pendingEscalation = await getEscalationByThread(threadTs);
-  if (pendingEscalation) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "I'm still waiting for the data team on your previous question.",
-    });
-    await releaseThreadLock(threadTs);
-    return false;
-  }
+    // Guard 3: Pending escalation
+    const pendingEscalation = await getEscalationByThread(threadTs);
+    if (pendingEscalation) {
+      await client.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: "I'm still waiting for the data team on your previous question.",
+      });
+      await releaseThreadLock(threadTs);
+      return false;
+    }
 
-  return true;
+    return true;
+  } catch (error) {
+    // A guard (Firestore read or Slack post) failed after the lock was acquired.
+    // Release before propagating so the thread is not wedged for the lock TTL.
+    await releaseThreadLock(threadTs).catch(() => {});
+    throw error;
+  }
 }
