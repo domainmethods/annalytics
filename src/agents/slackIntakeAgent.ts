@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import { getFlashModel } from './modelConfig.js';
+import { rootLogger } from '../logging.js';
 
 const SlackIntakeSchema = z.object({
   route: z.enum(['immediate_response', 'analytics_pipeline']),
@@ -30,14 +31,52 @@ const MAX_RESPONSE_CHARS = 320;
 // headroom while still bounding a genuinely hung call.
 const INTAKE_TIMEOUT_MS = 8_000;
 
+// Why a fail-open fallback fired. Logged as a structured reason code so a
+// timeout, a model/network error, a malformed payload, and a sanitize rejection
+// are distinguishable in production instead of all looking like a silent route
+// to the analytics pipeline. Never logged alongside user or response text.
+type IntakeFallbackReason =
+  | 'timeout'
+  | 'model_error'
+  | 'json_parse_error'
+  | 'schema_validation_error'
+  | 'sanitize_empty'
+  | 'sanitize_oversized'
+  | 'sanitize_unsafe'
+  | 'unexpected_error';
+
+// Correlation fields shared by every fallback log so a production entry can be
+// tied back to the originating Slack thread. Plain identifiers only — never the
+// message or response text.
+interface IntakeLogContext {
+  channel?: string;
+  threadTs?: string;
+}
+
+// Distinct error type so the catch can tell a timeout apart from a model/network
+// failure without string-matching the message.
+class IntakeTimeoutError extends Error {}
+
+function logIntakeFallback(
+  reason: IntakeFallbackReason,
+  meta: IntakeLogContext & { elapsedMs?: number; textLength?: number } = {},
+): void {
+  rootLogger.warn({ reason, ...meta }, 'intake.fallback');
+}
+
+
 export async function classifySlackIntake(
   text: string,
   apiKey: string,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number } & IntakeLogContext = {},
 ): Promise<SlackIntakeResult> {
+  const startTime = Date.now();
+  const context: IntakeLogContext = { channel: options.channel, threadTs: options.threadTs };
+
+  let response: { text?: string };
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const response = await withTimeout(
+    response = await withTimeout(
       ai.models.generateContent({
         model: getFlashModel(),
         contents: [{ role: 'user', parts: [{ text: buildPrompt(text) }] }],
@@ -48,10 +87,37 @@ export async function classifySlackIntake(
       }),
       options.timeoutMs ?? INTAKE_TIMEOUT_MS,
     );
+  } catch (error) {
+    const reason: IntakeFallbackReason =
+      error instanceof IntakeTimeoutError ? 'timeout' : 'model_error';
+    logIntakeFallback(reason, { ...context, elapsedMs: Date.now() - startTime });
+    return FALLBACK_RESULT;
+  }
 
-    const parsed = SlackIntakeSchema.parse(JSON.parse(response.text || '{}'));
-    return sanitizeResult(parsed);
+  const responseText = response.text ?? '';
+
+  let json: unknown;
+  try {
+    json = JSON.parse(responseText || '{}');
   } catch {
+    logIntakeFallback('json_parse_error', { ...context, textLength: responseText.length });
+    return FALLBACK_RESULT;
+  }
+
+  const validation = SlackIntakeSchema.safeParse(json);
+  if (!validation.success) {
+    logIntakeFallback('schema_validation_error', { ...context, textLength: responseText.length });
+    return FALLBACK_RESULT;
+  }
+
+  // sanitizeResult only operates on bounded primitives, so a throw here is not
+  // expected — but keep the never-throw / fail-open contract the caller relies
+  // on, and log it under a distinct reason rather than masking it as a model
+  // failure.
+  try {
+    return sanitizeResult(validation.data, context);
+  } catch {
+    logIntakeFallback('unexpected_error', { ...context, elapsedMs: Date.now() - startTime });
     return FALLBACK_RESULT;
   }
 }
@@ -81,7 +147,10 @@ For analytics_pipeline:
 Return only JSON matching the schema.`;
 }
 
-function sanitizeResult(result: SlackIntakeResult): SlackIntakeResult {
+function sanitizeResult(
+  result: SlackIntakeResult,
+  context: IntakeLogContext = {},
+): SlackIntakeResult {
   if (result.route === 'analytics_pipeline') {
     return {
       route: 'analytics_pipeline',
@@ -91,7 +160,16 @@ function sanitizeResult(result: SlackIntakeResult): SlackIntakeResult {
   }
 
   const responseText = result.responseText?.trim() ?? '';
-  if (!responseText || responseText.length > MAX_RESPONSE_CHARS || isUnsafeResponse(responseText)) {
+  if (!responseText) {
+    logIntakeFallback('sanitize_empty', { ...context, textLength: 0 });
+    return FALLBACK_RESULT;
+  }
+  if (responseText.length > MAX_RESPONSE_CHARS) {
+    logIntakeFallback('sanitize_oversized', { ...context, textLength: responseText.length });
+    return FALLBACK_RESULT;
+  }
+  if (isUnsafeResponse(responseText)) {
+    logIntakeFallback('sanitize_unsafe', { ...context, textLength: responseText.length });
     return FALLBACK_RESULT;
   }
 
@@ -130,7 +208,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('Slack intake timeout')), timeoutMs);
+        timeout = setTimeout(() => reject(new IntakeTimeoutError('Slack intake timeout')), timeoutMs);
       }),
     ]);
   } finally {

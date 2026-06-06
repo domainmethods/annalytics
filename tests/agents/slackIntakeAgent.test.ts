@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const mockGenerateContent = vi.fn();
+const { mockGenerateContent, mockWarn } = vi.hoisted(() => ({
+  mockGenerateContent: vi.fn(),
+  mockWarn: vi.fn(),
+}));
 
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
@@ -8,10 +11,23 @@ vi.mock('@google/genai', () => ({
   },
 }));
 
+vi.mock('../../src/logging.js', () => ({
+  rootLogger: { warn: mockWarn, debug: vi.fn(), info: vi.fn(), error: vi.fn() },
+  createLogger: () => ({ warn: mockWarn, debug: vi.fn(), info: vi.fn(), error: vi.fn() }),
+  createTraceId: () => 'test-trace',
+  logStage: vi.fn(),
+}));
+
 import { classifySlackIntake } from '../../src/agents/slackIntakeAgent.js';
 
 function modelText(text: string) {
   return { text };
+}
+
+// Pull the structured `reason` recorded by the single fallback log call.
+function loggedFallbackReason(): string | undefined {
+  const call = mockWarn.mock.calls.find((c) => c[1] === 'intake.fallback');
+  return call?.[0]?.reason;
 }
 
 describe('classifySlackIntake', () => {
@@ -90,6 +106,20 @@ describe('classifySlackIntake', () => {
     expect(result.route).toBe('analytics_pipeline');
     expect(result.responseText).toBeNull();
     expect(result.reasoning).toContain('fallback');
+    expect(loggedFallbackReason()).toBe('json_parse_error');
+  });
+
+  it('logs a schema_validation_error fallback when JSON does not match the schema', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'not_a_valid_route',
+      responseText: null,
+      reasoning: 'Schema mismatch.',
+    })));
+
+    const result = await classifySlackIntake('hi', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('schema_validation_error');
   });
 
   it('falls back when immediate response text is empty', async () => {
@@ -102,6 +132,20 @@ describe('classifySlackIntake', () => {
     const result = await classifySlackIntake('hello', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_empty');
+  });
+
+  it('logs a sanitize_oversized fallback when the immediate response exceeds the cap', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'a'.repeat(321),
+      reasoning: 'Too long.',
+    })));
+
+    const result = await classifySlackIntake('hi', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_oversized');
   });
 
   it('falls back when immediate response text contains unsafe implementation details', async () => {
@@ -114,6 +158,7 @@ describe('classifySlackIntake', () => {
     const result = await classifySlackIntake('help', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_unsafe');
   });
 
   it('falls back when immediate response text contains a project identifier', async () => {
@@ -126,6 +171,7 @@ describe('classifySlackIntake', () => {
     const result = await classifySlackIntake('help', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_unsafe');
   });
 
   it('falls back on rejected model calls', async () => {
@@ -135,6 +181,7 @@ describe('classifySlackIntake', () => {
 
     expect(result.route).toBe('analytics_pipeline');
     expect(result.responseText).toBeNull();
+    expect(loggedFallbackReason()).toBe('model_error');
   });
 
   it('falls back when the intake call times out', async () => {
@@ -148,6 +195,7 @@ describe('classifySlackIntake', () => {
       route: 'analytics_pipeline',
       responseText: null,
     });
+    expect(loggedFallbackReason()).toBe('timeout');
   });
 
   it('does not time out a typical Flash structured-output call under the default timeout', async () => {
@@ -195,6 +243,7 @@ describe('classifySlackIntake', () => {
     const result = await classifySlackIntake('help', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_unsafe');
   });
 
   it('falls back when immediate response text contains inline SQL over a qualified table', async () => {
@@ -207,6 +256,75 @@ describe('classifySlackIntake', () => {
     const result = await classifySlackIntake('help', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
+    expect(loggedFallbackReason()).toBe('sanitize_unsafe');
+  });
+
+  it('does not log a fallback on a successful immediate response', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'Hi. Ask me an analytics question with a metric and timeframe.',
+      reasoning: 'Greeting.',
+    })));
+
+    await classifySlackIntake('hi', 'api-key');
+
+    expect(loggedFallbackReason()).toBeUndefined();
+  });
+
+  it('does not log a fallback when routing a substantive question to the pipeline', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'analytics_pipeline',
+      responseText: null,
+      reasoning: 'Data question.',
+    })));
+
+    await classifySlackIntake('show leads last month by channel', 'api-key');
+
+    expect(loggedFallbackReason()).toBeUndefined();
+  });
+
+  it('never logs raw message or response text in fallback metadata', async () => {
+    const leakyResponse = 'I will use dbt and File Search to inspect project.dataset.table.';
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: leakyResponse,
+      reasoning: 'Unsafe.',
+    })));
+
+    await classifySlackIntake('a sensitive user question', 'api-key');
+
+    for (const [meta] of mockWarn.mock.calls) {
+      const serialized = JSON.stringify(meta);
+      expect(serialized).not.toContain(leakyResponse);
+      expect(serialized).not.toContain('sensitive user question');
+      
+      // Ensure only allowed keys are present in the warning metadata.
+      const allowedKeys = new Set(['reason', 'textLength', 'channel', 'threadTs', 'elapsedMs']);
+      for (const key of Object.keys(meta)) {
+        expect(allowedKeys.has(key)).toBe(true);
+      }
+    }
+  });
+
+  it('correlates fallback logs with channel and threadTs when provided', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: '',
+      reasoning: 'Empty response.',
+    })));
+
+    await classifySlackIntake('hello', 'api-key', {
+      channel: 'C12345',
+      threadTs: '12345.67890',
+    });
+
+    const call = mockWarn.mock.calls.find((c) => c[1] === 'intake.fallback');
+    expect(call).toBeDefined();
+    expect(call![0]).toMatchObject({
+      reason: 'sanitize_empty',
+      channel: 'C12345',
+      threadTs: '12345.67890',
+    });
   });
 
   it('uses GEMINI_FLASH_MODEL when configured', async () => {

@@ -12,7 +12,10 @@ interface MaybeHandleSlackIntakeOptions {
 }
 
 export async function maybeHandleSlackIntake(options: MaybeHandleSlackIntakeOptions): Promise<boolean> {
-  const result = await classifySlackIntake(options.text, options.apiKey);
+  const result = await classifySlackIntake(options.text, options.apiKey, {
+    channel: options.channel,
+    threadTs: options.threadTs,
+  });
   if (result.route !== 'immediate_response' || !result.responseText) return false;
 
   await options.client.chat.postMessage({
