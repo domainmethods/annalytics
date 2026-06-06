@@ -424,6 +424,30 @@ function documentsToDeleteForConvergence(
   });
 }
 
+function documentsToDeleteBeforeUpload(
+  documents: FileSearchDocumentReadback[],
+  displayNames: Set<string>,
+  displayNamePrefix?: string,
+): FileSearchDocumentReadback[] {
+  return documents.filter(document =>
+    Boolean(document.name)
+    && Boolean(document.displayName)
+    && displayNames.has(document.displayName!)
+    && isManagedDocument(document, displayNamePrefix),
+  );
+}
+
+function groupedDisplayNameIssues(documents: FileSearchDocumentReadback[]): string {
+  const counts = new Map<string, number>();
+  for (const document of documents) {
+    const displayName = document.displayName ?? '<missing displayName>';
+    counts.set(displayName, (counts.get(displayName) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([displayName, count]) => `${displayName} (${count})`)
+    .join(', ');
+}
+
 function convergenceStatus(
   documents: FileSearchDocumentReadback[],
   retainedTargets: UploadedDocumentTarget[],
@@ -556,6 +580,73 @@ async function cleanupReplacedFiles(
   };
 }
 
+async function cleanupExistingDocumentsBeforeUpload(
+  ai: GoogleGenAI,
+  fileSearchStoreName: string,
+  documents: FileSearchDocument[],
+  options: ResolvedSyncOptions,
+): Promise<{ deleted: number; errors: string[] }> {
+  const displayNames = new Set(documents.map(document => document.displayName));
+  const deletedNames = new Set<string>();
+  let lastIssues = '';
+  let lastListError: unknown;
+
+  for (let attempt = 1; attempt <= options.cleanupPollAttempts; attempt++) {
+    let readback: FileSearchDocumentReadback[];
+    try {
+      readback = await listFileSearchDocuments(ai, fileSearchStoreName);
+      lastListError = undefined;
+    } catch (err) {
+      lastListError = err;
+      if (attempt < options.cleanupPollAttempts) {
+        await options.sleep(options.cleanupPollIntervalMs);
+        continue;
+      }
+      break;
+    }
+
+    const staleDocuments = documentsToDeleteBeforeUpload(
+      readback,
+      displayNames,
+      options.deleteDisplayNamePrefix,
+    );
+    if (staleDocuments.length === 0) {
+      return { deleted: deletedNames.size, errors: [] };
+    }
+
+    lastIssues = groupedDisplayNameIssues(staleDocuments);
+    for (const document of staleDocuments) {
+      if (!document.name) continue;
+      try {
+        await ai.fileSearchStores.documents.delete({
+          name: document.name,
+          config: { force: true },
+        });
+        deletedNames.add(document.name);
+      } catch {
+        // Final pre-upload readback determines whether cleanup succeeded.
+      }
+    }
+
+    if (attempt < options.cleanupPollAttempts) {
+      await options.sleep(options.cleanupPollIntervalMs);
+    }
+  }
+
+  if (lastListError) {
+    return {
+      deleted: deletedNames.size,
+      errors: [`File Search pre-upload cleanup failed: ${errorText(lastListError)}`],
+    };
+  }
+  return {
+    deleted: deletedNames.size,
+    errors: [
+      `File Search pre-upload cleanup did not converge: ${lastIssues || 'managed documents remained before upload'}`,
+    ],
+  };
+}
+
 export async function syncMarkdownDocumentsToFileSearch(
   documents: FileSearchDocument[],
   fileSearchStoreName: string,
@@ -571,6 +662,16 @@ export async function syncMarkdownDocumentsToFileSearch(
   const documentsByDisplayName = new Map(
     documents.map(document => [document.displayName, document]),
   );
+
+  const preUploadCleanup = await cleanupExistingDocumentsBeforeUpload(
+    ai,
+    fileSearchStoreName,
+    documents,
+    resolvedOptions,
+  );
+  result.deleted += preUploadCleanup.deleted;
+  result.errors.push(...preUploadCleanup.errors);
+  if (result.errors.length > 0) return result;
 
   for (const document of documents) {
     try {
@@ -649,7 +750,7 @@ export async function syncMarkdownDocumentsToFileSearch(
       resolvedOptions,
     );
     result.active = cleanup.active;
-    result.deleted = cleanup.deleted;
+    result.deleted += cleanup.deleted;
     result.errors.push(...cleanup.errors);
   }
 
