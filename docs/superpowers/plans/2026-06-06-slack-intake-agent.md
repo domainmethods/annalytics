@@ -29,7 +29,7 @@
 - Modify `src/handlers/mentions.ts`
   - Use `maybeHandleSlackIntake()` in app mention handler after preflight, before posting status.
 - Modify `src/handlers/commands.ts`
-  - Use `maybeHandleSlashCommandIntake()` before posting status.
+  - Use `maybeHandleSlackIntake()` before posting status.
 
 ## Task 1: Add The Flash Slack Intake Agent
 
@@ -42,7 +42,7 @@
 Create `tests/agents/slackIntakeAgent.test.ts`:
 
 ```ts
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockGenerateContent = vi.fn();
 
@@ -62,6 +62,10 @@ describe('classifySlackIntake', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('returns a model-generated immediate response for a greeting', async () => {
@@ -156,6 +160,18 @@ describe('classifySlackIntake', () => {
     expect(result.route).toBe('analytics_pipeline');
   });
 
+  it('falls back when immediate response text contains a project identifier', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'I can query project alpha-prod-123456 for you.',
+      reasoning: 'Unsafe project identifier.',
+    })));
+
+    const result = await classifySlackIntake('help', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+  });
+
   it('falls back on rejected model calls', async () => {
     mockGenerateContent.mockRejectedValue(new Error('Gemini unavailable'));
 
@@ -163,6 +179,19 @@ describe('classifySlackIntake', () => {
 
     expect(result.route).toBe('analytics_pipeline');
     expect(result.responseText).toBeNull();
+  });
+
+  it('falls back when the intake call times out', async () => {
+    vi.useFakeTimers();
+    mockGenerateContent.mockReturnValue(new Promise(() => {}));
+
+    const resultPromise = classifySlackIntake('hi', 'api-key', { timeoutMs: 10 });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(resultPromise).resolves.toMatchObject({
+      route: 'analytics_pipeline',
+      responseText: null,
+    });
   });
 
   it('uses GEMINI_FLASH_MODEL when configured', async () => {
@@ -297,8 +326,9 @@ function sanitizeResult(result: SlackIntakeResult): SlackIntakeResult {
 
 function isUnsafeResponse(text: string): boolean {
   const lower = text.toLowerCase();
-  if (lower.includes('dbt') || lower.includes('file search')) return true;
+  if (['dbt', 'file search', 'gemini', 'firestore', 'cloud run', 'secret manager'].some((term) => lower.includes(term))) return true;
   if (text.includes('```') || /\bselect\b.+\bfrom\b/is.test(text)) return true;
+  if (/\bproject\s+[a-z][a-z0-9-]{4,}-\d{3,}\b/i.test(text)) return true;
   if (/\b[a-z][\w-]+\.[a-z][\w-]+\.[a-z][\w-]+\b/i.test(text)) return true;
   if (/\b[a-z][\w-]+\.[a-z][\w-]+\b/i.test(text) && lower.includes('table')) return true;
   return false;
@@ -327,7 +357,7 @@ Run:
 npx vitest run tests/agents/slackIntakeAgent.test.ts
 ```
 
-Expected: PASS, 9 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Commit the agent**
 
