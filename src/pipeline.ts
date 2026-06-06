@@ -48,6 +48,7 @@ export interface PipelineConfig {
     channelId?: string;
     analystUserId?: string;
     timeoutHours: number;
+    onNegativeFeedback?: boolean;
   };
 }
 
@@ -76,6 +77,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
       channelId: config.escalation.channelId,
       analystUserId: config.escalation.analystUserId,
       timeoutHours: config.escalation.timeoutHours,
+      onNegativeFeedback: config.escalation.onNegativeFeedback,
     },
   };
 }
@@ -534,7 +536,7 @@ function extractModelName(question: string): string | null {
   return null;
 }
 
-function resolveEscalationTarget(
+export function resolveEscalationTarget(
   escalation?: PipelineConfig['escalation'],
 ): string | null {
   if (!escalation) return null;

@@ -67,7 +67,7 @@ export interface EscalationState {
   originalThreadTs: string;
   originalChannel: string;
   pipelineState: 'awaiting_human' | 'resolved' | 'timed_out';
-  trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity' | 'quality_loop_exhausted';
+  trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity' | 'quality_loop_exhausted' | 'user_negative_feedback';
   behavior: 'best_effort_verify' | 'park_wait';
   stageToResume: 'sql_generation' | 'supervisor_review';
   context: {
@@ -77,6 +77,8 @@ export interface EscalationState {
     previousSql?: string;
     supervisorNotes?: string;
     ambiguityDescription?: string;
+    feedbackReason?: string;
+    feedbackUserId?: string;
   };
   escalationChannel: string;
   escalationTs: string;

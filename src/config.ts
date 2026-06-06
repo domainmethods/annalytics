@@ -30,6 +30,7 @@ export interface AppConfig {
     analystUserId?: string;
     reminderIntervalMinutes: number;
     timeoutHours: number;
+    onNegativeFeedback: boolean;
   };
   port: number;
 }
@@ -46,6 +47,17 @@ function parseEnvInt(name: string, defaultVal: number): number {
   const parsed = Number(val);
   if (Number.isNaN(parsed)) throw new Error(`Invalid config: ${name} must be a number, got "${val}"`);
   return parsed;
+}
+
+function parseEnvBool(name: string, defaultVal: boolean): boolean {
+  const val = process.env[name];
+  if (val === undefined || val === '') return defaultVal;
+  // Tolerate trailing whitespace / casing from the OS env so a stray
+  // ESCALATION_ON_NEGATIVE_FEEDBACK="true " doesn't fail boot.
+  const clean = val.trim().toLowerCase();
+  if (clean === 'true') return true;
+  if (clean === 'false') return false;
+  throw new Error(`Invalid config: ${name} must be "true" or "false", got "${val}"`);
 }
 
 function parseEscalationMode(val: string | undefined): 'channel' | 'dm' {
@@ -85,6 +97,7 @@ export function loadConfig(): AppConfig {
       analystUserId: process.env.ESCALATION_ANALYST_USER_ID || undefined,
       reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30),
       timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4),
+      onNegativeFeedback: parseEnvBool('ESCALATION_ON_NEGATIVE_FEEDBACK', true),
     },
     port: parseEnvInt('PORT', 3000),
   };
