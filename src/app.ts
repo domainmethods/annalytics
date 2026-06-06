@@ -11,6 +11,7 @@ import { registerCommands } from './handlers/commands.js';
 import { registerMentions } from './handlers/mentions.js';
 import {
   canMessageEventReachPipeline,
+  getImmediateHelpResponse,
   shouldRespond,
   checkClarificationReply,
 } from './handlers/messages.js';
@@ -177,6 +178,20 @@ app.event('message', async ({ event, body, client }) => {
     const passed = await preflightChecks(msg.channel, threadTs, client);
     if (!passed) return;
     lockHeld = true;
+
+    const immediateHelp = getImmediateHelpResponse(msg.text);
+    if (immediateHelp) {
+      await client.chat.postMessage({
+        channel: msg.channel,
+        thread_ts: threadTs,
+        text: immediateHelp,
+      });
+      visibleResponse = true;
+      await markSlackEventVisible(eventId).catch(() => {});
+      await releaseThreadLock(threadTs).catch(() => {});
+      lockHeld = false;
+      return;
+    }
 
     const statusMsg = await client.chat.postMessage({
       channel: msg.channel,

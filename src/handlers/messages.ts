@@ -49,6 +49,33 @@ export function canMessageEventReachPipeline(event: MessageEvent): boolean {
   return isDirectMessageSurface(event) || Boolean(event.thread_ts);
 }
 
+const IMMEDIATE_HELP_RESPONSE = [
+  'Hi. I can help answer analytics questions from your modeled data.',
+  'Ask with a metric and timeframe. If useful, include a grouping or filter.',
+].join(' ');
+
+export function getImmediateHelpResponse(text: string | undefined): string | null {
+  const normalized = (text || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.]+$/g, '')
+    .replace(/\s+/g, ' ');
+
+  if (!normalized) return IMMEDIATE_HELP_RESPONSE;
+
+  const immediatePrompts = new Set([
+    'hi',
+    'hello',
+    'hey',
+    'help',
+    '/help',
+    'what can you do',
+    'what can you help with',
+  ]);
+
+  return immediatePrompts.has(normalized) ? IMMEDIATE_HELP_RESPONSE : null;
+}
+
 export async function shouldRespond(event: MessageEvent): Promise<boolean> {
   // Always respond in DMs
   if (isDirectMessageSurface(event)) return true;

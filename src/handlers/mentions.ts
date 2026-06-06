@@ -10,6 +10,7 @@ import {
   markSlackEventVisible,
   releaseSlackEventClaim,
 } from '../state/slackEventDedupe.js';
+import { getImmediateHelpResponse } from './messages.js';
 import { preflightChecks } from './preflightChecks.js';
 
 export function registerMentions(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
@@ -22,6 +23,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
 
     const config = getConfig();
     const threadTs = event.thread_ts || event.ts;
+    const question = event.text.replace(/<@[A-Z0-9]+>/g, '').trim();
 
     try {
       // Rate limit check
@@ -42,6 +44,20 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       if (!passed) return;
       lockHeld = true;
 
+      const immediateHelp = getImmediateHelpResponse(question);
+      if (immediateHelp) {
+        await client.chat.postMessage({
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: immediateHelp,
+        });
+        visibleResponse = true;
+        await markSlackEventVisible(eventId).catch(() => {});
+        await releaseThreadLock(threadTs).catch(() => {});
+        lockHeld = false;
+        return;
+      }
+
       const statusMsg = await client.chat.postMessage({
         channel: event.channel,
         thread_ts: threadTs,
@@ -53,7 +69,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       lockHeld = false;
 
       await runPipeline({
-        question: event.text.replace(/<@[A-Z0-9]+>/g, '').trim(), // strip @mention
+        question,
         channel: event.channel,
         threadTs,
         statusMsgTs,

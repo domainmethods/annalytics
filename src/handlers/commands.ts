@@ -6,6 +6,7 @@ import { releaseThreadLock } from '../state/threadLock.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { createTraceId } from '../logging.js';
+import { getImmediateHelpResponse } from './messages.js';
 import { preflightChecks } from './preflightChecks.js';
 
 export function registerCommands(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
@@ -21,6 +22,15 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       await client.chat.postMessage({
         channel: command.channel_id,
         text: `You've hit the query limit (${config.limits.rateLimitPerHour}/hour). Resets in ${rateCheck.retryAfterMinutes} minutes.`,
+      });
+      return;
+    }
+
+    const immediateHelp = getImmediateHelpResponse(command.text);
+    if (immediateHelp) {
+      await client.chat.postMessage({
+        channel: command.channel_id,
+        text: immediateHelp,
       });
       return;
     }
