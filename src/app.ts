@@ -14,6 +14,9 @@ import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningB
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
+import { promptFeedbackReason, handleFeedbackReason } from './handlers/feedbackEscalation.js';
+import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
+import { FEEDBACK_REASON_PREFIX } from './slack/feedbackBlocks.js';
 import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
@@ -90,7 +93,7 @@ registerMentions(app, getConfig, getTables);
 registerMessageHandler(app, getConfig, getTables);
 
 // Feedback button handlers — record to Firestore
-app.action(/thumbs_(up|down)_.*/, async ({ action, ack, body }) => {
+app.action(/thumbs_(up|down)_.*/, async ({ action, ack, body, client }) => {
   await ack();
   const btn = action as { value?: string; action_id: string };
   const traceId = btn.value;
@@ -103,6 +106,49 @@ app.action(/thumbs_(up|down)_.*/, async ({ action, ack, body }) => {
   if (threadTs && messageTs) {
     await recordFeedback(threadTs, messageTs, feedbackType as 'positive' | 'negative');
   }
+
+  // On 👎, offer the reason prompt only when negative-feedback escalation is
+  // enabled AND an escalation target actually resolves — using the same resolver
+  // the handler uses, so we never prompt when escalation couldn't fire (e.g.
+  // mode=channel with only an analyst DM id set). No target ⇒ record-only, per
+  // the design's on-by-default decision.
+  const feedbackEscalationTarget = config.escalation.onNegativeFeedback
+    ? resolveEscalationTarget(toPipelineConfig(config).escalation)
+    : null;
+  if (feedbackType === 'negative' && threadTs && messageTs && feedbackEscalationTarget) {
+    const channel = (body as any).channel?.id;
+    if (channel) {
+      await promptFeedbackReason({
+        client,
+        channel,
+        userId: body.user.id,
+        threadTs,
+        statusMsgTs: messageTs,
+      });
+    }
+  }
+});
+
+// Reason selected on the ephemeral 👎 prompt — route to escalate/refine/record.
+app.action(new RegExp(`^${FEEDBACK_REASON_PREFIX}.*`), async ({ action, ack, body, client, respond }) => {
+  await ack();
+  const btn = action as { value?: string; action_id: string };
+  const compoundKey = btn.value;
+  if (!compoundKey) return;
+
+  const reasonId = btn.action_id.slice(FEEDBACK_REASON_PREFIX.length);
+  const channel = (body as any).channel?.id;
+  if (!channel) return;
+
+  await handleFeedbackReason({
+    reasonId,
+    compoundKey,
+    userId: body.user.id,
+    channel,
+    client,
+    respond,
+    config: toPipelineConfig(config),
+  });
 });
 
 // "Wrong assumptions? Click to refine" button handler
