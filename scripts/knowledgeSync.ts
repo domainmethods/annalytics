@@ -98,6 +98,11 @@ export async function runKnowledgeSync(
   if (result.errors.length > 0) {
     throw new Error(`Sync errors:\n${result.errors.map(error => `- ${error}`).join('\n')}`);
   }
+  if (result.uploaded !== result.verified || result.verified !== result.active) {
+    throw new Error(
+      `File Search sync did not converge: uploaded=${result.uploaded}, verified=${result.verified}, active=${result.active}`,
+    );
+  }
 
   const summaries = buildKnowledgeSummaries(teachings, referenceCards);
   const projectId = env.GCP_PROJECT_ID;

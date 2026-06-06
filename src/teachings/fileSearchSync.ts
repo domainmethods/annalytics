@@ -41,6 +41,7 @@ export async function syncTeachingsToFileSearch(
 
 export interface SyncMarkdownDocumentsOptions {
   deleteDisplayNamePrefix?: string;
+  managedDisplayNamePrefixes?: string[];
   maxUploadAttempts?: number;
   uploadRetryBaseDelayMs?: number;
   operationPollAttempts?: number;
@@ -58,7 +59,7 @@ type FileSearchUploadOperation = Awaited<
 >;
 
 interface ResolvedSyncOptions {
-  deleteDisplayNamePrefix?: string;
+  managedDisplayNamePrefixes: string[];
   maxUploadAttempts: number;
   uploadRetryBaseDelayMs: number;
   operationPollAttempts: number;
@@ -78,6 +79,7 @@ const transientStatuses = [
   'DEADLINE_EXCEEDED',
   'RESOURCE_EXHAUSTED',
 ];
+const defaultManagedDisplayNamePrefixes = ['teaching:', 'reference_card:'];
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -85,7 +87,9 @@ function defaultSleep(ms: number): Promise<void> {
 
 function resolveOptions(options: SyncMarkdownDocumentsOptions): ResolvedSyncOptions {
   return {
-    deleteDisplayNamePrefix: options.deleteDisplayNamePrefix,
+    managedDisplayNamePrefixes: options.deleteDisplayNamePrefix
+      ? [options.deleteDisplayNamePrefix]
+      : options.managedDisplayNamePrefixes ?? defaultManagedDisplayNamePrefixes,
     maxUploadAttempts: options.maxUploadAttempts ?? 4,
     uploadRetryBaseDelayMs: options.uploadRetryBaseDelayMs ?? 1000,
     operationPollAttempts: options.operationPollAttempts ?? 20,
@@ -371,10 +375,11 @@ async function verifyActiveDocuments(
 
 function isManagedDocument(
   document: FileSearchDocumentReadback,
-  displayNamePrefix?: string,
+  managedDisplayNamePrefixes: readonly string[],
 ): boolean {
-  if (!displayNamePrefix) return true;
-  return Boolean(document.displayName?.startsWith(displayNamePrefix));
+  return managedDisplayNamePrefixes.some(prefix =>
+    Boolean(document.displayName?.startsWith(prefix)),
+  );
 }
 
 function retainedDocumentNames(
@@ -406,7 +411,7 @@ function retainedDocumentNames(
 function documentsToDeleteForConvergence(
   documents: FileSearchDocumentReadback[],
   retainedTargets: UploadedDocumentTarget[],
-  displayNamePrefix?: string,
+  managedDisplayNamePrefixes: readonly string[],
 ): FileSearchDocumentReadback[] {
   const targetsByDisplayName = new Map(
     retainedTargets.map(target => [target.displayName, target]),
@@ -415,7 +420,7 @@ function documentsToDeleteForConvergence(
 
   return documents.filter(document => {
     if (!document.name) return false;
-    if (!isManagedDocument(document, displayNamePrefix)) return false;
+    if (!isManagedDocument(document, managedDisplayNamePrefixes)) return false;
     const target = document.displayName
       ? targetsByDisplayName.get(document.displayName)
       : undefined;
@@ -427,13 +432,13 @@ function documentsToDeleteForConvergence(
 function documentsToDeleteBeforeUpload(
   documents: FileSearchDocumentReadback[],
   displayNames: Set<string>,
-  displayNamePrefix?: string,
+  managedDisplayNamePrefixes: readonly string[],
 ): FileSearchDocumentReadback[] {
   return documents.filter(document =>
     Boolean(document.name)
     && Boolean(document.displayName)
     && displayNames.has(document.displayName!)
-    && isManagedDocument(document, displayNamePrefix),
+    && isManagedDocument(document, managedDisplayNamePrefixes),
   );
 }
 
@@ -451,7 +456,7 @@ function groupedDisplayNameIssues(documents: FileSearchDocumentReadback[]): stri
 function convergenceStatus(
   documents: FileSearchDocumentReadback[],
   retainedTargets: UploadedDocumentTarget[],
-  displayNamePrefix?: string,
+  managedDisplayNamePrefixes: readonly string[],
 ): { active: number; issues: string[] } {
   const issues: string[] = [];
   const retainedNames = retainedDocumentNames(documents, retainedTargets);
@@ -495,7 +500,7 @@ function convergenceStatus(
   }
 
   const extraManagedDocuments = documents.filter(document => {
-    if (!isManagedDocument(document, displayNamePrefix)) return false;
+    if (!isManagedDocument(document, managedDisplayNamePrefixes)) return false;
     return !document.displayName || !targetsByDisplayName.has(document.displayName);
   });
   if (extraManagedDocuments.length > 0) {
@@ -533,7 +538,7 @@ async function cleanupReplacedFiles(
     const deletions = documentsToDeleteForConvergence(
       documents,
       retainedTargets,
-      options.deleteDisplayNamePrefix,
+      options.managedDisplayNamePrefixes,
     );
     for (const document of deletions) {
       if (!document.name) continue;
@@ -551,7 +556,7 @@ async function cleanupReplacedFiles(
     const status = convergenceStatus(
       documents,
       retainedTargets,
-      options.deleteDisplayNamePrefix,
+      options.managedDisplayNamePrefixes,
     );
     lastIssues = status.issues;
     lastActive = status.active;
@@ -608,7 +613,7 @@ async function cleanupExistingDocumentsBeforeUpload(
     const staleDocuments = documentsToDeleteBeforeUpload(
       readback,
       displayNames,
-      options.deleteDisplayNamePrefix,
+      options.managedDisplayNamePrefixes,
     );
     if (staleDocuments.length === 0) {
       return { deleted: deletedNames.size, errors: [] };
