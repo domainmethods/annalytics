@@ -17,6 +17,7 @@ import {
   buildZeroRowBlocks,
   buildTruncatedBlocks,
   buildFeedbackActions,
+  overrideButtonsForResultShape,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
 import { saveClarificationState } from './state/clarificationState.js';
@@ -570,10 +571,16 @@ function buildResponseBlocks(
 
   const MAX_DISPLAY_ROWS = 20;
 
+  // Which override buttons this result shape warrants — single source of truth
+  // shared with the toggle-restore handlers in app.ts. The raw SQL is no longer
+  // rendered inline in any branch; it is revealed on demand via the "Show SQL"
+  // toggle that buildFeedbackActions always includes.
+  const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
+
   switch (format) {
     case 'single_value': {
       const value = String(Object.values(result.rows[0])[0]);
-      return [...assumptionBlocks, ...buildSingleValueBlocks(value, gen.explanation, gen.sql, traceId, threadTs, statusMsgTs)];
+      return [...assumptionBlocks, ...buildSingleValueBlocks(value, gen.explanation, traceId, threadTs, statusMsgTs, overrides)];
     }
     case 'table':
     case 'wide_table':
@@ -584,22 +591,23 @@ function buildResponseBlocks(
         ...assumptionBlocks,
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
-        { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${gen.sql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(traceId, threadTs, statusMsgTs),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     }
     case 'zero_rows':
+      // No rows came back, so Table/Summary/CSV have nothing to render, explain,
+      // or export (overrideButtonsForResultShape suppresses all three). Feedback
+      // and the detail toggles stay — Reasoning/Show SQL answer "why no results?"
       return [
         ...assumptionBlocks,
-        ...buildZeroRowBlocks(gen.assumptions, gen.sql),
-        buildFeedbackActions(traceId, threadTs, statusMsgTs),
+        ...buildZeroRowBlocks(gen.assumptions),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     default:
       return [
         ...assumptionBlocks,
         { type: 'section', text: { type: 'mrkdwn', text: gen.explanation } } as KnownBlock,
-        { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${gen.sql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(traceId, threadTs, statusMsgTs),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
   }
 }

@@ -11,7 +11,8 @@ import { registerMentions } from './handlers/mentions.js';
 import { registerMessageHandler } from './handlers/messageHandler.js';
 import { recordFeedback, getResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
-import { buildFeedbackActions } from './slack/blocks.js';
+import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
+import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
 import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
@@ -169,15 +170,83 @@ app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
     (b: any) => !b.block_id?.startsWith(REASONING_BLOCK_PREFIX),
   );
 
-  // Re-add the feedback actions with show_reasoning button
+  // Re-add the feedback actions with show_reasoning/show_sql buttons. Rebuild
+  // the override set from the persisted result shape so we don't resurrect
+  // buttons the original answer suppressed (e.g. Table/CSV on a zero-row result).
   const [threadTs, statusMsgTs] = compoundKey.split('_');
-  withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs));
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides));
 
   await client.chat.update({
     channel,
     ts: messageTs,
     text: (body as any).message?.text || '',
     blocks: withoutReasoning,
+  });
+});
+
+// "Show SQL" toggle — appends the SQL panel to the message. Mirrors the
+// reasoning toggle: the feedback row (which holds the Show SQL button) is
+// swapped out for the SQL panel, which carries its own "Hide SQL" button. The
+// SQL is read from persisted ResponseContext — no re-query.
+app.action(/show_sql_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string; action_id: string };
+  const compoundKey = btn.value; // threadTs_statusMsgTs
+  if (!compoundKey) return;
+
+  const ctx = await getResponseContext(compoundKey);
+  if (!ctx) return;
+
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+
+  // Remove the feedback actions block that contains the show_sql button
+  const currentBlocks: any[] = (body as any).message?.blocks || [];
+  const withoutFeedback = currentBlocks.filter(
+    (b: any) => !(b.type === 'actions' && b.elements?.some((e: any) => e.action_id?.startsWith('show_sql_'))),
+  );
+  const sqlBlocks = buildSqlBlocks(ctx);
+
+  await client.chat.update({
+    channel,
+    ts: messageTs,
+    text: (body as any).message?.text || '',
+    blocks: [...withoutFeedback, ...sqlBlocks],
+  });
+});
+
+// "Hide SQL" toggle — removes the SQL panel and restores the feedback row.
+app.action(/hide_sql_.*/, async ({ action, ack, body, client }) => {
+  await ack();
+  const btn = action as { value?: string; action_id: string };
+  const compoundKey = btn.value; // threadTs_statusMsgTs
+  if (!compoundKey) return;
+
+  const ctx = await getResponseContext(compoundKey);
+  if (!ctx) return;
+
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!channel || !messageTs) return;
+
+  // Remove all SQL panel blocks by block_id prefix
+  const currentBlocks: any[] = (body as any).message?.blocks || [];
+  const withoutSql = currentBlocks.filter(
+    (b: any) => !b.block_id?.startsWith(SQL_BLOCK_PREFIX),
+  );
+
+  // Re-add the feedback actions with the result-shape-aware override set.
+  const [threadTs, statusMsgTs] = compoundKey.split('_');
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  withoutSql.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides));
+
+  await client.chat.update({
+    channel,
+    ts: messageTs,
+    text: (body as any).message?.text || '',
+    blocks: withoutSql,
   });
 });
 

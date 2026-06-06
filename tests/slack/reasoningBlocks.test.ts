@@ -102,13 +102,15 @@ describe('buildFeedbackActions with reasoning toggle and overrides', () => {
   it('includes reasoning and override buttons alongside thumbs up/down', () => {
     const block = buildFeedbackActions('trace-xyz', 'thread-1', 'status-1');
     expect(block.type).toBe('actions');
-    expect(block.elements).toHaveLength(6);
+    expect(block.elements).toHaveLength(7);
     expect(block.elements[0].action_id).toContain('thumbs_up');
     expect(block.elements[1].action_id).toContain('thumbs_down');
     expect(block.elements[2].action_id).toBe('show_reasoning_trace-xyz');
     expect((block.elements[2] as any).value).toBe('thread-1_status-1');
-    expect(block.elements[3].action_id).toBe('override_table_trace-xyz');
-    expect(block.elements[4].action_id).toBe('override_summary_trace-xyz');
-    expect(block.elements[5].action_id).toBe('override_csv_trace-xyz');
+    expect(block.elements[3].action_id).toBe('show_sql_trace-xyz');
+    expect((block.elements[3] as any).value).toBe('thread-1_status-1');
+    expect(block.elements[4].action_id).toBe('override_table_trace-xyz');
+    expect(block.elements[5].action_id).toBe('override_summary_trace-xyz');
+    expect(block.elements[6].action_id).toBe('override_csv_trace-xyz');
   });
 });

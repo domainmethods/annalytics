@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
-import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions } from '../slack/blocks.js';
+import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape } from '../slack/blocks.js';
 import { getFlashModel } from '../agents/modelConfig.js';
 
 export interface OverrideConfig {
@@ -64,11 +64,13 @@ export async function handleTableOverride(
     const MAX_DISPLAY_ROWS = 20;
     const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
     const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
+    // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
+    // message consistent with the original answer's layout.
+    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     const blocks: KnownBlock[] = [
       ...buildTableBlocks(displayRows, result.columnNames),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
-      { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${ctx.generatedSql}\`\`\`` } } as KnownBlock,
-      buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs),
+      buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
     ];
 
     await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
@@ -111,11 +113,11 @@ export async function handleSummaryOverride(
       summary = '';
     }
 
+    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
       const blocks: KnownBlock[] = [
         { type: 'section', text: { type: 'mrkdwn', text: summary } } as KnownBlock,
-        { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${ctx.generatedSql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs),
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
       ];
       await client.chat.update({ channel, ts: messageTs, text: summary, blocks });
     } else {
@@ -127,8 +129,7 @@ export async function handleSummaryOverride(
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
-        { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${ctx.generatedSql}\`\`\`` } } as KnownBlock,
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs),
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
       ];
       await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
     }

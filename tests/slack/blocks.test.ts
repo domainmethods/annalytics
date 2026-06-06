@@ -5,16 +5,21 @@ import {
   buildZeroRowBlocks,
   buildTruncatedBlocks,
   buildFeedbackActions,
+  overrideButtonsForResultShape,
 } from '../../src/slack/blocks.js';
 
 describe('buildSingleValueBlocks', () => {
-  it('creates a section block with the value and feedback with traceId', () => {
-    const blocks = buildSingleValueBlocks('42', 'Total orders', 'SELECT COUNT(*) FROM orders', 'trace-abc');
-    expect(blocks).toHaveLength(3); // value + sql + feedback
+  it('creates a value section and feedback row, with no inline SQL block', () => {
+    // SQL now lives behind the Show SQL toggle, so the value answer is just the
+    // value section + the feedback/actions row.
+    const blocks = buildSingleValueBlocks('42', 'Total orders', 'trace-abc');
+    expect(blocks).toHaveLength(2); // value + feedback
     expect(blocks[0].type).toBe('section');
     expect((blocks[0] as any).text.text).toContain('42');
+    // No raw SQL should be rendered inline.
+    expect(JSON.stringify(blocks)).not.toContain('SELECT');
     // Feedback actions should have the traceId
-    const actions = blocks[2] as any;
+    const actions = blocks[1] as any;
     expect(actions.elements[0].action_id).toBe('thumbs_up_trace-abc');
     expect(actions.elements[1].action_id).toBe('thumbs_down_trace-abc');
   });
@@ -36,14 +41,15 @@ describe('buildTableBlocks', () => {
 });
 
 describe('buildZeroRowBlocks', () => {
-  it('includes filter summary and broaden offer', () => {
+  it('includes filter summary and broaden offer, without inline SQL', () => {
     const blocks = buildZeroRowBlocks(
       ['order_status = completed', 'order_date between 2026-01-01 and 2026-01-31'],
-      'SELECT * FROM orders WHERE order_status = "completed"',
     );
     const text = JSON.stringify(blocks);
     expect(text).toContain('no results');
     expect(text).toContain('order_status');
+    // SQL is reachable via the Show SQL toggle, not rendered here.
+    expect(text).not.toContain('SELECT');
   });
 });
 
@@ -63,5 +69,63 @@ describe('buildFeedbackActions', () => {
     expect(block.elements).toHaveLength(2);
     expect(block.elements[0].action_id).toContain('thumbs_up');
     expect(block.elements[1].action_id).toContain('thumbs_down');
+  });
+
+  it('shows the detail toggles and all override buttons by default', () => {
+    const block = buildFeedbackActions('trace-123', 'thread-1', 'status-1');
+    const ids = block.elements.map((e) => (e as any).action_id);
+    expect(ids).toEqual([
+      'thumbs_up_trace-123',
+      'thumbs_down_trace-123',
+      'show_reasoning_trace-123',
+      'show_sql_trace-123',
+      'override_table_trace-123',
+      'override_summary_trace-123',
+      'override_csv_trace-123',
+    ]);
+  });
+
+  it('always keeps the Reasoning and Show SQL toggles even when overrides are suppressed', () => {
+    const block = buildFeedbackActions('trace-123', 'thread-1', 'status-1', {
+      table: false,
+      summary: false,
+      csv: false,
+    });
+    const ids = block.elements.map((e) => (e as any).action_id);
+    expect(ids).toContain('show_reasoning_trace-123');
+    expect(ids).toContain('show_sql_trace-123');
+    expect(ids).not.toContain('override_table_trace-123');
+    expect(ids).not.toContain('override_summary_trace-123');
+    expect(ids).not.toContain('override_csv_trace-123');
+  });
+
+  it('suppresses Table and CSV but keeps Summary when asked', () => {
+    const block = buildFeedbackActions('trace-123', 'thread-1', 'status-1', {
+      table: false,
+      csv: false,
+    });
+    const ids = block.elements.map((e) => (e as any).action_id);
+    expect(ids).toContain('override_summary_trace-123');
+    expect(ids).not.toContain('override_table_trace-123');
+    expect(ids).not.toContain('override_csv_trace-123');
+  });
+});
+
+describe('overrideButtonsForResultShape', () => {
+  it('suppresses all output overrides for a zero-row result', () => {
+    expect(overrideButtonsForResultShape(0, 3)).toEqual({ table: false, summary: false, csv: false });
+  });
+
+  it('suppresses only Summary for a single scalar (value is already the prose answer)', () => {
+    expect(overrideButtonsForResultShape(1, 1)).toEqual({ summary: false });
+  });
+
+  it('shows all overrides for a multi-row table', () => {
+    expect(overrideButtonsForResultShape(25, 4)).toEqual({});
+  });
+
+  it('treats a single multi-column row as a table (no suppression)', () => {
+    // 1 row but >1 column is a table, not a scalar — Summary stays useful.
+    expect(overrideButtonsForResultShape(1, 3)).toEqual({});
   });
 });

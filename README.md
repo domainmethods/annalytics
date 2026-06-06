@@ -113,7 +113,10 @@ https://<your-cloud-run-url>/slack/events
 ```
 
 This is required for feedback buttons, reasoning toggles, and output override
-buttons.
+buttons. If a user clicks one and Slack shows `This app is not configured to
+handle interactive responses`, interactivity is off or the request URL is
+unset here — the bot's other replies are unaffected because Event Subscriptions
+is a separate toggle.
 
 ### OAuth Scopes
 

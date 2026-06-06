@@ -3,21 +3,20 @@ import type { KnownBlock, ActionsBlock, SectionBlock } from '@slack/types';
 export function buildSingleValueBlocks(
   value: string,
   explanation: string,
-  sql: string,
   traceId: string,
   threadTs?: string,
   statusMsgTs?: string,
+  overrides: OverrideButtons = {},
 ): KnownBlock[] {
+  // The SQL is intentionally not rendered inline — it lives behind the "Show
+  // SQL" toggle (see buildFeedbackActions). The value + explanation IS the
+  // answer here, so Summary is redundant and the caller passes summary: false.
   return [
     {
       type: 'section',
       text: { type: 'mrkdwn', text: `*${value}*\n${explanation}` },
     } as SectionBlock,
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `\`\`\`${sql}\`\`\`` },
-    } as SectionBlock,
-    buildFeedbackActions(traceId, threadTs, statusMsgTs),
+    buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
   ];
 }
 
@@ -46,12 +45,13 @@ export function buildTableBlocks(
 
 export function buildZeroRowBlocks(
   assumptions: string[],
-  sql: string,
 ): KnownBlock[] {
   const filterList = assumptions.length > 0
     ? `\n*Filters applied:* ${assumptions.join(', ')}`
     : '';
 
+  // No SQL block here either — the query is available via "Show SQL" if the
+  // user wants to inspect why nothing came back.
   return [
     {
       type: 'section',
@@ -59,10 +59,6 @@ export function buildZeroRowBlocks(
         type: 'mrkdwn',
         text: `Your query ran successfully but returned no results.${filterList}\n\nWant me to try with broader filters?`,
       },
-    } as SectionBlock,
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `\`\`\`${sql}\`\`\`` },
     } as SectionBlock,
   ];
 }
@@ -82,7 +78,22 @@ export function buildTruncatedBlocks(
   ];
 }
 
-export function buildFeedbackActions(traceId: string, threadTs?: string, statusMsgTs?: string): ActionsBlock {
+// Which output-override buttons to render. Each defaults to shown; pass `false`
+// to suppress one. A zero-row result, for example, has nothing to tabulate or
+// export, so its caller hides Table and CSV — buttons that would only re-run the
+// same query and surface an empty table / header-only CSV.
+export interface OverrideButtons {
+  table?: boolean;
+  summary?: boolean;
+  csv?: boolean;
+}
+
+export function buildFeedbackActions(
+  traceId: string,
+  threadTs?: string,
+  statusMsgTs?: string,
+  overrides: OverrideButtons = {},
+): ActionsBlock {
   const elements: ActionsBlock['elements'] = [
     {
       type: 'button',
@@ -100,6 +111,11 @@ export function buildFeedbackActions(traceId: string, threadTs?: string, statusM
 
   if (threadTs && statusMsgTs) {
     const compoundKey = `${threadTs}_${statusMsgTs}`;
+    // Reasoning and Show SQL are detail toggles, not output overrides — they
+    // surface the same answer's "why" and "what ran" regardless of result
+    // shape — so both are always present when the toggle keys exist. The SQL is
+    // hidden by default to declutter the answer; one click reveals it (loaded
+    // from persisted ResponseContext, no re-query) for trust/verification.
     elements.push(
       {
         type: 'button',
@@ -109,24 +125,54 @@ export function buildFeedbackActions(traceId: string, threadTs?: string, statusM
       },
       {
         type: 'button',
+        text: { type: 'plain_text', text: 'Show SQL' },
+        action_id: `show_sql_${traceId}`,
+        value: compoundKey,
+      },
+    );
+    if (overrides.table ?? true) {
+      elements.push({
+        type: 'button',
         text: { type: 'plain_text', text: 'Table' },
         action_id: `override_table_${traceId}`,
         value: compoundKey,
-      },
-      {
+      });
+    }
+    if (overrides.summary ?? true) {
+      elements.push({
         type: 'button',
         text: { type: 'plain_text', text: 'Summary' },
         action_id: `override_summary_${traceId}`,
         value: compoundKey,
-      },
-      {
+      });
+    }
+    if (overrides.csv ?? true) {
+      elements.push({
         type: 'button',
         text: { type: 'plain_text', text: 'CSV' },
         action_id: `override_csv_${traceId}`,
         value: compoundKey,
-      },
-    );
+      });
+    }
   }
 
   return { type: 'actions', elements };
+}
+
+// Single source of truth for which output-override buttons a result shape gets.
+// Used both by the initial render (pipeline) and by every toggle-restore
+// (Hide reasoning / Hide SQL in app.ts) so the two never drift. Derived from the
+// persisted result shape (rowCount + columnCount) rather than the full rows so
+// the toggle handlers can reconstruct it from ResponseContext.queryResults.
+//   - zero rows: nothing to tabulate, summarize, or export → hide all three
+//   - single scalar: the value + explanation already IS the prose answer, so
+//     Summary is redundant; Table/CSV of one cell stay available
+//   - anything else (tables): show all three
+export function overrideButtonsForResultShape(
+  rowCount: number,
+  columnCount: number,
+): OverrideButtons {
+  if (rowCount === 0) return { table: false, summary: false, csv: false };
+  if (rowCount === 1 && columnCount === 1) return { summary: false };
+  return {};
 }
