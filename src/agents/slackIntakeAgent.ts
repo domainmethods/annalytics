@@ -73,6 +73,16 @@ export async function classifySlackIntake(
   const startTime = Date.now();
   const context: IntakeLogContext = { channel: options.channel, threadTs: options.threadTs };
 
+  // Deterministic fast-path: obvious greetings and thanks are classified by a
+  // pure string match, with no model call. This is what makes "hi" robust to
+  // cold-start event-loop starvation — the model round-trip and the
+  // setTimeout-based timeout both depend on a live event loop (an 8s cap was
+  // observed taking 60s on a throttled Cloud Run container and failing open
+  // into the analytics pipeline), whereas this match waits on neither I/O nor a
+  // timer and resolves instantly under any infra config.
+  const obvious = classifyObviousIntake(text);
+  if (obvious) return obvious;
+
   let response: { text?: string };
   try {
     const ai = new GoogleGenAI({ apiKey });
@@ -120,6 +130,57 @@ export async function classifySlackIntake(
     logIntakeFallback('unexpected_error', { ...context, elapsedMs: Date.now() - startTime });
     return FALLBACK_RESULT;
   }
+}
+
+// ── Deterministic intake fast-path ─────────────────────────────────────────
+//
+// Precision over recall by design: a miss simply falls through to the model
+// (status quo, no regression), so the cost of being conservative is nil, while
+// a false positive would answer a real analytics question with a canned
+// greeting. We therefore match only when the WHOLE normalized message is a
+// known greeting/thanks phrase — any substantive token makes it fall through.
+const GREETING_PHRASES = new Set([
+  'hi', 'hello', 'hey', 'heya', 'hiya', 'yo', 'hullo', 'howdy', 'greetings',
+  'sup', 'whats up', 'wassup', 'hi there', 'hello there', 'hey there',
+  'hi anna', 'hello anna', 'hey anna', 'hi everyone', 'hello everyone',
+  'hey everyone', 'hi all', 'hello all', 'hi team', 'hey team', 'hello team',
+  'good morning', 'good afternoon', 'good evening', 'gm', 'morning',
+]);
+
+const THANKS_PHRASES = new Set([
+  'thanks', 'thank you', 'ty', 'thx', 'thank u', 'cheers', 'thanks anna',
+  'thank you anna', 'thanks so much', 'thank you so much', 'thanks a lot',
+  'thanks a bunch', 'much appreciated', 'appreciate it', 'thanks again',
+  'thank you very much', 'ok thanks', 'okay thanks', 'great thanks',
+]);
+
+const GREETING_RESPONSE =
+  "Hi! Ask me a question about your data and I'll pull the numbers for you.";
+const THANKS_RESPONSE =
+  "You're welcome! Send a data question whenever you need numbers.";
+
+// Lowercase, drop apostrophes (so "what's" → "whats"), replace every remaining
+// non-alphanumeric run — punctuation, emoji, symbols — with a single space, and
+// collapse whitespace. "Hi!!! 👋" and "hi" normalize identically.
+function normalizeIntakeText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/['’`]/g, '')
+    .replace(/[^\p{Letter}\p{Number}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function classifyObviousIntake(text: string): SlackIntakeResult | null {
+  const normalized = normalizeIntakeText(text);
+  if (!normalized) return null;
+  if (GREETING_PHRASES.has(normalized)) {
+    return { route: 'immediate_response', responseText: GREETING_RESPONSE, reasoning: 'deterministic: greeting' };
+  }
+  if (THANKS_PHRASES.has(normalized)) {
+    return { route: 'immediate_response', responseText: THANKS_RESPONSE, reasoning: 'deterministic: thanks' };
+  }
+  return null;
 }
 
 function buildPrompt(text: string): string {

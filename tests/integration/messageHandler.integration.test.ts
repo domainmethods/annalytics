@@ -175,10 +175,12 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
   });
 
   // ── Bug #1: greeting must get an immediate reply, never the pipeline ──
-  it('answers a DM greeting from intake without posting status or running the pipeline', async () => {
-    mockGenerateContent.mockResolvedValue(
-      intakeResponse('immediate_response', 'Hi. Ask me an analytics question with a metric and timeframe.'),
-    );
+  // A greeting is now answered by the deterministic fast-path — no model call —
+  // so it stays correct even when a cold, CPU-throttled container would starve
+  // the Gemini round-trip (the original "hi → pipeline" failure mode).
+  it('answers a DM greeting deterministically without a model call, status, or pipeline', async () => {
+    // Model would route to the pipeline if reached — proving the fast-path wins.
+    mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
 
     await handleMessageEvent({
       event: dmEvent('hi'),
@@ -188,10 +190,11 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       getTables,
     });
 
-    // Exactly one post — the intake reply — and never "Understanding your question..."
+    // Exactly one post — the deterministic intake reply — and never "Understanding…"
     expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
-    expect(statusPosts()).toContain('Hi. Ask me an analytics question with a metric and timeframe.');
+    expect(statusPosts()[0]).toMatch(/data/i);
     expect(statusPosts()).not.toContain('Understanding your question...');
+    expect(mockGenerateContent).not.toHaveBeenCalled();
     expect(mockRunPipeline).not.toHaveBeenCalled();
 
     // The thread lock must be released — intake handled the message.
@@ -219,11 +222,14 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
   });
 
   // ── Intake fail-open: an intake error must not strand the user ──
+  // Uses ambiguous prose (not an obvious greeting) so the message actually
+  // reaches the model — the deterministic fast-path would short-circuit "hi"
+  // before any error could occur.
   it('falls through to the pipeline when intake errors (fail-open)', async () => {
     mockGenerateContent.mockRejectedValue(new Error('Gemini unavailable'));
 
     await handleMessageEvent({
-      event: dmEvent('hi'),
+      event: dmEvent('what can you do for me?'),
       body: bodyWithEventId('Ev3'),
       client: mockClient,
       config,

@@ -40,21 +40,73 @@ describe('classifySlackIntake', () => {
     vi.useRealTimers();
   });
 
-  it('returns a model-generated immediate response for a greeting', async () => {
-    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
-      route: 'immediate_response',
-      responseText: 'Hi. Ask me an analytics question with a metric and timeframe.',
-      reasoning: 'Greeting without analytics request.',
-    })));
-
+  it('answers an obvious greeting deterministically, without a model call', async () => {
+    // "hi" must never depend on a Gemini round-trip or a setTimeout race: both
+    // need a live event loop, which a cold, CPU-throttled Cloud Run container
+    // starves (an 8s timeout was observed taking 60s and failing open into the
+    // analytics pipeline). A pure string match resolves under any infra config.
     const result = await classifySlackIntake('hi', 'api-key');
 
     expect(result.route).toBe('immediate_response');
-    expect(result.responseText).toBe('Hi. Ask me an analytics question with a metric and timeframe.');
+    expect(result.responseText).toMatch(/data/i);
+    expect(mockGenerateContent).not.toHaveBeenCalled();
+  });
+
+  it('still uses the model for ambiguous prose that is not an obvious greeting', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'I can help with analytics questions from your modeled data.',
+      reasoning: 'Capability question.',
+    })));
+
+    const result = await classifySlackIntake('what can you do?', 'api-key');
+
+    expect(result.route).toBe('immediate_response');
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-flash-latest');
     expect(mockGenerateContent.mock.calls[0][0].config.responseMimeType).toBe('application/json');
     expect(mockGenerateContent.mock.calls[0][0].config.responseJsonSchema).toBeDefined();
+  });
+
+  it('fast-paths greeting variants without a model call', async () => {
+    for (const greeting of ['hi', 'Hello!', 'hey there', 'Good morning', 'yo 👋', 'hiya', 'hi anna']) {
+      vi.clearAllMocks();
+      const result = await classifySlackIntake(greeting, 'api-key');
+      expect(result.route, greeting).toBe('immediate_response');
+      expect(result.responseText, greeting).toBeTruthy();
+      expect(mockGenerateContent, greeting).not.toHaveBeenCalled();
+    }
+  });
+
+  it('fast-paths thanks without a model call', async () => {
+    for (const phrase of ['thanks', 'Thank you!', 'thanks so much', 'ty']) {
+      vi.clearAllMocks();
+      const result = await classifySlackIntake(phrase, 'api-key');
+      expect(result.route, phrase).toBe('immediate_response');
+      expect(result.responseText, phrase).toMatch(/welcome/i);
+      expect(mockGenerateContent, phrase).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does NOT fast-path a greeting that carries a real question', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'analytics_pipeline',
+      responseText: null,
+      reasoning: 'Greeting prefix but a data question follows.',
+    })));
+
+    const result = await classifySlackIntake('hi, how many users signed up last week?', 'api-key');
+
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+    expect(result.route).toBe('analytics_pipeline');
+  });
+
+  it('fast-path responses stay within the length cap and leak no internals', async () => {
+    for (const phrase of ['hi', 'thanks']) {
+      const result = await classifySlackIntake(phrase, 'api-key');
+      expect(result.responseText!.length).toBeLessThanOrEqual(320);
+      expect(result.responseText!.toLowerCase()).not.toMatch(/dbt|file search|sql|firestore|cloud run|gemini/);
+    }
   });
 
   it('returns a model-generated immediate response for a capability question', async () => {
@@ -101,7 +153,7 @@ describe('classifySlackIntake', () => {
   it('falls back to the analytics pipeline on invalid JSON', async () => {
     mockGenerateContent.mockResolvedValue(modelText('not json'));
 
-    const result = await classifySlackIntake('hi', 'api-key');
+    const result = await classifySlackIntake('what can you do?', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
     expect(result.responseText).toBeNull();
@@ -116,7 +168,7 @@ describe('classifySlackIntake', () => {
       reasoning: 'Schema mismatch.',
     })));
 
-    const result = await classifySlackIntake('hi', 'api-key');
+    const result = await classifySlackIntake('what can you do?', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
     expect(loggedFallbackReason()).toBe('schema_validation_error');
@@ -129,7 +181,7 @@ describe('classifySlackIntake', () => {
       reasoning: 'Greeting.',
     })));
 
-    const result = await classifySlackIntake('hello', 'api-key');
+    const result = await classifySlackIntake('what can you do?', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
     expect(loggedFallbackReason()).toBe('sanitize_empty');
@@ -142,7 +194,7 @@ describe('classifySlackIntake', () => {
       reasoning: 'Too long.',
     })));
 
-    const result = await classifySlackIntake('hi', 'api-key');
+    const result = await classifySlackIntake('what can you do?', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
     expect(loggedFallbackReason()).toBe('sanitize_oversized');
@@ -177,7 +229,7 @@ describe('classifySlackIntake', () => {
   it('falls back on rejected model calls', async () => {
     mockGenerateContent.mockRejectedValue(new Error('Gemini unavailable'));
 
-    const result = await classifySlackIntake('hi', 'api-key');
+    const result = await classifySlackIntake('what can you do?', 'api-key');
 
     expect(result.route).toBe('analytics_pipeline');
     expect(result.responseText).toBeNull();
@@ -188,7 +240,7 @@ describe('classifySlackIntake', () => {
     vi.useFakeTimers();
     mockGenerateContent.mockReturnValue(new Promise(() => {}));
 
-    const resultPromise = classifySlackIntake('hi', 'api-key', { timeoutMs: 10 });
+    const resultPromise = classifySlackIntake('what can you do?', 'api-key', { timeoutMs: 10 });
 
     await vi.advanceTimersByTimeAsync(10);
     await expect(resultPromise).resolves.toMatchObject({
@@ -211,7 +263,7 @@ describe('classifySlackIntake', () => {
       }))), 3000);
     }));
 
-    const resultPromise = classifySlackIntake('hi', 'api-key'); // default timeout
+    const resultPromise = classifySlackIntake('what can you do?', 'api-key'); // default timeout
 
     await vi.advanceTimersByTimeAsync(3000);
     await expect(resultPromise).resolves.toMatchObject({
@@ -266,7 +318,7 @@ describe('classifySlackIntake', () => {
       reasoning: 'Greeting.',
     })));
 
-    await classifySlackIntake('hi', 'api-key');
+    await classifySlackIntake('what can you do?', 'api-key');
 
     expect(loggedFallbackReason()).toBeUndefined();
   });
@@ -313,7 +365,7 @@ describe('classifySlackIntake', () => {
       reasoning: 'Empty response.',
     })));
 
-    await classifySlackIntake('hello', 'api-key', {
+    await classifySlackIntake('what can you do?', 'api-key', {
       channel: 'C12345',
       threadTs: '12345.67890',
     });
