@@ -150,6 +150,43 @@ describe('classifySlackIntake', () => {
     });
   });
 
+  it('preserves conversational prose that incidentally contains select and from', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'You can select a metric and I will pull the numbers from your data.',
+      reasoning: 'Capability framing, not SQL.',
+    })));
+
+    const result = await classifySlackIntake('what can you do?', 'api-key');
+
+    expect(result.route).toBe('immediate_response');
+    expect(result.responseText).toBe('You can select a metric and I will pull the numbers from your data.');
+  });
+
+  it('falls back when immediate response text contains fenced SQL', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'Sure, here is a query:\n```\nSELECT 1\n```',
+      reasoning: 'Leaked SQL.',
+    })));
+
+    const result = await classifySlackIntake('help', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+  });
+
+  it('falls back when immediate response text contains inline SQL over a qualified table', async () => {
+    mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
+      route: 'immediate_response',
+      responseText: 'Run SELECT revenue FROM sales.orders to see it.',
+      reasoning: 'Leaked SQL with a qualified table.',
+    })));
+
+    const result = await classifySlackIntake('help', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+  });
+
   it('uses GEMINI_FLASH_MODEL when configured', async () => {
     vi.stubEnv('GEMINI_FLASH_MODEL', 'gemini-custom-flash');
     mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({

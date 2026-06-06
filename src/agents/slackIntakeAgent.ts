@@ -101,10 +101,22 @@ function sanitizeResult(result: SlackIntakeResult): SlackIntakeResult {
 function isUnsafeResponse(text: string): boolean {
   const lower = text.toLowerCase();
   if (['dbt', 'file search', 'gemini', 'firestore', 'cloud run', 'secret manager'].some((term) => lower.includes(term))) return true;
-  if (text.includes('```') || /\bselect\b.+\bfrom\b/is.test(text)) return true;
+  if (text.includes('```') || looksLikeSql(text)) return true;
   if (/\bproject\s+[a-z][a-z0-9-]{4,}-\d{3,}\b/i.test(text)) return true;
   if (/\b[a-z][\w-]+\.[a-z][\w-]+\.[a-z][\w-]+\b/i.test(text)) return true;
   if (/\b[a-z][\w-]+\.[a-z][\w-]+\b/i.test(text) && lower.includes('table')) return true;
+  return false;
+}
+
+// A bare SELECT...FROM pair also occurs in plain prose ("you can select a metric
+// and I'll pull it from your data"), so we don't block on that alone. Require a
+// SQL-specific marker: a statement terminator, a backticked identifier after FROM,
+// or a qualified (dotted) table reference right after FROM.
+function looksLikeSql(text: string): boolean {
+  if (!/\bselect\b[\s\S]+\bfrom\b/i.test(text)) return false;
+  if (/;/.test(text)) return true;
+  if (/\bfrom\s+`/i.test(text)) return true;
+  if (/\bfrom\s+[a-z][\w-]*\.[a-z][\w-]*/i.test(text)) return true;
   return false;
 }
 
