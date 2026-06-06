@@ -151,6 +151,11 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
       stageToResume: 'supervisor_review',
       context: {
         clarifiedQuestion: ctx.clarifiedQuestion,
+        // ResponseContext does not persist the raw user question, so both
+        // fields intentionally collapse to clarifiedQuestion. The downstream
+        // teaching candidate's "original vs clarified" distinction is lost for
+        // feedback-triggered escalations — acceptable given it's the best
+        // available data; revisit if ResponseContext starts persisting the raw question.
         userQuestion: ctx.clarifiedQuestion,
         groundingCitations: ctx.groundingCitations,
         previousSql: ctx.generatedSql,
