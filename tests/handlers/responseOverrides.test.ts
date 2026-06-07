@@ -213,6 +213,11 @@ describe('formatValue', () => {
   it('falls back to JSON for objects without .value', () => {
     expect(formatValue({ foo: 'bar' })).toBe('{"foo":"bar"}');
   });
+
+  it('formats a real JS Date as an ISO string (not quoted JSON)', () => {
+    const d = new Date('2025-01-15T00:00:00.000Z');
+    expect(formatValue(d)).toBe('2025-01-15T00:00:00.000Z');
+  });
 });
 
 describe('re-execution failure', () => {

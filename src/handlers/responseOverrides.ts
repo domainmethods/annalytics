@@ -4,23 +4,15 @@ import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
-import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape } from '../slack/blocks.js';
+import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue } from '../slack/blocks.js';
 import { getFlashModel } from '../agents/modelConfig.js';
+export { formatValue };
 
 export interface OverrideConfig {
   maxBytesProcessed: number;
   queryTimeoutMs: number;
   maxResultRows: number;
   geminiApiKey: string;
-}
-
-/** Safely format BigQuery values — handles Date/Timestamp objects with .value property */
-export function formatValue(val: unknown): string {
-  if (val === null || val === undefined) return '';
-  if (typeof val === 'object') {
-    return (val as any).value ?? JSON.stringify(val);
-  }
-  return String(val);
 }
 
 function extractTraceId(err: unknown): string {

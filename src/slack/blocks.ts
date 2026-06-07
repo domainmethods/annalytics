@@ -1,5 +1,18 @@
 import type { KnownBlock, ActionsBlock, SectionBlock } from '@slack/types';
 
+/** Safely format a BigQuery cell value. Order matters: real JS Date before the
+ *  `{value}` unwrap, because a Date is an object whose `.value` is undefined and
+ *  would otherwise fall through to JSON.stringify and render a quoted ISO string. */
+export function formatValue(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === 'object') {
+    const wrapped = (val as { value?: unknown }).value;
+    return wrapped != null ? String(wrapped) : JSON.stringify(val);
+  }
+  return String(val);
+}
+
 export function buildSingleValueBlocks(
   value: string,
   explanation: string,
