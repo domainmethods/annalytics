@@ -4,6 +4,7 @@ import type { FailureRecord } from './qualityLoop.js';
 export interface SqlGenerationResult {
   sql: string;
   explanation: string;
+  headline: string;
   tablesUsed: string[];
   confidence: 'high' | 'medium' | 'low';
   assumptions: string[];

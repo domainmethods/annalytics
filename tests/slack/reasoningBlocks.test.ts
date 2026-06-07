@@ -51,13 +51,28 @@ describe('buildReasoningBlocks', () => {
 
     // All reasoning blocks have block_ids with the prefix
     const reasoningBlocks = blocks.filter((b: any) => b.block_id?.startsWith(REASONING_BLOCK_PREFIX));
-    expect(reasoningBlocks).toHaveLength(5); // 4 sections + 1 actions
+    expect(reasoningBlocks).toHaveLength(6); // explanation + 4 sections + 1 actions
 
     // Hide reasoning button
     const actionsBlock = blocks.find((b: any) => b.block_id === `${REASONING_BLOCK_PREFIX}actions`) as any;
     expect(actionsBlock).toBeDefined();
     expect(actionsBlock.elements[0].action_id).toBe('hide_reasoning_trace-abc');
     expect(actionsBlock.elements[0].value).toBe('thread-1_status-1');
+  });
+
+  it('includes a "How I calculated this" section from ctx.explanation', () => {
+    const blocks = buildReasoningBlocks({ ...baseContext, explanation: 'Counts distinct client_key.' } as any);
+    const found = blocks.find(
+      b => b.type === 'section' && (b as any).text?.text?.includes('How I calculated this'),
+    );
+    expect(found).toBeTruthy();
+    expect((found as any).text.text).toContain('Counts distinct client_key.');
+  });
+
+  it('omits the "How I calculated this" section when explanation is absent', () => {
+    const blocks = buildReasoningBlocks({ ...baseContext, explanation: undefined } as any);
+    expect(blocks.find(b => (b as any).block_id === `${REASONING_BLOCK_PREFIX}how`)).toBeUndefined();
+    expect(JSON.stringify(blocks)).not.toContain('How I calculated this');
   });
 
   it('handles missing citations gracefully', () => {
@@ -94,7 +109,7 @@ describe('buildReasoningBlocks', () => {
     // Should not throw, should show fallback values
     expect(text).toContain('None'); // teachings
     expect(text).toContain('N/A'); // verdict and confidence
-    expect(blocks).toHaveLength(5);
+    expect(blocks).toHaveLength(6); // explanation section present (only other fields are undefined)
   });
 });
 

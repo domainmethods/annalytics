@@ -29,6 +29,7 @@ const baseResponse = {
   confidence: 'high',
   assumptions: [],
   reasoning_chain: 'Count all orders',
+  headline: 'total order count',
 };
 
 describe('generateSql — Negative Example Injection', () => {

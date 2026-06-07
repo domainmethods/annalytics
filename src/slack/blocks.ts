@@ -38,23 +38,15 @@ export function buildAssumptionBlocks(assumptions: string[], traceId: string): K
   ];
 }
 
-export function buildSingleValueBlocks(
-  value: string,
-  explanation: string,
-  traceId: string,
-  threadTs?: string,
-  statusMsgTs?: string,
-  overrides: OverrideButtons = {},
-): KnownBlock[] {
-  // The SQL is intentionally not rendered inline — it lives behind the "Show
-  // SQL" toggle (see buildFeedbackActions). The value + explanation IS the
-  // answer here, so Summary is redundant and the caller passes summary: false.
+export function buildSingleValueBlocks(value: string, headline: string): KnownBlock[] {
+  // Section only — the caller (buildResponseBlocks) appends assumptions and the
+  // feedback actions row, uniform with every other content builder. The value is
+  // the authoritative BigQuery cell (bold); the headline is the one-line label.
   return [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*${value}*\n${explanation}` },
+      text: { type: 'mrkdwn', text: `*${value}*\n${headline}` },
     } as SectionBlock,
-    buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
   ];
 }
 

@@ -14,6 +14,16 @@ export function buildReasoningBlocks(ctx: ResponseContext): KnownBlock[] {
   const notes = ctx.supervisorNotes || '';
 
   const blocks: KnownBlock[] = [
+    ...(ctx.explanation
+      ? [{
+          type: 'section',
+          block_id: `${REASONING_BLOCK_PREFIX}how`,
+          text: {
+            type: 'mrkdwn',
+            text: `*How I calculated this:* ${ctx.explanation}`,
+          },
+        } as SectionBlock]
+      : []),
     {
       type: 'section',
       block_id: `${REASONING_BLOCK_PREFIX}tables`,

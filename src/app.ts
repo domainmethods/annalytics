@@ -14,9 +14,10 @@ import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningB
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
-import { promptFeedbackReason, handleFeedbackReason } from './handlers/feedbackEscalation.js';
+import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
 import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
 import { FEEDBACK_REASON_PREFIX } from './slack/feedbackBlocks.js';
+import { OTHER_NOTE_CALLBACK_ID, OTHER_NOTE_BLOCK_ID, OTHER_NOTE_ACTION_ID } from './slack/feedbackModals.js';
 import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
@@ -148,6 +149,22 @@ app.action(new RegExp(`^${FEEDBACK_REASON_PREFIX}.*`), async ({ action, ack, bod
     client,
     respond,
     config: toPipelineConfig(config),
+    triggerId: (body as any).trigger_id,
+  });
+});
+
+// "Other" free-text feedback modal submission handler
+app.view(OTHER_NOTE_CALLBACK_ID, async ({ ack, body, view, client }) => {
+  await ack();
+  const noteText =
+    (view.state.values?.[OTHER_NOTE_BLOCK_ID]?.[OTHER_NOTE_ACTION_ID]?.value as
+      | string
+      | undefined) ?? '';
+  await handleOtherNoteSubmission({
+    privateMetadata: view.private_metadata,
+    noteText,
+    userId: body.user.id,
+    client,
   });
 });
 

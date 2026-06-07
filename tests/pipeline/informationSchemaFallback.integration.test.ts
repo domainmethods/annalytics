@@ -175,6 +175,7 @@ function sqlGenResponse(overrides: Record<string, unknown> = {}) {
     confidence: 'high',
     assumptions: [],
     reasoning_chain: 'Simple count query on raw_events',
+    headline: 'total event count',
     ...overrides,
   });
 }

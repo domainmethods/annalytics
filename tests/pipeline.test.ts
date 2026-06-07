@@ -23,7 +23,7 @@ vi.mock('../src/logging.js', () => ({
   logStage: vi.fn(),
 }));
 
-import { runPipeline } from '../src/pipeline.js';
+import { runPipeline, buildResponseBlocks } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { qualityLoop } from '../src/qualityLoop.js';
 import { reconcileConfidence } from '../src/agents/confidence.js';
@@ -428,5 +428,35 @@ describe('runPipeline', () => {
     expect(callbacksArg!.onValidate).toBeDefined();
     expect(callbacksArg!.onReview).toBeDefined();
     expect(callbacksArg!.onRetry).toBeDefined();
+  });
+});
+
+describe('buildResponseBlocks', () => {
+  // blocks.js is module-mocked for the runPipeline suite above; this unit test
+  // verifies the real block ORDER, so route the builders to their actual
+  // implementations for the duration of these cases.
+  beforeEach(async () => {
+    const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>(
+      '../src/slack/blocks.js',
+    );
+    mockBuildSingleValue.mockImplementation(actual.buildSingleValueBlocks);
+    mockBuildAssumptions.mockImplementation(actual.buildAssumptionBlocks);
+    mockBuildFeedback.mockImplementation(actual.buildFeedbackActions);
+  });
+
+  it('single_value: answer first, then assumptions, then feedback actions', () => {
+    const blocks = buildResponseBlocks(
+      'single_value',
+      { headline: 'unique visitors this month', explanation: 'verbose', assumptions: ['a'] } as any,
+      { rows: [{ n: 90 }], columnNames: ['n'], totalRows: 1 } as any,
+      'trace-1', 'T1', 'S1', ['Assumed X'],
+    );
+    const types = blocks.map((b) => b.type);
+    expect(types[0]).toBe('section');
+    const assumptionIdx = blocks.findIndex((b) => b.type === 'context');
+    const feedbackIdx = blocks.map((b) => b.type).lastIndexOf('actions');
+    expect(assumptionIdx).toBeGreaterThan(0); // assumptions after the answer
+    expect(feedbackIdx).toBeGreaterThan(assumptionIdx); // feedback is last
+    expect((blocks[0] as any).text.text).toBe('*90*\nunique visitors this month');
   });
 });

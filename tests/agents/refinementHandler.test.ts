@@ -57,6 +57,7 @@ const defaultResponse = {
     confidence: 'high',
     assumptions: [],
     reasoning_chain: 'Added region grouping',
+    headline: 'revenue by region',
   }),
 };
 

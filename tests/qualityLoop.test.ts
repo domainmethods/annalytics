@@ -28,6 +28,7 @@ const mockCostGate = vi.mocked(costGate);
 const baseSqlResult: SqlGenerationResult = {
   sql: 'SELECT SUM(total_amount) FROM `analytics.fct_orders`',
   explanation: 'Sums total amount',
+  headline: 'total amount across orders',
   tablesUsed: ['analytics.fct_orders'],
   confidence: 'high',
   assumptions: [],

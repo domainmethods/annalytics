@@ -42,6 +42,7 @@ describe('generateSql', () => {
         confidence: 'high',
         assumptions: ['All time, all regions'],
         reasoning_chain: 'User wants total revenue. fct_orders has total_amount.',
+        headline: 'total revenue across all orders',
       }),
     });
 
@@ -58,6 +59,46 @@ describe('generateSql', () => {
     expect(result.tablesUsed).toContain('analytics.fct_orders');
   });
 
+  it('returns the headline field from the model response', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT COUNT(DISTINCT visitor_id) FROM `analytics.fct_orders`',
+        explanation: 'Counts distinct visitors this month',
+        tables_used: ['analytics.fct_orders'],
+        confidence: 'high',
+        assumptions: [],
+        reasoning_chain: 'User wants unique visitors.',
+        headline: 'unique visitors this month',
+      }),
+    });
+
+    const result = await generateSql({
+      question: 'How many unique visitors this month?',
+      tables: mockTables,
+      threadContext: [],
+      apiKey: 'test-api-key',
+    });
+
+    expect(result.headline).toBe('unique visitors this month');
+  });
+
+  it('throws when the model omits headline', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT 1',
+        explanation: 'test',
+        tables_used: [],
+        confidence: 'high',
+        assumptions: [],
+        reasoning_chain: 'test',
+      }),
+    });
+
+    await expect(
+      generateSql({ question: 'test', tables: mockTables, threadContext: [], apiKey: 'test-api-key' }),
+    ).rejects.toThrow(/headline/);
+  });
+
   it('includes table DDLs in the prompt', async () => {
     mockGenerateContent.mockResolvedValue({
       text: JSON.stringify({
@@ -67,6 +108,7 @@ describe('generateSql', () => {
         confidence: 'high',
         assumptions: [],
         reasoning_chain: 'test',
+        headline: 'test',
       }),
     });
 
@@ -87,6 +129,7 @@ describe('generateSql', () => {
         confidence: 'high',
         assumptions: [],
         reasoning_chain: 'test',
+        headline: 'test',
       }),
     });
 
@@ -116,6 +159,7 @@ describe('generateSql', () => {
         confidence: 'high',
         assumptions: [],
         reasoning_chain: 'test',
+        headline: 'test',
       }),
     });
 
