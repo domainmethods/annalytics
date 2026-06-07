@@ -90,7 +90,13 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
   const startTime = Date.now();
 
   const updateStatus = async (text: string) => {
-    await client.chat.update({ channel, ts: statusMsgTs, text });
+    // Status updates are cosmetic. A transient Slack failure (rate limit,
+    // network blip) must never abort the real query — log and move on.
+    try {
+      await client.chat.update({ channel, ts: statusMsgTs, text });
+    } catch (err) {
+      logger.warn({ err, text }, 'pipeline.status_update_failed');
+    }
   };
 
   try {

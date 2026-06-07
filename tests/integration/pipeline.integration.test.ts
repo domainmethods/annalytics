@@ -297,6 +297,46 @@ describe('Pipeline — Integration', () => {
     expect(savedCtx.traceId).toBe('trace-integration');
   });
 
+  it('resilience: a transient status-update failure does not abort the query', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse())
+      .mockResolvedValueOnce(sqlGenResponse())
+      .mockResolvedValueOnce(supervisorResponse());
+
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
+
+    // Cosmetic status updates are text-only chat.update calls. Simulate Slack
+    // rejecting every one of them (a transient hiccup / rate limit) while the
+    // final answer — which carries `blocks` — still succeeds. A failing
+    // cosmetic update must never abort the real query.
+    mockClient.chat.update.mockImplementation((args: any) =>
+      args.blocks
+        ? Promise.resolve({})
+        : Promise.reject(new Error('slack transient error')),
+    );
+
+    await expect(runPipeline(makeInput())).resolves.toBeUndefined();
+
+    // The query still ran end-to-end despite the failing status updates.
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+
+    // The final answer (with blocks) was still posted — not a friendly error.
+    const finalUpdate = mockClient.chat.update.mock.calls
+      .map((c: any[]) => c[0])
+      .reverse()
+      .find((a: any) => a.blocks);
+    expect(finalUpdate).toBeDefined();
+    expect(finalUpdate.blocks.length).toBeGreaterThan(0);
+
+    // ResponseContext was persisted — the pipeline completed normally.
+    const savedKeys = [...firestoreStore.keys()].filter(k =>
+      k.startsWith('response_context/'),
+    );
+    expect(savedKeys.length).toBe(1);
+  });
+
   it('MEDIUM confidence: includes assumptions + refine button', async () => {
     mockGenerateContent
       .mockResolvedValueOnce(
