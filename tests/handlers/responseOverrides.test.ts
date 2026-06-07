@@ -11,6 +11,10 @@ vi.mock('@google/genai', () => ({
   }),
 }));
 
+vi.mock('../../src/logging.js', () => ({
+  rootLogger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+}));
+
 import { getResponseContext } from '../../src/state/responseContext.js';
 import { validateSql } from '../../src/validation/pipeline.js';
 import { executeQuery } from '../../src/execution/runner.js';
@@ -20,13 +24,14 @@ import {
   handleCsvOverride,
   formatValue,
 } from '../../src/handlers/responseOverrides.js';
+import { rootLogger } from '../../src/logging.js';
 
 const mockGetCtx = vi.mocked(getResponseContext);
 const mockValidate = vi.mocked(validateSql);
 const mockExecute = vi.mocked(executeQuery);
 
 const mockClient = {
-  chat: { update: vi.fn() },
+  chat: { update: vi.fn(), postMessage: vi.fn() },
   filesUploadV2: vi.fn(),
 } as any;
 
@@ -194,6 +199,28 @@ describe('handleCsvOverride with BigQuery Date objects', () => {
   });
 });
 
+describe('handleCsvOverride upload failure', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('logs override.csv.failed with the raw error message when the upload fails', async () => {
+    mockGetCtx.mockResolvedValue(baseCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.filesUploadV2.mockRejectedValue(new Error('An API error occurred: missing_scope'));
+
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', mockClient, overrideConfig);
+
+    expect(vi.mocked(rootLogger.error)).toHaveBeenCalled();
+    const [meta, msg] = vi.mocked(rootLogger.error).mock.calls[0];
+    expect(msg).toBe('override.csv.failed');
+    expect((meta as any).error).toContain('missing_scope');
+    // Raw Slack API errors carry no traceId, so extractTraceId returns 'unknown' here.
+    expect((meta as any).traceId).toBe('unknown');
+  });
+});
+
 describe('formatValue', () => {
   it('handles primitives', () => {
     expect(formatValue('hello')).toBe('hello');
@@ -239,5 +266,13 @@ describe('re-execution failure', () => {
         text: expect.stringContaining('trace-abc'),
       }),
     );
+  });
+
+  it('logs the failure with a trace id when re-execution fails', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(vi.mocked(rootLogger.error)).toHaveBeenCalled();
+    const [meta, msg] = vi.mocked(rootLogger.error).mock.calls[0];
+    expect(msg).toBe('override.table.failed');
+    expect((meta as any).traceId).toBe('trace-abc');
   });
 });

@@ -6,6 +6,7 @@ import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue } from '../slack/blocks.js';
 import { getFlashModel } from '../agents/modelConfig.js';
+import { rootLogger } from '../logging.js';
 export { formatValue };
 
 export interface OverrideConfig {
@@ -67,6 +68,10 @@ export async function handleTableOverride(
 
     await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
   } catch (err) {
+    rootLogger.error(
+      { error: (err as Error).message, traceId: extractTraceId(err) },
+      'override.table.failed',
+    );
     await client.chat.update({
       channel,
       ts: messageTs,
@@ -126,6 +131,10 @@ export async function handleSummaryOverride(
       await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
     }
   } catch (err) {
+    rootLogger.error(
+      { error: (err as Error).message, traceId: extractTraceId(err) },
+      'override.summary.failed',
+    );
     await client.chat.update({
       channel,
       ts: messageTs,
@@ -163,6 +172,10 @@ export async function handleCsvOverride(
       title: `Results: ${ctx.clarifiedQuestion}`,
     });
   } catch (err) {
+    rootLogger.error(
+      { error: (err as Error).message, traceId: extractTraceId(err) },
+      'override.csv.failed',
+    );
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
