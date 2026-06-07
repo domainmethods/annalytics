@@ -10,6 +10,7 @@ import {
   buildFeedbackAckBlocks,
   feedbackReasonById,
 } from '../slack/feedbackBlocks.js';
+import { buildOtherNoteModal } from '../slack/feedbackModals.js';
 import { rootLogger } from '../logging.js';
 
 /**
@@ -60,6 +61,7 @@ export interface HandleFeedbackReasonParams {
   client: WebClient;
   respond: RespondFn;
   config: PipelineConfig;
+  triggerId?: string;
 }
 
 /**
@@ -69,7 +71,34 @@ export interface HandleFeedbackReasonParams {
  *  - record (other / unknown)             → ephemeral ack only
  */
 export async function handleFeedbackReason(params: HandleFeedbackReasonParams): Promise<void> {
-  const { reasonId, compoundKey, userId, channel, client, respond, config } = params;
+  const { reasonId, compoundKey, userId, channel, client, respond, config, triggerId } = params;
+
+  // "Other" with an interaction trigger → collect a free-text note via modal
+  // instead of acking immediately. The modal submission (a separate handler)
+  // does the persistence + ack. Guarded on triggerId so callers that don't
+  // pass one (e.g. legacy paths) still fall through to the record-only ack.
+  if (reasonId === 'other' && triggerId) {
+    try {
+      await client.views.open({
+        trigger_id: triggerId,
+        view: buildOtherNoteModal(channel, compoundKey),
+      });
+      return;
+    } catch (err) {
+      // trigger_id is valid for ~3s; views.open also throws on any Slack API
+      // error. An uncaught rejection leaves the user with no acknowledgement.
+      // Mirror the escalate path's log-and-degrade idiom: log identifiers only,
+      // then fall through to the same record-only ack the user would have gotten
+      // without the modal — never a silent drop.
+      rootLogger.error(
+        { error: (err as Error).message, channel, compoundKey },
+        'feedback.other_note.modal_open_failed',
+      );
+      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.' });
+      return;
+    }
+  }
+
   const reason = feedbackReasonById(reasonId);
 
   // Unknown reason id → treat as record-only.

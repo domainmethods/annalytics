@@ -210,6 +210,60 @@ describe('handleFeedbackReason', () => {
     expect(respond).toHaveBeenCalledTimes(1);
   });
 
+  it('opens the Other-note modal instead of acking, for reason "other"', async () => {
+    const viewsOpen = vi.fn().mockResolvedValue({});
+    const respond = vi.fn();
+    const client = { views: { open: viewsOpen }, chat: {} } as any;
+    await handleFeedbackReason({
+      reasonId: 'other', compoundKey: 'T1_S1', userId: 'U1', channel: 'C1',
+      client, respond, config: {} as any, triggerId: 'trig-1',
+    });
+    expect(viewsOpen).toHaveBeenCalledWith(expect.objectContaining({ trigger_id: 'trig-1' }));
+    expect(respond).not.toHaveBeenCalled(); // modal opening replaces the ack
+  });
+
+  it('degrades to the record-only ack when opening the Other-note modal fails', async () => {
+    // trigger_id is valid for ~3s; views.open also fails on any Slack API error.
+    // An unguarded throw leaves the user with no acknowledgement, so the handler
+    // must log and fall back to the same record-only ack it would have given
+    // without the modal — never a silent drop.
+    const viewsOpen = vi.fn().mockRejectedValue(new Error('expired_trigger_id'));
+    const respond = vi.fn().mockResolvedValue(undefined);
+    const client = { views: { open: viewsOpen }, chat: {} } as any;
+
+    await expect(
+      handleFeedbackReason({
+        reasonId: 'other', compoundKey: 'T1_S1', userId: 'U1', channel: 'C1',
+        client, respond, config: {} as any, triggerId: 'trig-1',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(viewsOpen).toHaveBeenCalledTimes(1);
+    // Degrade fired with the record-only ack.
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(respond.mock.calls[0][0]).toEqual({
+      replace_original: true,
+      text: 'Thanks — noted. I logged this for review.',
+    });
+  });
+
+  it('does not open the modal for a non-"other" reason even when a triggerId is present', async () => {
+    // Guards the `reasonId === 'other' &&` half: a record-route reason with a
+    // triggerId must take the normal ack path, not the modal path.
+    const viewsOpen = vi.fn().mockResolvedValue({});
+    const client = makeClient();
+    client.views = { open: viewsOpen };
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'not_asked', compoundKey, userId: 'U1', channel: 'C1',
+      client, respond, config: makeConfig(), triggerId: 'trig-1',
+    });
+    expect(viewsOpen).not.toHaveBeenCalled();
+    // not_asked routes to refine: public prompt + ephemeral ack, no modal.
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(respond).toHaveBeenCalledTimes(1);
+  });
+
   it('record-only degrade when no escalation target is configured', async () => {
     const client = makeClient();
     const respond = vi.fn();
