@@ -26,12 +26,13 @@ const sqlResponseJsonSchema = {
   properties: {
     sql: { type: 'string', description: 'The BigQuery SQL query' },
     explanation: { type: 'string', description: 'Plain-English explanation' },
+    headline: { type: 'string', description: 'A concise one-line description of WHAT the answer value represents, e.g. "unique visitors to the website so far this month". Do NOT restate the number.' },
     tables_used: { type: 'array', items: { type: 'string' } },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     assumptions: { type: 'array', items: { type: 'string' }, description: 'Assumptions made about the question' },
     reasoning_chain: { type: 'string', description: 'Step-by-step reasoning for how the SQL was derived' },
   },
-  required: ['sql', 'explanation', 'tables_used', 'confidence', 'assumptions', 'reasoning_chain'],
+  required: ['sql', 'explanation', 'headline', 'tables_used', 'confidence', 'assumptions', 'reasoning_chain'],
 };
 
 function buildSystemPrompt(opts: GenerateSqlOptions): string {
@@ -53,6 +54,7 @@ RULES:
 - Generate only SELECT statements
 - Never generate DML (INSERT, UPDATE, DELETE) or DDL (CREATE, DROP, ALTER)
 - If the question cannot be answered with the available schema, set confidence to "low" and explain why
+- Provide a "headline": a short, plain-English description of what the result represents, without restating the number.
 
 SCHEMA:
 ${schemaSections.join('\n\n')}
@@ -192,6 +194,7 @@ Fix the error and generate a corrected query.`;
   // Runtime validation — LLM output is untrusted
   if (typeof parsed.sql !== 'string') throw new Error('LLM response missing or invalid "sql" field');
   if (typeof parsed.explanation !== 'string') throw new Error('LLM response missing or invalid "explanation" field');
+  if (typeof parsed.headline !== 'string') throw new Error('LLM response missing or invalid "headline" field');
   if (!Array.isArray(parsed.tables_used) || !parsed.tables_used.every((t: unknown) => typeof t === 'string'))
     throw new Error('LLM response missing or invalid "tables_used" array');
   if (!Array.isArray(parsed.assumptions) || !parsed.assumptions.every((a: unknown) => typeof a === 'string'))
@@ -214,6 +217,7 @@ Fix the error and generate a corrected query.`;
   return {
     sql: parsed.sql,
     explanation: parsed.explanation,
+    headline: parsed.headline,
     tablesUsed: parsed.tables_used as string[],
     confidence,
     assumptions: parsed.assumptions as string[],

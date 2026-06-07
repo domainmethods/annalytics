@@ -170,6 +170,7 @@ function sqlGenResponse(
       confidence: 'high',
       assumptions: [],
       reasoning_chain: 'Simple count query',
+      headline: 'total order count',
       ...overrides,
     },
     groundingChunks,

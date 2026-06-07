@@ -165,6 +165,7 @@ function sqlGenResponse(overrides: Record<string, unknown> = {}, groundingChunks
       confidence: 'high',
       assumptions: [],
       reasoning_chain: 'Grouped by region',
+      headline: 'revenue by region',
       ...overrides,
     },
     groundingChunks,

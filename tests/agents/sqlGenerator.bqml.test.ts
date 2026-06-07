@@ -33,6 +33,7 @@ const mockResponse = {
     confidence: 'high',
     assumptions: ['Model already exists'],
     reasoning_chain: 'User wants forecast. Used ML.FORECAST.',
+    headline: 'sales forecast for the next 7 days',
   }),
 };
 
@@ -66,6 +67,7 @@ describe('generateSql BQML hints', () => {
         confidence: 'high',
         assumptions: [],
         reasoning_chain: 'Used ML.DETECT_ANOMALIES.',
+        headline: 'detected anomalies',
       }),
     });
 

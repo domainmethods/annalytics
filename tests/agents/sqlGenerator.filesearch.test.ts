@@ -30,6 +30,7 @@ const baseResponse = {
   confidence: 'high',
   assumptions: [],
   reasoning_chain: 'Simple sum',
+  headline: 'total amount across orders',
 };
 
 describe('generateSql — File Search integration', () => {
