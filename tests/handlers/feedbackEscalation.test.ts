@@ -6,16 +6,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // handler tests and avoids any hoisting/TDZ ambiguity around the factory.
 vi.mock('../../src/state/responseContext.js');
 vi.mock('../../src/state/escalationState.js');
+vi.mock('../../src/state/feedbackNotes.js');
 
 import { getResponseContext } from '../../src/state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../../src/state/escalationState.js';
-import { promptFeedbackReason, handleFeedbackReason } from '../../src/handlers/feedbackEscalation.js';
+import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
+import {
+  promptFeedbackReason,
+  handleFeedbackReason,
+  handleOtherNoteSubmission,
+} from '../../src/handlers/feedbackEscalation.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ResponseContext } from '../../src/types.js';
 
 const mockGetResponseContext = vi.mocked(getResponseContext);
 const mockHasPendingEscalation = vi.mocked(hasPendingEscalation);
 const mockSaveEscalationState = vi.mocked(saveEscalationState);
+const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
 
 const compoundKey = '1700000000.000100_1700000000.000200';
 
@@ -289,4 +296,112 @@ describe('handleFeedbackReason', () => {
       expect(respond).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe('handleOtherNoteSubmission', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetResponseContext.mockResolvedValue(makeCtx() as unknown as ResponseContext);
+    mockSaveFeedbackNote.mockResolvedValue(undefined);
+  });
+
+  it('persists the note and posts a threaded ephemeral ack', async () => {
+    const postEphemeral = vi.fn().mockResolvedValue({});
+    const client = { chat: { postEphemeral } } as any;
+    await handleOtherNoteSubmission({
+      privateMetadata: JSON.stringify({ channel: 'C1', compoundKey: 'T1_S1' }),
+      noteText: 'the number looks too low',
+      userId: 'U1',
+      client,
+    });
+    expect(mockSaveFeedbackNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        note: 'the number looks too low',
+        userId: 'U1',
+        threadTs: 'T1',
+        channel: 'C1',
+        traceId: 'trace-1',
+        clarifiedQuestion: 'unique visitors last month',
+      }),
+    );
+    expect(postEphemeral).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C1',
+        user: 'U1',
+        thread_ts: 'T1',
+        text: 'Thanks — noted. I logged this for review.',
+      }),
+    );
+  });
+
+  it('still records the note when ResponseContext is missing (no throw)', async () => {
+    mockGetResponseContext.mockResolvedValue(null);
+    const postEphemeral = vi.fn().mockResolvedValue({});
+    const client = { chat: { postEphemeral } } as any;
+    await expect(
+      handleOtherNoteSubmission({
+        privateMetadata: JSON.stringify({ channel: 'C1', compoundKey: 'T1_S1' }),
+        noteText: 'x',
+        userId: 'U1',
+        client,
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockSaveFeedbackNote).toHaveBeenCalled();
+    // Optional enrichment keys must be OMITTED (not undefined) when the context
+    // is gone — Firestore is not configured with ignoreUndefinedProperties, so a
+    // literal `undefined` field value would reject the write.
+    const saved = mockSaveFeedbackNote.mock.calls[0][0];
+    expect('traceId' in saved).toBe(false);
+    expect('clarifiedQuestion' in saved).toBe(false);
+    expect(postEphemeral).toHaveBeenCalled();
+  });
+
+  it.each(['', 'T1'])(
+    'no-ops on a malformed compound key (%s): no save, no ack',
+    async (badKey) => {
+      const postEphemeral = vi.fn().mockResolvedValue({});
+      const client = { chat: { postEphemeral } } as any;
+      await expect(
+        handleOtherNoteSubmission({
+          privateMetadata: JSON.stringify({ channel: 'C1', compoundKey: badKey }),
+          noteText: 'x',
+          userId: 'U1',
+          client,
+        }),
+      ).resolves.toBeUndefined();
+      expect(mockSaveFeedbackNote).not.toHaveBeenCalled();
+      expect(postEphemeral).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still acks when saveFeedbackNote throws (save failure does not short-circuit ack)', async () => {
+    mockSaveFeedbackNote.mockRejectedValue(new Error('firestore down'));
+    const postEphemeral = vi.fn().mockResolvedValue({});
+    const client = { chat: { postEphemeral } } as any;
+    await expect(
+      handleOtherNoteSubmission({
+        privateMetadata: JSON.stringify({ channel: 'C1', compoundKey: 'T1_S1' }),
+        noteText: 'x',
+        userId: 'U1',
+        client,
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockSaveFeedbackNote).toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalled();
+  });
+
+  it('does not throw on non-JSON private_metadata (logs and returns)', async () => {
+    const postEphemeral = vi.fn().mockResolvedValue({});
+    const client = { chat: { postEphemeral } } as any;
+    await expect(
+      handleOtherNoteSubmission({
+        privateMetadata: 'not-json{',
+        noteText: 'x',
+        userId: 'U1',
+        client,
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockSaveFeedbackNote).not.toHaveBeenCalled();
+    expect(postEphemeral).not.toHaveBeenCalled();
+  });
 });

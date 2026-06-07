@@ -11,6 +11,7 @@ import {
   feedbackReasonById,
 } from '../slack/feedbackBlocks.js';
 import { buildOtherNoteModal } from '../slack/feedbackModals.js';
+import { saveFeedbackNote, type FeedbackNote } from '../state/feedbackNotes.js';
 import { rootLogger } from '../logging.js';
 
 /**
@@ -216,4 +217,88 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     blocks: buildFeedbackAckBlocks("✅ Flagged for the data team — I'll reply here when they weigh in.") as unknown as KnownBlock[],
     text: 'Flagged for the data team.',
   });
+}
+
+export interface HandleOtherNoteSubmissionParams {
+  privateMetadata: string;
+  noteText: string;
+  userId: string;
+  client: WebClient;
+}
+
+/**
+ * Handles the `view_submission` from the "Other" free-text modal (opened by
+ * handleFeedbackReason). Persists the user's note as a FeedbackNote and posts a
+ * deterministic, in-thread ephemeral ack. ResponseContext enrichment is
+ * best-effort: a missing/evicted doc must never block recording the note.
+ *
+ * Called by the (separate) `app.view(...)` registration, which extracts the
+ * note text from the modal input before invoking this.
+ */
+export async function handleOtherNoteSubmission(
+  params: HandleOtherNoteSubmissionParams,
+): Promise<void> {
+  const { privateMetadata, noteText, userId, client } = params;
+
+  let channel = '';
+  let compoundKey = '';
+  try {
+    const meta = JSON.parse(privateMetadata) as { channel?: string; compoundKey?: string };
+    channel = meta.channel ?? '';
+    compoundKey = meta.compoundKey ?? '';
+  } catch {
+    // A malformed private_metadata means we can't reconstruct where to ack or
+    // what to join the note to. Log identifiers only and return — never throw,
+    // which would surface a Slack modal error to the user.
+    rootLogger.error({ userId }, 'feedback.other_note.bad_metadata');
+    return;
+  }
+
+  // Slack ts values use '.', never '_', so a well-formed compound key splits
+  // into exactly two non-empty parts. Validate before use — a malformed key
+  // would leave threadTs empty, keying the note to a colliding doc id and
+  // posting the ack un-threaded. Log identifiers only and no-op (no save, no
+  // ack) rather than corrupt state. Mirrors handleFeedbackReason's guard.
+  const parts = compoundKey.split('_');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    rootLogger.error({ userId, compoundKey }, 'feedback.other_note.bad_compound_key');
+    return;
+  }
+  const [threadTs] = parts;
+
+  // ResponseContext is best-effort enrichment; a missing/evicted doc must not
+  // block recording the user's note.
+  const ctx = await getResponseContext(compoundKey).catch(() => null);
+
+  // Firestore is not configured with ignoreUndefinedProperties, so a literal
+  // `undefined` field value would reject the write. Build the note with the
+  // optional enrichment keys OMITTED when the context is gone, rather than
+  // assigning them `undefined`.
+  const note: FeedbackNote = { note: noteText, userId, threadTs, channel };
+  if (ctx?.clarifiedQuestion !== undefined) note.clarifiedQuestion = ctx.clarifiedQuestion;
+  if (ctx?.traceId !== undefined) note.traceId = ctx.traceId;
+
+  try {
+    await saveFeedbackNote(note);
+    rootLogger.info({ userId, traceId: ctx?.traceId, threadTs }, 'feedback.other_note.saved');
+  } catch (err) {
+    rootLogger.error(
+      { error: (err as Error).message, userId, threadTs },
+      'feedback.other_note.save_failed',
+    );
+  }
+
+  await client.chat
+    .postEphemeral({
+      channel,
+      user: userId,
+      thread_ts: threadTs,
+      text: 'Thanks — noted. I logged this for review.',
+    })
+    .catch((err) =>
+      rootLogger.warn(
+        { error: (err as Error).message, userId, threadTs },
+        'feedback.other_note.ack_failed',
+      ),
+    );
 }
