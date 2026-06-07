@@ -143,6 +143,8 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
+| GET | `/health` | None | Liveness ping — returns `200 OK`. Dependency-free; Cloud Run's liveness probe. |
+| GET | `/health/doctor` | None | Diagnostic readiness check — probes Firestore/BigQuery/Gemini/Slack in parallel + reports configured features. Info-safe JSON (no IDs/secrets/raw errors). `200` ok/degraded, `503` when a critical dep is down. |
 | POST | `/api/dbt-run-results` | Bearer `DBT_WEBHOOK_SECRET` | Ingest dbt `run_results.json` from CI |
 
 ## Key SDK Patterns
