@@ -3,7 +3,7 @@ import { App, ExpressReceiver } from '@slack/bolt';
 import { loadConfig } from './config.js';
 import type { TableContext } from './dbt/types.js';
 import { parseDbtArtifacts } from './dbt/parser.js';
-import { initFirestore } from './state/firestore.js';
+import { initFirestore, getDb } from './state/firestore.js';
 import { initBigQuery } from './validation/dryRun.js';
 import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
 import { registerCommands } from './handlers/commands.js';
@@ -23,8 +23,13 @@ import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
 import { rootLogger } from './logging.js';
+import { GoogleGenAI } from '@google/genai';
+import { runDiagnostics, httpStatusForReport } from './health/doctor.js';
 
 const config = loadConfig();
+
+// Process start time — used by the /health/doctor uptime report.
+const startedAtMs = Date.now();
 
 // Initialize clients
 initFirestore(config.gcp.projectId);
@@ -83,6 +88,61 @@ const app = new App({
   token: config.slack.botToken,
   receiver,
   processBeforeResponse: false,
+});
+
+// Diagnostic ("doctor") endpoint — separate from the /health liveness ping so a
+// transient dependency blip can't fail Cloud Run's liveness probe and trigger a
+// restart loop. Actively probes every external dependency in parallel and
+// reports which optional features are configured. The payload is info-safe
+// (booleans/enums/counts only); raw probe errors are logged here, never sent.
+receiver.router.get('/health/doctor', async (_req, res) => {
+  const report = await runDiagnostics({
+    config,
+    tableCount: tables.length,
+    uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
+    revision: process.env.K_REVISION ?? 'unknown',
+    timestamp: new Date().toISOString(),
+    onError: (name, err) => {
+      rootLogger.error(
+        {
+          check: name,
+          error: err instanceof Error ? err.message : String(err),
+          err,
+        },
+        'doctor.probe_error'
+      );
+    },
+    probes: {
+      // Cheap read — confirms Firestore connectivity (doc need not exist).
+      firestore: async () => {
+        await getDb().collection('config').doc('metadata_state').get();
+      },
+      // Free dry-run (zero bytes billed) — confirms BigQuery reachability + auth.
+      bigquery: async () => {
+        await getBigQueryClient().createQueryJob({ query: 'SELECT 1', dryRun: true });
+      },
+      // Metadata-only list (no token spend) — confirms the Gemini key is live.
+      gemini: async () => {
+        const ai = new GoogleGenAI({ apiKey: config.gemini.apiKey });
+        await ai.models.list({ config: { pageSize: 1 } });
+      },
+      // Validates the Slack bot token.
+      slack: async () => {
+        await app.client.auth.test();
+      },
+    },
+  });
+
+  for (const check of report.checks) {
+    if (check.status !== 'ok') {
+      rootLogger.warn({ check: check.name, status: check.status }, 'doctor.check_failed');
+    }
+  }
+  if (report.status !== 'ok') {
+    rootLogger.warn({ status: report.status }, 'doctor.report_not_ok');
+  }
+
+  res.status(httpStatusForReport(report)).json(report);
 });
 
 // Register handlers
