@@ -1,4 +1,4 @@
-import type { KnownBlock, ActionsBlock, SectionBlock } from '@slack/types';
+import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
 /** Safely format a BigQuery cell value. Order matters: real JS Date before the
  *  `{value}` unwrap, because a Date is an object whose `.value` is undefined and
@@ -33,27 +33,42 @@ export function buildSingleValueBlocks(
   ];
 }
 
+const NATIVE_TABLE_MAX_COLS = 20; // Slack native table block hard cap.
+
 export function buildTableBlocks(
   rows: Record<string, unknown>[],
   columnNames: string[],
 ): KnownBlock[] {
-  // Block Kit has no native table — use a code block with padded columns
+  // Slack's native table caps at 20 columns; wide results degrade to the legacy
+  // monospace renderer rather than dropping columns.
+  if (columnNames.length > NATIVE_TABLE_MAX_COLS) {
+    return buildCodeBlockTable(rows, columnNames);
+  }
+  const cell = (text: string): RawTextElement => ({
+    type: 'raw_text',
+    // raw_text requires length >= 1; empty cells render as an em dash.
+    text: text.length > 0 ? text : '—',
+  });
+  const header = columnNames.map((c) => cell(c));
+  const dataRows = rows.map((row) => columnNames.map((col) => cell(formatValue(row[col]))));
+  return [{ type: 'table', rows: [header, ...dataRows] } satisfies TableBlock];
+}
+
+// Legacy monospace renderer, retained as the >20-column fallback.
+function buildCodeBlockTable(
+  rows: Record<string, unknown>[],
+  columnNames: string[],
+): KnownBlock[] {
   const widths = columnNames.map((col) =>
-    Math.max(col.length, ...rows.map((r) => String(r[col] ?? '').length)),
+    Math.max(col.length, ...rows.map((r) => formatValue(r[col]).length)),
   );
   const header = columnNames.map((c, i) => c.padEnd(widths[i])).join(' | ');
   const separator = widths.map((w) => '-'.repeat(w)).join('-+-');
   const dataRows = rows.map((row) =>
-    columnNames.map((col, i) => String(row[col] ?? '').padEnd(widths[i])).join(' | '),
+    columnNames.map((col, i) => formatValue(row[col]).padEnd(widths[i])).join(' | '),
   );
   const tableText = [header, separator, ...dataRows].join('\n');
-
-  return [
-    {
-      type: 'section',
-      text: { type: 'mrkdwn', text: `\`\`\`\n${tableText}\n\`\`\`` },
-    } as SectionBlock,
-  ];
+  return [{ type: 'section', text: { type: 'mrkdwn', text: `\`\`\`\n${tableText}\n\`\`\`` } } as SectionBlock];
 }
 
 export function buildZeroRowBlocks(

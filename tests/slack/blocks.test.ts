@@ -6,6 +6,7 @@ import {
   buildTruncatedBlocks,
   buildFeedbackActions,
   overrideButtonsForResultShape,
+  formatValue,
 } from '../../src/slack/blocks.js';
 
 describe('buildSingleValueBlocks', () => {
@@ -37,6 +38,48 @@ describe('buildTableBlocks', () => {
     const text = JSON.stringify(blocks);
     expect(text).toContain('region');
     expect(text).toContain('revenue');
+  });
+
+  it('emits a native table block with a header row and raw_text cells (<=20 cols)', () => {
+    const rows = [{ region: 'US', revenue: '$1M' }];
+    const blocks = buildTableBlocks(rows, ['region', 'revenue']) as any[];
+    const table = blocks.find((b) => b.type === 'table');
+    expect(table).toBeDefined();
+    expect(table.rows[0].map((c: any) => c.text)).toEqual(['region', 'revenue']);
+    expect(table.rows[1].map((c: any) => c.type)).toEqual(['raw_text', 'raw_text']);
+    expect(table.rows[1].map((c: any) => c.text)).toEqual(['US', '$1M']);
+  });
+
+  it('coerces empty cells to a non-empty placeholder (raw_text min length 1)', () => {
+    const rows = [{ a: null, b: undefined }];
+    const blocks = buildTableBlocks(rows, ['a', 'b']) as any[];
+    const table = blocks.find((b) => b.type === 'table');
+    for (const row of table.rows) for (const cell of row) expect(cell.text.length).toBeGreaterThan(0);
+  });
+
+  it('falls back to a code-block (section) when there are more than 20 columns', () => {
+    const cols = Array.from({ length: 21 }, (_, i) => `c${i}`);
+    const row = Object.fromEntries(cols.map((c) => [c, '1']));
+    const blocks = buildTableBlocks([row], cols) as any[];
+    expect(blocks.some((b) => b.type === 'table')).toBe(false);
+    expect(blocks[0].type).toBe('section');
+    expect(blocks[0].text.text).toContain('```');
+  });
+});
+
+describe('formatValue', () => {
+  it('renders a Date as an ISO string', () => {
+    const d = new Date('2026-01-15T10:30:00.000Z');
+    expect(formatValue(d)).toBe('2026-01-15T10:30:00.000Z');
+  });
+
+  it('unwraps a {value} object', () => {
+    expect(formatValue({ value: '2026-01-15' })).toBe('2026-01-15');
+  });
+
+  it('renders null and undefined as an empty string', () => {
+    expect(formatValue(null)).toBe('');
+    expect(formatValue(undefined)).toBe('');
   });
 });
 
