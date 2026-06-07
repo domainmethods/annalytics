@@ -1,5 +1,5 @@
 import type { WebClient } from '@slack/web-api';
-import type { KnownBlock } from '@slack/types';
+import type { KnownBlock, ActionsBlock } from '@slack/types';
 import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
@@ -147,6 +147,9 @@ export async function handleCsvOverride(
   compoundKey: string,
   channel: string,
   threadTs: string,
+  messageTs: string,
+  userId: string,
+  currentBlocks: KnownBlock[],
   client: WebClient,
   config: OverrideConfig,
 ): Promise<void> {
@@ -171,13 +174,39 @@ export async function handleCsvOverride(
       file: Buffer.from(csv, 'utf-8'),
       title: `Results: ${ctx.clarifiedQuestion}`,
     });
+
+    // Idempotency: rebuild the message without the CSV button and add an
+    // "exported" marker, so a re-click can't upload a duplicate file.
+    // Drop only the feedback/override actions block (the one carrying the CSV
+    // button); preserve any other actions block (e.g. the assumptions "refine"
+    // block from buildResponseBlocks) so a CSV export doesn't strip it.
+    const isOverrideActions = (b: KnownBlock): boolean =>
+      b.type === 'actions' &&
+      (b as ActionsBlock).elements.some(
+        (e) =>
+          'action_id' in e &&
+          typeof e.action_id === 'string' &&
+          (e.action_id.startsWith('override_') ||
+            e.action_id.startsWith('thumbs_') ||
+            e.action_id.startsWith('show_') ||
+            e.action_id.startsWith('hide_')),
+      );
+    const preserved = currentBlocks.filter((b) => !isOverrideActions(b));
+    const overrides = { ...overrideButtonsForResultShape(result.totalRows, result.columnNames.length), csv: false };
+    const blocks: KnownBlock[] = [
+      ...preserved,
+      buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
+      { type: 'context', elements: [{ type: 'mrkdwn', text: '📎 CSV exported' }] } as KnownBlock,
+    ];
+    await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
   } catch (err) {
     rootLogger.error(
       { error: (err as Error).message, traceId: extractTraceId(err) },
       'override.csv.failed',
     );
-    await client.chat.postMessage({
+    await client.chat.postEphemeral({
       channel,
+      user: userId,
       thread_ts: threadTs,
       text: `Something went wrong exporting to CSV. (trace: ${extractTraceId(err)})`,
     });

@@ -346,9 +346,12 @@ app.action(/override_csv_.*/, async ({ action, ack, body, client }) => {
   const btn = action as { value?: string };
   if (!btn.value) return;
   const channel = (body as any).channel?.id;
-  const threadTs = (body as any).message?.thread_ts || (body as any).message?.ts;
-  if (!channel || !threadTs) return;
-  await handleCsvOverride(btn.value, channel, threadTs, client, overrideConfig);
+  const messageTs = (body as any).message?.ts;
+  const threadTs = (body as any).message?.thread_ts || messageTs;
+  const userId = (body as any).user?.id;
+  const currentBlocks = (body as any).message?.blocks || [];
+  if (!channel || !messageTs || !userId) return;
+  await handleCsvOverride(btn.value, channel, threadTs, messageTs, userId, currentBlocks, client, overrideConfig);
 });
 
 // Start

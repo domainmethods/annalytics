@@ -31,7 +31,7 @@ const mockValidate = vi.mocked(validateSql);
 const mockExecute = vi.mocked(executeQuery);
 
 const mockClient = {
-  chat: { update: vi.fn(), postMessage: vi.fn() },
+  chat: { update: vi.fn(), postMessage: vi.fn(), postEphemeral: vi.fn() },
   filesUploadV2: vi.fn(),
 } as any;
 
@@ -137,6 +137,11 @@ describe('handleSummaryOverride', () => {
   });
 });
 
+const csvCurrentBlocks = [
+  { type: 'section', text: { type: 'mrkdwn', text: 'answer' } },
+  { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+];
+
 describe('handleCsvOverride', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -144,10 +149,11 @@ describe('handleCsvOverride', () => {
     mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
     mockExecute.mockResolvedValue(queryResult);
     mockClient.filesUploadV2.mockResolvedValue({});
+    mockClient.chat.update.mockResolvedValue({});
   });
 
   it('re-executes SQL and uploads CSV file', async () => {
-    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', mockClient, overrideConfig);
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', csvCurrentBlocks, mockClient, overrideConfig);
 
     expect(mockExecute).toHaveBeenCalled();
     expect(mockClient.filesUploadV2).toHaveBeenCalledWith(
@@ -173,6 +179,7 @@ describe('handleCsvOverride with BigQuery Date objects', () => {
     mockGetCtx.mockResolvedValue(baseCtx);
     mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
     mockClient.filesUploadV2.mockResolvedValue({});
+    mockClient.chat.update.mockResolvedValue({});
   });
 
   it('serializes BigQuery Date objects via .value property', async () => {
@@ -187,7 +194,7 @@ describe('handleCsvOverride with BigQuery Date objects', () => {
       truncated: false,
     });
 
-    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', mockClient, overrideConfig);
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', csvCurrentBlocks, mockClient, overrideConfig);
 
     const uploadCall = mockClient.filesUploadV2.mock.calls[0][0];
     const csv = Buffer.from(uploadCall.file).toString();
@@ -210,7 +217,7 @@ describe('handleCsvOverride upload failure', () => {
     mockExecute.mockResolvedValue(queryResult);
     mockClient.filesUploadV2.mockRejectedValue(new Error('An API error occurred: missing_scope'));
 
-    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', mockClient, overrideConfig);
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', [], mockClient, overrideConfig);
 
     expect(vi.mocked(rootLogger.error)).toHaveBeenCalled();
     const [meta, msg] = vi.mocked(rootLogger.error).mock.calls[0];
@@ -218,6 +225,68 @@ describe('handleCsvOverride upload failure', () => {
     expect((meta as any).error).toContain('missing_scope');
     // Raw Slack API errors carry no traceId, so extractTraceId returns 'unknown' here.
     expect((meta as any).traceId).toBe('unknown');
+  });
+});
+
+describe('handleCsvOverride idempotency', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(baseCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockClient.chat.update.mockResolvedValue({});
+  });
+
+  it('on success, re-renders without the CSV button and marks it exported', async () => {
+    const currentBlocks = [
+      { type: 'section', text: { type: 'mrkdwn', text: 'answer' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks, mockClient, overrideConfig);
+    expect(mockClient.filesUploadV2).toHaveBeenCalledTimes(1);
+    expect(mockClient.chat.update).toHaveBeenCalledTimes(1);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).not.toContain('override_csv_');   // CSV button gone
+    expect(updated).toContain('CSV exported');          // marker present
+  });
+
+  it('preserves a refine-assumptions actions block while dropping only the CSV/override actions', async () => {
+    const currentBlocks = [
+      { type: 'context', elements: [{ type: 'mrkdwn', text: '🔍 *Assumptions:* x' }] },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'refine_assumptions', text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' } }] },
+      { type: 'section', text: { type: 'mrkdwn', text: 'table here' } },
+      { type: 'actions', elements: [
+        { type: 'button', action_id: 'thumbs_up_trace-abc' },
+        { type: 'button', action_id: 'override_csv_trace-abc' },
+      ] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).toContain('refine_assumptions');   // refine button survives
+    expect(updated).not.toContain('override_csv_');     // CSV button dropped
+    expect(updated).toContain('CSV exported');          // marker present
+  });
+
+  it('keeps Table and Summary buttons (only CSV is removed) for a multi-row result', async () => {
+    const currentBlocks = [
+      { type: 'section', text: { type: 'mrkdwn', text: 'table here' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+    expect(updated).not.toContain('override_csv_');
+  });
+
+  it('on failure, posts an ephemeral error to the clicking user (not the public thread)', async () => {
+    mockClient.filesUploadV2.mockRejectedValue(new Error('missing_scope'));
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', [], mockClient, overrideConfig);
+    expect(mockClient.chat.postEphemeral).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'C-CHAN', user: 'U-CLICK' }),
+    );
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
   });
 });
 
