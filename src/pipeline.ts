@@ -552,7 +552,7 @@ export function resolveEscalationTarget(
   return null;
 }
 
-function buildResponseBlocks(
+export function buildResponseBlocks(
   format: string,
   gen: SqlGenerationResult,
   result: QueryResult,
@@ -574,7 +574,11 @@ function buildResponseBlocks(
   switch (format) {
     case 'single_value': {
       const value = String(Object.values(result.rows[0])[0]);
-      return [...assumptionBlocks, ...buildSingleValueBlocks(value, gen.explanation, traceId, threadTs, statusMsgTs, overrides)];
+      return [
+        ...buildSingleValueBlocks(value, gen.headline),
+        ...assumptionBlocks,
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
+      ];
     }
     case 'table':
     case 'wide_table':
@@ -582,9 +586,9 @@ function buildResponseBlocks(
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncatedDisplay = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       return [
-        ...assumptionBlocks,
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
+        ...assumptionBlocks,
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     }
@@ -593,14 +597,14 @@ function buildResponseBlocks(
       // or export (overrideButtonsForResultShape suppresses all three). Feedback
       // and the detail toggles stay — Reasoning/Show SQL answer "why no results?"
       return [
-        ...assumptionBlocks,
         ...buildZeroRowBlocks(gen.assumptions),
+        ...assumptionBlocks,
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     default:
       return [
-        ...assumptionBlocks,
         { type: 'section', text: { type: 'mrkdwn', text: gen.explanation } } as KnownBlock,
+        ...assumptionBlocks,
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
   }

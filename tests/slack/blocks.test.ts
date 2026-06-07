@@ -31,19 +31,13 @@ describe('buildAssumptionBlocks', () => {
 });
 
 describe('buildSingleValueBlocks', () => {
-  it('creates a value section and feedback row, with no inline SQL block', () => {
-    // SQL now lives behind the Show SQL toggle, so the value answer is just the
-    // value section + the feedback/actions row.
-    const blocks = buildSingleValueBlocks('42', 'Total orders', 'trace-abc');
-    expect(blocks).toHaveLength(2); // value + feedback
-    expect(blocks[0].type).toBe('section');
-    expect((blocks[0] as any).text.text).toContain('42');
-    // No raw SQL should be rendered inline.
-    expect(JSON.stringify(blocks)).not.toContain('SELECT');
-    // Feedback actions should have the traceId
-    const actions = blocks[1] as any;
-    expect(actions.elements[0].action_id).toBe('thumbs_up_trace-abc');
-    expect(actions.elements[1].action_id).toBe('thumbs_down_trace-abc');
+  it('renders the value and headline, and returns only the section block', () => {
+    const blocks = buildSingleValueBlocks('90', 'unique visitors this month');
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: 'section',
+      text: { type: 'mrkdwn', text: '*90*\nunique visitors this month' },
+    });
   });
 });
 
