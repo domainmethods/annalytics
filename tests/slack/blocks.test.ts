@@ -128,8 +128,8 @@ describe('overrideButtonsForResultShape', () => {
     expect(overrideButtonsForResultShape(0, 3)).toEqual({ table: false, summary: false, csv: false });
   });
 
-  it('suppresses only Summary for a single scalar (value is already the prose answer)', () => {
-    expect(overrideButtonsForResultShape(1, 1)).toEqual({ summary: false });
+  it('suppresses all output overrides for a single scalar (the value is already the answer)', () => {
+    expect(overrideButtonsForResultShape(1, 1)).toEqual({ table: false, summary: false, csv: false });
   });
 
   it('shows all overrides for a multi-row table', () => {

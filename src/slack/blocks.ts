@@ -189,13 +189,13 @@ export function buildFeedbackActions(
 // the toggle handlers can reconstruct it from ResponseContext.queryResults.
 //   - zero rows: nothing to tabulate, summarize, or export → hide all three
 //   - single scalar: the value + explanation already IS the prose answer, so
-//     Summary is redundant; Table/CSV of one cell stay available
+//     Table/CSV/Summary of one cell are all redundant → hide all three
 //   - anything else (tables): show all three
 export function overrideButtonsForResultShape(
   rowCount: number,
   columnCount: number,
 ): OverrideButtons {
   if (rowCount === 0) return { table: false, summary: false, csv: false };
-  if (rowCount === 1 && columnCount === 1) return { summary: false };
+  if (rowCount === 1 && columnCount === 1) return { table: false, summary: false, csv: false };
   return {};
 }
