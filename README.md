@@ -137,6 +137,25 @@ After changing scopes, event subscriptions, slash commands, App Home settings,
 or interactivity settings, reinstall the app to the workspace from
 **Settings -> Install App**.
 
+### Escalation Target IDs
+
+When a user flags an answer (👎 -> "Wrong number" / "Wrong data"), the bot posts
+an escalation card to a human analyst. Configure the destination with
+`ESCALATION_MODE` plus one of the two IDs below (see the Configuration table).
+Slack IDs are not the display names — copy the raw `C…` / `U…` identifiers:
+
+- **Channel ID** (`ESCALATION_CHANNEL_ID`, for `ESCALATION_MODE=channel`): in
+  Slack, right-click the channel -> **View channel details**; the `C…` id is at
+  the bottom of the dialog. Or copy the channel link (**Copy link**) and take the
+  `C…` segment from `…/archives/C0123ABCD`. **Invite the bot to that channel** —
+  it can only post where it is a member.
+- **User ID** (`ESCALATION_ANALYST_USER_ID`, for `ESCALATION_MODE=dm`): open the
+  analyst's profile -> **... More** -> **Copy member ID** (a `U…` value). The bot
+  needs `chat:write` (already in the scopes above) to DM them.
+
+If neither ID resolves for the selected mode, escalation is skipped and 👎 falls
+back to silent record-only — no reason prompt is shown.
+
 ### Slack Smoke Tests
 
 After deployment and app reinstall:
@@ -345,6 +364,7 @@ All configuration is via environment variables. See `.env.example` for the local
 | `ESCALATION_ANALYST_USER_ID` | No | | Slack user ID for DM-mode escalation |
 | `ESCALATION_REMINDER_MINUTES` | No | `30` | Minutes between escalation reminders |
 | `ESCALATION_TIMEOUT_HOURS` | No | `4` | Hours before escalation times out |
+| `ESCALATION_ON_NEGATIVE_FEEDBACK` | No | `true` | Route 👎 "wrong number"/"wrong data" flags to the analyst (needs a resolved target) |
 
 ## Project Structure
 

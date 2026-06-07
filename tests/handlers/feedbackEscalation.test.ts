@@ -143,6 +143,27 @@ describe('handleFeedbackReason', () => {
     expect(respond.mock.calls[0][0].text).toMatch(/re-ask/i);
   });
 
+  it('degrades gracefully when posting the escalation card itself fails', async () => {
+    // The escalation card post is an external Slack network call: it can fail on
+    // rate limits, an invalid target channel, or an API outage. It must not throw
+    // an uncaught rejection (which would leave the ephemeral prompt un-replaced);
+    // it logs and responds with the same re-ask degrade as the save-failure path.
+    const client = makeClient();
+    client.chat.postMessage.mockRejectedValue(new Error('slack api down'));
+    const respond = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      handleFeedbackReason({
+        reasonId: 'wrong_number', compoundKey, userId: 'U1', channel: 'C1', client, respond, config: makeConfig(),
+      }),
+    ).resolves.toBeUndefined();
+
+    // Card post failed → no state written, user still gets a degrade ack.
+    expect(mockSaveEscalationState).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(respond.mock.calls[0][0].text).toMatch(/re-ask/i);
+  });
+
   it('does not double-escalate when one is already pending', async () => {
     mockHasPendingEscalation.mockResolvedValue(true);
     const client = makeClient();

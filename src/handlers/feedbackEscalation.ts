@@ -120,28 +120,32 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     return;
   }
 
-  const escalationMsg = await client.chat.postMessage({
-    channel: target,
-    text: `Anna Lytics flagged answer: "${ctx.clarifiedQuestion}"`,
-    blocks: buildEscalationBlocks({
-      userQuestion: ctx.clarifiedQuestion,
-      channelName: `<#${channel}>`,
-      threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
-      stuckDescription: `User flagged this answer as "${reason.label}". Please verify and reply with a correction.`,
-      bestGuessSql: ctx.generatedSql,
-    }) as unknown as KnownBlock[],
-  });
-
   const escalationId = `esc_fb_${ctx.traceId}`;
 
-  // The escalation card is already posted (above). If the state write fails now,
-  // we must NOT leave the user's ephemeral prompt un-replaced: without an ack
-  // they may re-click, and since no state was saved hasPendingEscalation stays
-  // false → a duplicate card posts, and the analyst's reply can't be matched.
-  // Mirror escalationResponse.ts's downstream-failure idiom: log + degrade
-  // gracefully rather than propagate. We log identifiers only (traceId/
-  // escalationId), never the SQL body, matching the sibling's level of detail.
+  // Both remaining steps are external I/O that can fail (Slack rate limits / a
+  // bad target channel / an API outage on the card post; Firestore on the save).
+  // Neither must propagate: an uncaught rejection leaves the user's ephemeral
+  // prompt un-replaced, so without an ack they may re-click. Mirror
+  // escalationResponse.ts's downstream-failure idiom: log + degrade gracefully.
+  // We log identifiers only (traceId/escalationId), never the SQL body.
+  //
+  // Partial-write note: if the card post succeeds but the save then fails, an
+  // orphan card sits in the analyst channel with no matchable state. That is the
+  // accepted v1 tradeoff — the user still gets the re-ask degrade, and a re-click
+  // re-posts rather than silently dropping. (hasPendingEscalation stays false.)
   try {
+    const escalationMsg = await client.chat.postMessage({
+      channel: target,
+      text: `Anna Lytics flagged answer: "${ctx.clarifiedQuestion}"`,
+      blocks: buildEscalationBlocks({
+        userQuestion: ctx.clarifiedQuestion,
+        channelName: `<#${channel}>`,
+        threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
+        stuckDescription: `User flagged this answer as "${reason.label}". Please verify and reply with a correction.`,
+        bestGuessSql: ctx.generatedSql,
+      }) as unknown as KnownBlock[],
+    });
+
     await saveEscalationState({
       escalationId,
       originalThreadTs: threadTs,
@@ -172,7 +176,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   } catch (err) {
     rootLogger.error(
       { error: (err as Error).message, traceId: ctx.traceId, escalationId },
-      'feedback.escalation.state_save_failed',
+      'feedback.escalation.failed',
     );
     await respond({ replace_original: true, text: REASK_MESSAGE });
     return;
