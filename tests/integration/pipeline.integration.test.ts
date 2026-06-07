@@ -325,6 +325,18 @@ describe('Pipeline — Integration', () => {
     expect(blocksJson).toContain('Assumptions');
     expect(blocksJson).toContain('all-time revenue');
     expect(blocksJson).toContain('refine_assumptions');
+
+    // Assumptions must render as a compact context block (elements array), not a
+    // bold section. A context block carries text in `elements`, never a top-level
+    // `text` field — assert the runtime shape the `as KnownBlock` cast can't.
+    const assumptionBlock = finalUpdate.blocks.find(
+      (b: any) => b.type === 'context' && JSON.stringify(b).includes('Assumptions'),
+    );
+    expect(assumptionBlock).toBeDefined();
+    expect(Array.isArray(assumptionBlock.elements)).toBe(true);
+    expect(assumptionBlock.elements[0].type).toBe('mrkdwn');
+    expect(assumptionBlock.elements[0].text).toContain('all-time revenue');
+    expect(assumptionBlock.text).toBeUndefined();
   });
 
   it('LOW confidence: suspends pipeline, posts clarification questions', async () => {

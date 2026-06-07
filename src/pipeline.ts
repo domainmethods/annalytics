@@ -557,8 +557,8 @@ function buildResponseBlocks(
   const assumptionBlocks: KnownBlock[] = [];
   if (assumptions && assumptions.length > 0) {
     assumptionBlocks.push({
-      type: 'section',
-      text: { type: 'mrkdwn', text: `*Assumptions:* ${assumptions.join(', ')}` },
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${assumptions.join(', ')}` }],
     } as KnownBlock);
     assumptionBlocks.push({
       type: 'actions',
