@@ -101,7 +101,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
   try {
     // Stage 1: Clarification
-    await updateStatus('Understanding your question...');
+    await updateStatus('Interpreting your question...');
     let teachingSummaries: Awaited<ReturnType<typeof getTeachingSummaries>> = [];
     try {
       teachingSummaries = await getTeachingSummaries();
@@ -163,7 +163,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // dbt_status route → bypass SQL generation entirely
     if (clarification.route === 'dbt_status') {
-      await updateStatus('Checking build history...');
+      await updateStatus('Checking the latest data refresh...');
       const modelName = extractModelName(resolvedQuestion);
       const runHistory = modelName
         ? await getRunHistoryForModel(modelName)
@@ -268,10 +268,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       resolvedQuestion,
       config.maxBytesProcessed,
       {
-        onGenerate: () => updateStatus('Generating SQL...'),
-        onValidate: () => updateStatus('Validating query...'),
-        onReview: () => updateStatus('Reviewing answer...'),
-        onRetry: (n) => updateStatus(`Retrying (attempt ${n + 1}/3)...`),
+        onGenerate: () => updateStatus('Researching the best approach...'),
+        onValidate: () => updateStatus('Verifying the approach...'),
+        onReview: () => updateStatus('Reviewing for accuracy...'),
+        onRetry: () => updateStatus('Refining the approach...'),
       },
     );
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
@@ -363,7 +363,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     }
 
     // Stage 5: Execution
-    await updateStatus('Running query...');
+    await updateStatus('Retrieving the data...');
     const queryResult = await executeQuery(qualityResult.sqlResult.sql, {
       maxRows: config.maxResultRows,
       timeoutMs: config.queryTimeoutMs,

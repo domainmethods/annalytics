@@ -147,7 +147,7 @@ export async function handleMessageEvent({
     const statusMsg = await client.chat.postMessage({
       channel: msg.channel,
       thread_ts: threadTs,
-      text: 'Understanding your question...',
+      text: 'Interpreting your question...',
     });
     visibleResponse = true;
     await markSlackEventVisible(eventId).catch(() => {});

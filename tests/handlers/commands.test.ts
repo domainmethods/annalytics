@@ -89,14 +89,14 @@ describe('registerCommands /anna seam', () => {
     expect(mockRunPipeline).not.toHaveBeenCalled();
 
     // The placeholder message must be updated in place (not left frozen on
-    // "Understanding your question..."). It targets the same ts that was posted.
+    // "Interpreting your question..."). It targets the same ts that was posted.
     expect(client.chat.update).toHaveBeenCalledTimes(1);
     const update = client.chat.update.mock.calls[0][0];
     expect(update.ts).toBe('status-1');
     expect(update.channel).toBe('C123');
     expect(typeof update.text).toBe('string');
     expect(update.text.length).toBeGreaterThan(0);
-    expect(update.text).not.toContain('Understanding your question');
+    expect(update.text).not.toContain('Interpreting your question');
 
     // A blocked request is not an error — the friendly-error path is not used.
     expect(mockFriendlyErrorMessage).not.toHaveBeenCalled();

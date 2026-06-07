@@ -62,7 +62,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       const statusMsg = await client.chat.postMessage({
         channel: event.channel,
         thread_ts: threadTs,
-        text: 'Understanding your question...',
+        text: 'Interpreting your question...',
       });
       const statusMsgTs = statusMsg.ts!;
       visibleResponse = true;

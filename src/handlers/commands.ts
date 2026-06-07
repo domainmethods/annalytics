@@ -36,7 +36,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
     const statusMsg = await client.chat.postMessage({
       channel: command.channel_id,
-      text: 'Understanding your question...',
+      text: 'Interpreting your question...',
     });
 
     const threadTs = statusMsg.ts!;
