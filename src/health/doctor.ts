@@ -67,6 +67,8 @@ export interface DoctorDeps {
   };
   /** Per-probe timeout. A probe slower than this is reported as `timeout`. */
   timeoutMs?: number;
+  /** Callback to log raw connection/probe errors server-side. */
+  onError?: (name: string, err: unknown) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
@@ -85,13 +87,26 @@ async function withTimeout(probe: Probe, timeoutMs: number): Promise<void> {
   }
 }
 
-async function runProbe(name: string, critical: boolean, probe: Probe, timeoutMs: number): Promise<CheckResult> {
+async function runProbe(
+  name: string,
+  critical: boolean,
+  probe: Probe,
+  timeoutMs: number,
+  onError?: (name: string, err: unknown) => void
+): Promise<CheckResult> {
   const start = Date.now();
   try {
     await withTimeout(probe, timeoutMs);
     return { name, critical, status: 'ok', durationMs: Date.now() - start };
   } catch (err) {
     const timedOut = err === TIMEOUT_SENTINEL;
+    if (onError) {
+      try {
+        onError(name, err);
+      } catch {
+        // Prevent logging errors from crashing the healthcheck pipeline itself
+      }
+    }
     return {
       name,
       critical,
@@ -126,10 +141,10 @@ export async function runDiagnostics(deps: DoctorDeps): Promise<DiagnosticReport
   // The four external dependencies — all critical to serving a query. Probed in
   // parallel so the endpoint's latency is the slowest single probe, not the sum.
   const [firestore, bigquery, gemini, slack] = await Promise.all([
-    runProbe('firestore', true, deps.probes.firestore, timeoutMs),
-    runProbe('bigquery', true, deps.probes.bigquery, timeoutMs),
-    runProbe('gemini', true, deps.probes.gemini, timeoutMs),
-    runProbe('slack', true, deps.probes.slack, timeoutMs),
+    runProbe('firestore', true, deps.probes.firestore, timeoutMs, deps.onError),
+    runProbe('bigquery', true, deps.probes.bigquery, timeoutMs, deps.onError),
+    runProbe('gemini', true, deps.probes.gemini, timeoutMs, deps.onError),
+    runProbe('slack', true, deps.probes.slack, timeoutMs, deps.onError),
   ]);
 
   const checks = [dbtCheck, firestore, bigquery, gemini, slack];

@@ -102,6 +102,16 @@ receiver.router.get('/health/doctor', async (_req, res) => {
     uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
     revision: process.env.K_REVISION ?? 'unknown',
     timestamp: new Date().toISOString(),
+    onError: (name, err) => {
+      rootLogger.error(
+        {
+          check: name,
+          error: err instanceof Error ? err.message : String(err),
+          err,
+        },
+        'doctor.probe_error'
+      );
+    },
     probes: {
       // Cheap read — confirms Firestore connectivity (doc need not exist).
       firestore: async () => {

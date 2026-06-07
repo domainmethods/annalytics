@@ -85,6 +85,32 @@ describe('runDiagnostics', () => {
     expect(JSON.stringify(report)).not.toContain('project=proj');
   });
 
+  it('calls onError with the raw error when a probe fails', async () => {
+    let loggedName: string | undefined;
+    let loggedError: any;
+    const testError = new Error('bq connection failed');
+
+    await runDiagnostics(
+      makeDeps({
+        probes: {
+          firestore: ok,
+          bigquery: async () => {
+            throw testError;
+          },
+          gemini: ok,
+          slack: ok,
+        },
+        onError: (name, err) => {
+          loggedName = name;
+          loggedError = err;
+        },
+      })
+    );
+
+    expect(loggedName).toBe('bigquery');
+    expect(loggedError).toBe(testError);
+  });
+
   it('classifies a hung probe as timeout and overall error', async () => {
     const report = await runDiagnostics(makeDeps({ probes: { firestore: ok, bigquery: ok, gemini: never, slack: ok }, timeoutMs: 20 }));
     const gem = report.checks.find((c) => c.name === 'gemini')!;
