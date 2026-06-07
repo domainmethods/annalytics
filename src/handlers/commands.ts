@@ -42,11 +42,20 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
     const threadTs = statusMsg.ts!;
     const statusMsgTs = statusMsg.ts!;
 
-    // Preflight: lock + clarification + escalation guards
-    const passed = await preflightChecks(command.channel_id, threadTs, client);
-    if (!passed) return;
-
     try {
+      // Preflight: lock + clarification + escalation guards. preflightChecks
+      // posts its own threaded note explaining the block; update the placeholder
+      // so it isn't left frozen on "Interpreting your question...".
+      const passed = await preflightChecks(command.channel_id, threadTs, client);
+      if (!passed) {
+        await client.chat.update({
+          channel: command.channel_id,
+          ts: statusMsgTs,
+          text: "This thread already has a request open, so I can't start a new one yet.",
+        });
+        return;
+      }
+
       await runPipeline({
         question: command.text,
         channel: command.channel_id,
