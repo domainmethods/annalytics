@@ -127,6 +127,8 @@ describe('handleFeedbackReason', () => {
 
     expect(respond).toHaveBeenCalledTimes(1);
     expect(respond.mock.calls[0][0].replace_original).toBe(true);
+    // Issue #3: the success ack must thread to the original answer, not DM root.
+    expect(respond.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
   });
 
   it('degrades gracefully when the escalation card posted but the state save fails', async () => {
@@ -206,6 +208,21 @@ describe('handleFeedbackReason', () => {
     expect(client.chat.postMessage.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
   });
 
+  it('threads the refine ack with thread_ts', async () => {
+    // Issue #3: the ephemeral ack must replace in-thread, not at the DM root.
+    // `respond` posts via response_url, which doesn't carry thread_ts unless we
+    // pass it explicitly. This asserts we pass it; whether Slack honors it on a
+    // response_url replacement is a staging verification step, not a code one.
+    const client = makeClient();
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'not_asked', compoundKey, userId: 'U1', channel: 'C1', client, respond, config: makeConfig(),
+    });
+    expect(respond).toHaveBeenCalledWith(
+      expect.objectContaining({ thread_ts: '1700000000.000100' }),
+    );
+  });
+
   it('records "other" with an ack only — no escalation, no public post', async () => {
     const client = makeClient();
     const respond = vi.fn();
@@ -251,6 +268,7 @@ describe('handleFeedbackReason', () => {
     expect(respond.mock.calls[0][0]).toEqual({
       replace_original: true,
       text: 'Thanks — noted. I logged this for review.',
+      thread_ts: 'T1',
     });
   });
 

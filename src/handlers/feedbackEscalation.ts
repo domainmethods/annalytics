@@ -74,6 +74,14 @@ export interface HandleFeedbackReasonParams {
 export async function handleFeedbackReason(params: HandleFeedbackReasonParams): Promise<void> {
   const { reasonId, compoundKey, userId, channel, client, respond, config, triggerId } = params;
 
+  // Derive threadTs up front so every in-thread ack can pass it to `respond`,
+  // which posts via response_url and does NOT carry thread_ts unless we set it
+  // explicitly (Issue #3). A malformed key yields undefined here; the explicit
+  // split-validation guard below still owns the re-ask degrade for that case.
+  // `undefined` thread_ts on the early record-route acks is harmless — it's the
+  // same un-threaded behavior those paths had before.
+  const earlyThreadTs = compoundKey.split('_')[0] || undefined;
+
   // "Other" with an interaction trigger → collect a free-text note via modal
   // instead of acking immediately. The modal submission (a separate handler)
   // does the persistence + ack. Guarded on triggerId so callers that don't
@@ -95,7 +103,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
         { error: (err as Error).message, channel, compoundKey },
         'feedback.other_note.modal_open_failed',
       );
-      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.' });
+      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
       return;
     }
   }
@@ -104,7 +112,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
 
   // Unknown reason id → treat as record-only.
   if (!reason || reason.route === 'record') {
-    await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.' });
+    await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
     return;
   }
 
@@ -127,7 +135,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
       thread_ts: threadTs,
       text: "What should I change about my assumptions? Reply with your corrections and I'll re-run the query.",
     });
-    await respond({ replace_original: true, text: 'Got it — let me know what to change in the thread.' });
+    await respond({ replace_original: true, text: 'Got it — let me know what to change in the thread.', thread_ts: threadTs } as any);
     return;
   }
 
@@ -135,18 +143,18 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   const target = resolveEscalationTarget(config.escalation);
   if (!target) {
     // No analyst target configured → record-only degrade.
-    await respond({ replace_original: true, text: 'Thanks — noted. (No data-team channel is configured.)' });
+    await respond({ replace_original: true, text: 'Thanks — noted. (No data-team channel is configured.)', thread_ts: threadTs } as any);
     return;
   }
 
   const ctx = await getResponseContext(compoundKey);
   if (!ctx) {
-    await respond({ replace_original: true, text: REASK_MESSAGE });
+    await respond({ replace_original: true, text: REASK_MESSAGE, thread_ts: threadTs } as any);
     return;
   }
 
   if (await hasPendingEscalation(threadTs)) {
-    await respond({ replace_original: true, text: '✅ This thread is already flagged for the data team.' });
+    await respond({ replace_original: true, text: '✅ This thread is already flagged for the data team.', thread_ts: threadTs } as any);
     return;
   }
 
@@ -208,7 +216,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
       { error: (err as Error).message, traceId: ctx.traceId, escalationId },
       'feedback.escalation.failed',
     );
-    await respond({ replace_original: true, text: REASK_MESSAGE });
+    await respond({ replace_original: true, text: REASK_MESSAGE, thread_ts: threadTs } as any);
     return;
   }
 
@@ -216,7 +224,8 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     replace_original: true,
     blocks: buildFeedbackAckBlocks("✅ Flagged for the data team — I'll reply here when they weigh in.") as unknown as KnownBlock[],
     text: 'Flagged for the data team.',
-  });
+    thread_ts: threadTs,
+  } as any);
 }
 
 export interface HandleOtherNoteSubmissionParams {
