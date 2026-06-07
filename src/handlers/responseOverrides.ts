@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
-import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue } from '../slack/blocks.js';
+import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
 import { getFlashModel } from '../agents/modelConfig.js';
 import { rootLogger } from '../logging.js';
 export { formatValue };
@@ -61,6 +61,7 @@ export async function handleTableOverride(
     // message consistent with the original answer's layout.
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     const blocks: KnownBlock[] = [
+      ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
       ...buildTableBlocks(displayRows, result.columnNames),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
@@ -113,6 +114,7 @@ export async function handleSummaryOverride(
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
       const blocks: KnownBlock[] = [
+        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: summary } } as KnownBlock,
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
       ];
@@ -123,6 +125,7 @@ export async function handleSummaryOverride(
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       const blocks: KnownBlock[] = [
+        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),

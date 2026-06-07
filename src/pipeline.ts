@@ -18,6 +18,7 @@ import {
   buildTruncatedBlocks,
   buildFeedbackActions,
   overrideButtonsForResultShape,
+  buildAssumptionBlocks,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
 import { saveClarificationState } from './state/clarificationState.js';
@@ -554,22 +555,7 @@ function buildResponseBlocks(
   statusMsgTs: string,
   assumptions?: string[],
 ): KnownBlock[] {
-  const assumptionBlocks: KnownBlock[] = [];
-  if (assumptions && assumptions.length > 0) {
-    assumptionBlocks.push({
-      type: 'context',
-      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${assumptions.join(', ')}` }],
-    } as KnownBlock);
-    assumptionBlocks.push({
-      type: 'actions',
-      elements: [{
-        type: 'button',
-        text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' },
-        action_id: 'refine_assumptions',
-        value: traceId,
-      }],
-    } as KnownBlock);
-  }
+  const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
 
   const MAX_DISPLAY_ROWS = 20;
 

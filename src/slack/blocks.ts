@@ -13,6 +13,31 @@ export function formatValue(val: unknown): string {
   return String(val);
 }
 
+// Leading blocks for an answer derived from assumptions: a context line listing
+// the assumptions plus a "refine" actions block. Single source of truth shared
+// by the initial render (pipeline) and the Table/Summary override re-renders so
+// the refine affordance survives an override click. Returns [] when there are no
+// assumptions. The context block carries text in `elements` (not a top-level
+// `text`) — clients/tests rely on that exact shape.
+export function buildAssumptionBlocks(assumptions: string[], traceId: string): KnownBlock[] {
+  if (!assumptions || assumptions.length === 0) return [];
+  return [
+    {
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${assumptions.join(', ')}` }],
+    } as KnownBlock,
+    {
+      type: 'actions',
+      elements: [{
+        type: 'button',
+        text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' },
+        action_id: 'refine_assumptions',
+        value: traceId,
+      }],
+    } as KnownBlock,
+  ];
+}
+
 export function buildSingleValueBlocks(
   value: string,
   explanation: string,

@@ -137,6 +137,32 @@ describe('handleSummaryOverride', () => {
   });
 });
 
+describe('override handlers preserve assumptions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('preserves assumptions + refine button when re-rendering as a table', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, assumptions: ['order_status = completed'] });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+    expect(updated).toContain('order_status = completed');
+    expect(updated).toContain('refine_assumptions');
+  });
+
+  it('preserves assumptions + refine button when re-rendering as a summary', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, assumptions: ['order_status = completed'] });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+    expect(updated).toContain('order_status = completed');
+    expect(updated).toContain('refine_assumptions');
+  });
+});
+
 const csvCurrentBlocks = [
   { type: 'section', text: { type: 'mrkdwn', text: 'answer' } },
   { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },

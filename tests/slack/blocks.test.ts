@@ -7,7 +7,28 @@ import {
   buildFeedbackActions,
   overrideButtonsForResultShape,
   formatValue,
+  buildAssumptionBlocks,
 } from '../../src/slack/blocks.js';
+
+describe('buildAssumptionBlocks', () => {
+  it('returns an empty array when there are no assumptions', () => {
+    expect(buildAssumptionBlocks([], 'trace-1')).toEqual([]);
+  });
+
+  it('builds a context block + refine actions block when assumptions exist', () => {
+    const blocks = buildAssumptionBlocks(['order_status = completed'], 'trace-1') as any[];
+    const ctx = blocks.find((b) => b.type === 'context');
+    expect(ctx).toBeDefined();
+    expect(Array.isArray(ctx.elements)).toBe(true);
+    expect(ctx.elements[0].type).toBe('mrkdwn');
+    expect(ctx.elements[0].text).toContain('order_status = completed');
+    expect(ctx.text).toBeUndefined(); // context carries text in elements, not top-level
+    const actions = blocks.find((b) => b.type === 'actions');
+    expect(actions).toBeDefined();
+    expect(actions.elements[0].action_id).toBe('refine_assumptions');
+    expect(actions.elements[0].value).toBe('trace-1');
+  });
+});
 
 describe('buildSingleValueBlocks', () => {
   it('creates a value section and feedback row, with no inline SQL block', () => {
