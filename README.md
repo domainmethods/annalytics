@@ -130,8 +130,13 @@ commands
 files:write
 groups:history
 im:history
+im:write
 mpim:history
 ```
+
+`im:write` is required for `ESCALATION_MODE=dm` — the bot opens a direct message
+with the analyst to deliver escalation cards. Channel-mode escalation does not
+need it.
 
 After changing scopes, event subscriptions, slash commands, App Home settings,
 or interactivity settings, reinstall the app to the workspace from
@@ -151,7 +156,8 @@ Slack IDs are not the display names — copy the raw `C…` / `U…` identifiers
   it can only post where it is a member.
 - **User ID** (`ESCALATION_ANALYST_USER_ID`, for `ESCALATION_MODE=dm`): open the
   analyst's profile -> **... More** -> **Copy member ID** (a `U…` value). The bot
-  needs `chat:write` (already in the scopes above) to DM them.
+  needs both `chat:write` and `im:write` (already in the scopes above) to open and
+  post the DM. The analyst must also be a member of the workspace the bot is installed in.
 
 If neither ID resolves for the selected mode, escalation is skipped and 👎 falls
 back to silent record-only — no reason prompt is shown.
