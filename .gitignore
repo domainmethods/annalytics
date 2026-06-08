@@ -15,3 +15,5 @@ dbt/manifest.json
 dbt/catalog.json
 benchmarks/results/*
 !benchmarks/results/.gitkeep
+# Client-specific live corpus (real schema). Template stays in benchmarks/corpus.json.
+benchmarks/corpus.live.json
