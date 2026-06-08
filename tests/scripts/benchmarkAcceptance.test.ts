@@ -428,6 +428,18 @@ describe('formatReferenceCardAcceptanceReport', () => {
     expect(report).toContain('Expand to one next high-confusion domain.');
   });
 
+  it('renders the judge model and GCP project in run provenance', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([result()], {
+      ...metadata,
+      judgeModel: 'gemini-3.1-flash-lite',
+      gcpProjectId: 'my-proj',
+    }));
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('| Judge Model | gemini-3.1-flash-lite |');
+    expect(report).toContain('| GCP Project | my-proj |');
+  });
+
   it('formats failure rows when acceptance needs revision', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({ observedReferenceIds: [], referenceRetrievalPassed: false }),

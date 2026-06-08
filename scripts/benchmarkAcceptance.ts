@@ -152,6 +152,8 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
   lines.push(`| dbt Catalog Hash | ${escapeMarkdown(result.metadata?.dbtCatalogHash ?? '(not available)')} |`);
   lines.push(`| Gemini Model | ${escapeMarkdown(result.metadata?.geminiModel ?? '(missing)')} |`);
   lines.push(`| File Search Store | ${escapeMarkdown(result.metadata?.fileSearchStoreId ?? '(missing)')} |`);
+  lines.push(`| Judge Model | ${escapeMarkdown(result.metadata?.judgeModel ?? '(missing)')} |`);
+  lines.push(`| GCP Project | ${escapeMarkdown(result.metadata?.gcpProjectId ?? '(missing)')} |`);
   lines.push('');
 
   lines.push('## ReferenceCard Scorecard');
