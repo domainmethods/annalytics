@@ -202,8 +202,9 @@ As of 2026-06-04:
 As of 2026-06-05:
 
 - Setup and deployment guidance was simplified as trust-infrastructure maintenance, not Phase 3 product expansion.
-- Direct `gcloud run deploy` is the supported runtime deployment path. Terraform is optional and limited to persistent GCP setup: APIs, Firestore, Firestore indexes, Artifact Registry, service account/IAM, and empty Secret Manager containers.
-- Runtime secret values are intentionally excluded from Terraform state. Cloud Run binds `slack-bot-token`, `slack-signing-secret`, and `gemini-api-key` at deploy time.
+- Direct `gcloud` is the supported path for both runtime deploy (`gcloud run deploy`) and persistent setup (APIs, Firestore, Firestore indexes, Artifact Registry, service account/IAM, Secret Manager containers). See README "Infrastructure Setup" for the per-resource commands.
+- The Terraform config in `infra/` is **not assumed to be applied**: it has no committed/remote state and CI never runs `terraform apply`. It is retained only as an optional declarative reference, and `infra/firestore.indexes.json` doubles as the canonical manifest of required Firestore composite indexes (apply via `gcloud firestore indexes composite create`).
+- Runtime secret values are added outside any IaC. Cloud Run binds `slack-bot-token`, `slack-signing-secret`, and `gemini-api-key` at deploy time.
 - `references/` and `scripts/sync-knowledge.ts` are the primary knowledge authoring/sync path. Legacy teaching-only sync remains for compatibility but is not the main onboarding path.
 - `scripts/setup-check.ts` records offline setup guardrails for stale model IDs, required files, env var presence without secret values, dbt artifact presence, ReferenceCard/dbt alignment, workflow consistency, and Terraform boundary drift.
 - File Search investigation showed successful sync requires more than a store ID: upload operations must complete and uploaded documents must read back as `STATE_ACTIVE`.
@@ -221,6 +222,7 @@ As of 2026-06-06:
 As of 2026-06-07:
 
 - Maintenance slice closing a write-only capture gap in the negative-feedback path: 👎 → "Other" free-text notes were persisted to `feedback_notes` but had no read path, so the richest correction signal was silently discarded. Added `getPendingFeedbackNotes()` / `markFeedbackNoteReviewed()` and surfaced pending notes in the `scripts/promote-teachings.ts` admin review so a human curating knowledge also sees what users flagged as wrong.
+- The `getPendingFeedbackNotes()` query needs a `feedback_notes` composite index (`status ASC + createdAt DESC`), declared in `infra/firestore.indexes.json`. Since Terraform is not applied in this environment (see README "Infrastructure Setup"), this index must be created manually with `gcloud firestore indexes composite create` before the read path works in production — the query is `FAILED_PRECONDITION` without it.
 - Boundary it respects: this only informs the existing human review gate (guardrail #3). It does NOT auto-promote notes into teachings or retrieval; turning a note into a teaching stays a deliberate, separate act. The "Automatic correction harvesting from binary feedback" line remains deferred.
 
 ## Relationship to Existing Docs

@@ -26,7 +26,7 @@ All generated queries must be SELECT-only. The bot cannot modify warehouse data.
 - A Slack app with a bot token and signing secret.
 - A Gemini Developer API key from Google AI Studio.
 - dbt artifacts from the warehouse project.
-- Optional: Terraform or OpenTofu for persistent infrastructure setup.
+- Node.js (used to run the index-manifest helper during persistent setup).
 
 ## Knowledge Model
 
@@ -223,33 +223,104 @@ npm run lint
 
 ## Infrastructure Setup
 
-The supported runtime deploy path is direct `gcloud` deployment. Terraform in `infra/` is optional and only manages persistent setup:
+Persistent GCP setup is provisioned manually with `gcloud`. The Terraform config
+in `infra/` is **not** the assumed deploy path — it is retained only as an
+optional, declarative reference (and `infra/firestore.indexes.json` doubles as
+the canonical list of required Firestore indexes). Nothing in this repo runs
+`terraform apply`; CI and the runtime deploy use `gcloud` only.
+
+The persistent resources, all created once per project:
 
 - Required GCP APIs.
 - Firestore Native database.
-- Firestore composite indexes derived from `infra/firestore.indexes.json`.
-- Artifact Registry repository.
+- Firestore composite indexes (manifest: `infra/firestore.indexes.json`).
+- Artifact Registry repository (`anna-lytics`, Docker format).
 - `anna-lytics` service account and IAM.
-- Empty Secret Manager secret containers for runtime secrets.
+- Secret Manager secret containers for runtime secrets.
 
-Terraform does not deploy Cloud Run revisions and does not store secret values in state.
+Set your target project and region first:
 
 ```bash
-cd infra
-terraform init
-terraform apply \
-  -var="project_id=your-gcp-project" \
-  -var="region=us-west1"
+export GCP_PROJECT_ID="your-gcp-project"
+export REGION="us-west1"
 ```
 
-If resources already exist because they were created manually, import them before applying Terraform. At minimum, verify the Firestore database, indexes, service account, Artifact Registry repository, and runtime secret containers.
-
-Runtime secret values must be added outside Terraform:
+### 1. Enable APIs
 
 ```bash
-printf '%s' "$SLACK_BOT_TOKEN" | gcloud secrets versions add slack-bot-token --data-file=- --project "$GCP_PROJECT_ID"
+gcloud services enable \
+  run.googleapis.com firestore.googleapis.com bigquery.googleapis.com \
+  secretmanager.googleapis.com artifactregistry.googleapis.com \
+  --project "$GCP_PROJECT_ID"
+```
+
+### 2. Firestore database
+
+```bash
+gcloud firestore databases create --location="$REGION" --type=firestore-native \
+  --project "$GCP_PROJECT_ID"
+```
+
+### 3. Firestore composite indexes
+
+Single-field indexes are created automatically by Firestore. The multi-field
+composite indexes must be created explicitly. This one-liner emits a
+`gcloud firestore indexes composite create` command for every composite index
+declared in the manifest, so it stays in sync with `infra/firestore.indexes.json`:
+
+```bash
+node -e 'JSON.parse(require("fs").readFileSync("infra/firestore.indexes.json")).indexes.filter(i=>i.fields.length>1).forEach(i=>console.log("gcloud firestore indexes composite create --collection-group="+i.collectionGroup+" --query-scope="+i.queryScope+" "+i.fields.map(f=>"--field-config=field-path="+f.fieldPath+",order="+f.order.toLowerCase()).join(" ")+" --project=\"$GCP_PROJECT_ID\""))'
+```
+
+Review the printed commands, then pipe them to a shell to apply (creating an
+index that already exists is a safe no-op):
+
+```bash
+node -e '...' | sh   # same one-liner as above, piped to sh
+```
+
+Verify what is live at any time:
+
+```bash
+gcloud firestore indexes composite list --project "$GCP_PROJECT_ID"
+```
+
+### 4. Artifact Registry
+
+```bash
+gcloud artifacts repositories create anna-lytics --repository-format=docker \
+  --location="$REGION" --project "$GCP_PROJECT_ID"
+```
+
+### 5. Service account and IAM
+
+```bash
+gcloud iam service-accounts create anna-lytics --display-name="Anna Lytics Bot" \
+  --project "$GCP_PROJECT_ID"
+
+SA="anna-lytics@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+for ROLE in roles/bigquery.dataViewer roles/bigquery.jobUser roles/datastore.user; do
+  gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="$ROLE"
+done
+```
+
+### 6. Secret Manager
+
+Create the secret containers, grant the service account access, then add values:
+
+```bash
+SA="anna-lytics@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+for SECRET in slack-bot-token slack-signing-secret gemini-api-key; do
+  gcloud secrets create "$SECRET" --replication-policy=automatic --project "$GCP_PROJECT_ID"
+  gcloud secrets add-iam-policy-binding "$SECRET" \
+    --member="serviceAccount:${SA}" --role=roles/secretmanager.secretAccessor \
+    --project "$GCP_PROJECT_ID"
+done
+
+printf '%s' "$SLACK_BOT_TOKEN"      | gcloud secrets versions add slack-bot-token      --data-file=- --project "$GCP_PROJECT_ID"
 printf '%s' "$SLACK_SIGNING_SECRET" | gcloud secrets versions add slack-signing-secret --data-file=- --project "$GCP_PROJECT_ID"
-printf '%s' "$GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=- --project "$GCP_PROJECT_ID"
+printf '%s' "$GEMINI_API_KEY"       | gcloud secrets versions add gemini-api-key       --data-file=- --project "$GCP_PROJECT_ID"
 ```
 
 Required Secret Manager names:
@@ -259,12 +330,6 @@ Required Secret Manager names:
 | `slack-bot-token` | `SLACK_BOT_TOKEN` |
 | `slack-signing-secret` | `SLACK_SIGNING_SECRET` |
 | `gemini-api-key` | `GEMINI_API_KEY` |
-
-Validate optional Terraform configuration when Terraform or OpenTofu is installed:
-
-```bash
-npm run infra:validate
-```
 
 ## Deployment
 
