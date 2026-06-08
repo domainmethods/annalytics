@@ -144,7 +144,12 @@ async function checkModelDocs(
   // Only pinned Gemini 3.x `-preview`/`-lite`/`-flash` ids are allowed. Both the
   // nonexistent `gemini-3.0` and the floating `-latest` aliases are now stale —
   // `-latest` could silently resolve to a non-3.x model, violating the hard 3.x constraint.
-  for (const file of ['README.md', '.env.example']) {
+  // Also scan the developer's ACTIVE `.env` when present — docs being clean is no
+  // protection if the local runtime config still pins a stale alias. (We only
+  // regex the contents and report the filename; secrets are never read out.)
+  const files = ['README.md', '.env.example'];
+  if (await fileExists(rootDir, '.env')) files.push('.env');
+  for (const file of files) {
     const content = await readText(rootDir, file);
     if (/gemini-3\.0|-latest\b/.test(content)) {
       add(

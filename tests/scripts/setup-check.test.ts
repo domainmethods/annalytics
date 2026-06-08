@@ -1,11 +1,21 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { formatSetupCheckResult, runSetupCheck } from '../../scripts/setup-check.js';
+
+// Track every fixture dir so afterEach can remove it — mkdtemp dirs otherwise
+// accumulate under /tmp across runs.
+const createdRoots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(createdRoots.map((root) => rm(root, { recursive: true, force: true })));
+  createdRoots.length = 0;
+});
 
 async function createRepoFixture(overrides: Partial<Record<string, string>> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'annalytics-setup-check-'));
+  createdRoots.push(root);
   await mkdir(join(root, '.github', 'workflows'), { recursive: true });
   await mkdir(join(root, 'docs'), { recursive: true });
   await mkdir(join(root, 'infra'), { recursive: true });
@@ -125,6 +135,36 @@ describe('runSetupCheck', () => {
       status: 'error',
       message: 'Stale Gemini model ID found in README.md; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases',
     });
+  });
+
+  it('flags a stale model id in the developer\'s active .env, not just docs', async () => {
+    // Docs/examples can be perfectly clean while the local runtime config still
+    // pins a stale alias — the check must scan .env when it is present.
+    const root = await createRepoFixture({
+      '.env': 'GEMINI_JUDGE_MODEL=gemini-pro-latest',
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Stale Gemini model ID found in .env; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases',
+    });
+  });
+
+  it('does not flag .env when the file is absent', async () => {
+    const root = await createRepoFixture();
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    // No .env in the fixture → no .env finding at all (neither ok nor error).
+    // Anchor on `.env;`/`.env` end-of-string so `.env.example` findings don't
+    // count as `.env` matches.
+    expect(
+      result.findings.some(
+        (f) => f.message.includes('found in .env;') || f.message.endsWith('current in .env'),
+      ),
+    ).toBe(false);
   });
 
   it('reports ReferenceCard table mismatches when dbt artifacts are present', async () => {

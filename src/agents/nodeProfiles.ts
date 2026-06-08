@@ -41,6 +41,14 @@ const DEFAULTS: Record<NodeId, NodeProfile> = {
   sqlGenerator: PRO_DEFAULT, supervisor: PRO_DEFAULT, discrepancy: PRO_DEFAULT,
 };
 
+// Runtime list of valid node ids (single source of truth = the DEFAULTS keys),
+// so CLIs and config loaders can validate a string against the NodeId union,
+// which type-only declarations can't do at runtime.
+export const NODE_IDS = Object.keys(DEFAULTS) as NodeId[];
+export function isNodeId(value: string): value is NodeId {
+  return (NODE_IDS as readonly string[]).includes(value);
+}
+
 const TIERS: ModelTier[] = ['flash-lite', 'flash', 'pro'];
 const LEVELS: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'default'];
 

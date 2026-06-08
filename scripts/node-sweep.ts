@@ -10,7 +10,7 @@ import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
 import { getJudgeModel, resolveModelId, type ModelTier } from '../src/agents/modelConfig.js';
-import { resolveNodeModel, defaultTierForNode, type NodeId } from '../src/agents/nodeProfiles.js';
+import { resolveNodeModel, defaultTierForNode, isNodeId, NODE_IDS, type NodeId } from '../src/agents/nodeProfiles.js';
 import { withUsageSink, type UsageRecord } from '../src/agents/modelGateway.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
@@ -62,7 +62,14 @@ function parseArgs(argv: string[]): SweepArgs {
     const arg = argv[i];
     if (arg === '--node') {
       const value = argv[++i];
-      if (value) nodes.push(value as NodeId);
+      if (value) {
+        // Validate at the CLI boundary: an unknown node otherwise crashes deep in
+        // the ladder with a cryptic "no Gemini 3.x model for tier=undefined".
+        if (!isNodeId(value)) {
+          throw new Error(`Unknown --node "${value}". Valid nodes: ${NODE_IDS.join(', ')}`);
+        }
+        nodes.push(value);
+      }
     } else if (arg === '--version') {
       version = argv[++i];
     } else if (arg === '--corpus') {
@@ -644,9 +651,14 @@ async function main() {
             overallScore: judge.overallScore,
           });
         } catch (err) {
-          console.error(`  [${entry.id}] ERROR: ${(err as Error).message}`);
-          // Record a zeroed entry so id-alignment stays stable across runs.
-          perEntry.push({ id: entry.id, clarificationPassed: false, sqlGenMetric: 0, overallScore: 1 });
+          // Do NOT zero-fill. A genuine measurement outcome (wrong table, bad SQL
+          // shape, low-confidence clarification) is *scored* above, never thrown —
+          // so any exception reaching here is an exceptional failure: a transient
+          // API error (429/timeout/overload), a parse error, or a bug. Scoring it
+          // as a 0 would masquerade infrastructure noise as a real rung result and
+          // corrupt the sizing. Re-throw so the rung-level loop in runSweep aborts
+          // the whole sweep (and restores NODE_PROFILE_OVERRIDES in its finally).
+          throw new Error(`corpus entry "${entry.id}" failed: ${(err as Error).message}`);
         }
       }
     });
