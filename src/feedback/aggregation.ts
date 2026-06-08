@@ -49,7 +49,7 @@ export function getDomainPainRanking(records: FeedbackRecord[], minSample = 5): 
   });
 }
 
-/** negativeRate bucketed by the response's stated confidence. Emitted in fixed
+/** negativeRate bucketed by the response's reconciled confidence. Emitted in fixed
  *  low→medium→high order; buckets with no records are omitted. */
 export function getConfidenceCalibration(records: FeedbackRecord[]): CalibrationBucket[] {
   const acc = tally(records, (r) => r.confidence);

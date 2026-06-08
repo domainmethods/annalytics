@@ -30,5 +30,6 @@ export function formatReport(ranking: DomainPain[], calibration: CalibrationBuck
   for (const c of calibration) {
     lines.push(`  ${c.confidence.padEnd(8)} ${pct(c.negativeRate)}  (${c.negative}/${c.total})`);
   }
+  if (calibration.length === 0) lines.push('  (no feedback recorded in window)');
   return lines.join('\n');
 }

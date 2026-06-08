@@ -11,6 +11,10 @@ async function main() {
   const projectId = process.env.GCP_PROJECT_ID;
   if (!projectId) { console.error('GCP_PROJECT_ID is required'); process.exit(1); }
   const windowDays = Number(process.env.WINDOW_DAYS ?? 30);
+  if (!Number.isFinite(windowDays) || windowDays <= 0) {
+    console.error('WINDOW_DAYS must be a positive number');
+    process.exit(1);
+  }
 
   initFirestore(projectId);
 
