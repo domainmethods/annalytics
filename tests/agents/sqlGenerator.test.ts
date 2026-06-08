@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { generateSql } from '../../src/agents/sqlGenerator.js';
 import type { TableContext } from '../../src/dbt/types.js';
 import type { ThreadMessage } from '../../src/types.js';
@@ -31,6 +31,10 @@ const mockTables: TableContext[] = [
 describe('generateSql', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('returns structured SQL generation result', async () => {
@@ -169,5 +173,47 @@ describe('generateSql', () => {
     expect(callArgs.config.responseMimeType).toBe('application/json');
     expect(callArgs.config.responseJsonSchema).toBeDefined();
     expect(callArgs.config.responseJsonSchema.type).toBe('object');
+  });
+
+  it('defaults the resolved model to gemini-3.1-pro-preview', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT 1',
+        explanation: 'test',
+        tables_used: [],
+        confidence: 'high',
+        assumptions: [],
+        reasoning_chain: 'test',
+        headline: 'test',
+      }),
+    });
+
+    await generateSql({ question: 'test', tables: mockTables, threadContext: [], apiKey: 'test-api-key' });
+
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.1-pro-preview');
+  });
+
+  // Regression: NODE_PROFILE_OVERRIDES for the sqlGenerator node must reach the
+  // resolved model on the generateContent call. Previously config.gemini.model
+  // shadowed the seam, so an override here had no effect.
+  it('honors NODE_PROFILE_OVERRIDES for the sqlGenerator node', async () => {
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      sqlGenerator: { tier: 'flash', version: '3', thinkingLevel: 'minimal' },
+    }));
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT 1',
+        explanation: 'test',
+        tables_used: [],
+        confidence: 'high',
+        assumptions: [],
+        reasoning_chain: 'test',
+        headline: 'test',
+      }),
+    });
+
+    await generateSql({ question: 'test', tables: mockTables, threadContext: [], apiKey: 'test-api-key' });
+
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3-flash-preview');
   });
 });

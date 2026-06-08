@@ -251,7 +251,6 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         tables: pipelineTables,
         threadContext,
         apiKey: config.geminiApiKey,
-        model: config.geminiModel,
         fileSearchStoreId: config.fileSearchStoreId,
         sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
         negativeExample: negativeExample ? {

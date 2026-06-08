@@ -3,7 +3,7 @@ import type { TableContext } from '../dbt/types.js';
 import type { SqlGenerationResult, ThreadMessage } from '../types.js';
 import { assessQuality } from '../dbt/quality.js';
 import { formatSampleRowsForPrompt } from '../dbt/sampleRowCache.js';
-import { getProModel } from './modelConfig.js';
+import { generateForNode } from './modelGateway.js';
 import { extractGroundingCitations } from './grounding.js';
 
 export interface GenerateSqlOptions {
@@ -127,7 +127,6 @@ function buildContents(
 
 export async function generateSql(opts: GenerateSqlOptions): Promise<SqlGenerationResult> {
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-  const model = opts.model || getProModel();
 
   let systemPrompt = buildSystemPrompt(opts);
 
@@ -153,8 +152,7 @@ Fix the error and generate a corrected query.`;
   let response;
   let fileSearchDegraded = false;
   try {
-    response = await ai.models.generateContent({
-      model,
+    response = await generateForNode('sqlGenerator', ai, {
       contents: buildContents(opts.question, opts.threadContext),
       config: {
         systemInstruction: systemPrompt,
@@ -167,8 +165,7 @@ Fix the error and generate a corrected query.`;
     // Graceful degradation: retry without File Search tools
     if (tools) {
       fileSearchDegraded = true;
-      response = await ai.models.generateContent({
-        model,
+      response = await generateForNode('sqlGenerator', ai, {
         contents: buildContents(opts.question, opts.threadContext),
         config: {
           systemInstruction: systemPrompt,
