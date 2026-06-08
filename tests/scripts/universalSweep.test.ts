@@ -4,7 +4,7 @@ import {
   pickFloorUp,
   type RungAccuracy,
 } from '../../scripts/universal-sweep-core.js';
-import { sweepNode } from '../../scripts/universal-sweep.js';
+import { sweepNode, withRetry } from '../../scripts/universal-sweep.js';
 import { DEFAULT_LADDER } from '../../scripts/node-sweep-types.js';
 
 describe('accuracy', () => {
@@ -71,6 +71,38 @@ describe('pickFloorUp', () => {
 
   it('throws on an empty ladder rather than returning a bogus pick', () => {
     expect(() => pickFloorUp([], 1.0)).toThrow();
+  });
+});
+
+describe('withRetry', () => {
+  it('resolves once an attempt succeeds, tolerating earlier transient failures', async () => {
+    let calls = 0;
+    const result = await withRetry(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw new Error('transient blip');
+        return 'ok';
+      },
+      3,
+      0, // no backoff delay in tests
+    );
+    expect(result).toBe('ok');
+    expect(calls).toBe(3);
+  });
+
+  it('re-throws the last error after exhausting all attempts', async () => {
+    let calls = 0;
+    await expect(
+      withRetry(
+        async () => {
+          calls += 1;
+          throw new Error(`persistent failure ${calls}`);
+        },
+        3,
+        0,
+      ),
+    ).rejects.toThrow('persistent failure 3');
+    expect(calls).toBe(3);
   });
 });
 

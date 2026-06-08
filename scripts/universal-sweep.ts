@@ -110,18 +110,50 @@ export async function sweepNode(
 
 // ── Live runners (bind the real agents to the corpus + apiKey) ───────────────
 
+// In a MEASUREMENT run we want the model's actual answer, not a production
+// latency-bounded fail-open: classifySlackIntake's 8s prod cap (fail-open into
+// analytics_pipeline) would score a cold-start blip as a route miss. Give it
+// generous headroom — we measure the routing decision, not its p95 here.
+const SWEEP_INTAKE_TIMEOUT_MS = 30_000;
+// Bounded retry so a single transient timeout/429 doesn't abort the whole sweep,
+// while a persistent failure still aborts (vs. silently scoring it as a miss).
+const CLASSIFY_ATTEMPTS = 3;
+
+/** Retry an async op a few times before giving up, so one transient blip doesn't
+ *  abort a long measurement run. Re-throws the LAST error once attempts run out. */
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, delayMs = 1000): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+async function classifyIntakeRoute(text: string, apiKey: string, entryId: string): Promise<string> {
+  const result = await classifySlackIntake(text, apiKey, { timeoutMs: SWEEP_INTAKE_TIMEOUT_MS });
+  // The agent is fail-open: a model/network error returns FALLBACK_RESULT with a
+  // 'fallback:' reasoning prefix. Throw so withRetry can re-attempt; a persistent
+  // fallback exhausts the retries and aborts the sweep (never scored as a miss).
+  if (result.reasoning.startsWith('fallback:')) {
+    throw new Error(`intake fallback fired on "${entryId}" — model call degraded`);
+  }
+  return result.route;
+}
+
 function makeIntakeRunner(corpus: IntakeEntry[], apiKey: string): () => Promise<Prediction[]> {
   return async () => {
     const out: Prediction[] = [];
     for (const entry of corpus) {
-      const result = await classifySlackIntake(entry.text, apiKey);
-      // The agent is fail-open: a model/network error returns FALLBACK_RESULT
-      // with a 'fallback:' reasoning prefix. Scoring that as a route miss would
-      // unfairly fail the rung, so surface it as an abort-worthy error instead.
-      if (result.reasoning.startsWith('fallback:')) {
-        throw new Error(`intake fallback fired on "${entry.id}" — model call degraded`);
-      }
-      out.push({ expected: entry.expectedRoute, predicted: result.route });
+      const route = await withRetry(
+        () => classifyIntakeRoute(entry.text, apiKey, entry.id),
+        CLASSIFY_ATTEMPTS,
+      );
+      out.push({ expected: entry.expectedRoute, predicted: route });
     }
     return out;
   };
@@ -131,9 +163,12 @@ function makeFollowUpRunner(corpus: FollowUpEntry[], apiKey: string): () => Prom
   return async () => {
     const out: Prediction[] = [];
     for (const entry of corpus) {
-      // classifyFollowUp throws on its own degraded paths (empty/unparseable),
-      // which propagates up to abort the sweep — the desired behavior.
-      const result = await classifyFollowUp(entry.message, entry.thread, apiKey);
+      // classifyFollowUp throws on its own degraded paths (empty/unparseable);
+      // withRetry re-attempts transient ones, then aborts the sweep if persistent.
+      const result = await withRetry(
+        () => classifyFollowUp(entry.message, entry.thread, apiKey),
+        CLASSIFY_ATTEMPTS,
+      );
       out.push({ expected: entry.expectedIntent, predicted: result.intent });
     }
     return out;
