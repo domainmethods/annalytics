@@ -63,7 +63,7 @@ describe('classifySlackIntake', () => {
 
     expect(result.route).toBe('immediate_response');
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
-    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-flash-latest');
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3-flash-preview');
     expect(mockGenerateContent.mock.calls[0][0].config.responseMimeType).toBe('application/json');
     expect(mockGenerateContent.mock.calls[0][0].config.responseJsonSchema).toBeDefined();
   });
@@ -379,8 +379,10 @@ describe('classifySlackIntake', () => {
     });
   });
 
-  it('uses GEMINI_FLASH_MODEL when configured', async () => {
-    vi.stubEnv('GEMINI_FLASH_MODEL', 'gemini-custom-flash');
+  it('honors NODE_PROFILE_OVERRIDES for the slackIntake node', async () => {
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      slackIntake: { tier: 'flash-lite', version: '3.1' },
+    }));
     mockGenerateContent.mockResolvedValue(modelText(JSON.stringify({
       route: 'analytics_pipeline',
       responseText: null,
@@ -389,6 +391,6 @@ describe('classifySlackIntake', () => {
 
     await classifySlackIntake('show revenue', 'api-key');
 
-    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-custom-flash');
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.1-flash-lite');
   });
 });

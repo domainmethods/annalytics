@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
-import { getFlashModel } from './modelConfig.js';
+import { generateForNode } from './modelGateway.js';
 import { rootLogger } from '../logging.js';
 
 const SlackIntakeSchema = z.object({
@@ -87,8 +87,7 @@ export async function classifySlackIntake(
   try {
     const ai = new GoogleGenAI({ apiKey });
     response = await withTimeout(
-      ai.models.generateContent({
-        model: getFlashModel(),
+      generateForNode('slackIntake', ai, {
         contents: [{ role: 'user', parts: [{ text: buildPrompt(text) }] }],
         config: {
           responseMimeType: 'application/json',
