@@ -389,7 +389,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --image "$REGION-docker.pkg.dev/$PROJECT_ID/anna-lytics/anna-lytics:latest" \
   --region "$REGION" \
   --service-account "$SERVICE_NAME@$PROJECT_ID.iam.gserviceaccount.com" \
-  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-pro-latest,GEMINI_FLASH_MODEL=gemini-flash-latest,GEMINI_JUDGE_MODEL=gemini-pro-latest" \
+  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
   --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
   --port 3000 \
   --allow-unauthenticated
@@ -417,8 +417,8 @@ All configuration is via environment variables. See `.env.example` for the local
 | `SLACK_SIGNING_SECRET` | Yes | | Slack request signing secret |
 | `GEMINI_API_KEY` | Yes | | Gemini Developer API key |
 | `GCP_PROJECT_ID` | Yes | | GCP project for BigQuery and Firestore |
-| `GEMINI_MODEL` | No | `gemini-pro-latest` | SQL generation and supervisor model |
-| `GEMINI_FLASH_MODEL` | No | `gemini-flash-latest` | Lightweight classification and summary model |
+| `GEMINI_MODEL` | No | `gemini-3.1-pro-preview` | SQL generation and supervisor model |
+| `GEMINI_FLASH_MODEL` | No | `gemini-3-flash-preview` | Lightweight classification and summary model |
 | `GEMINI_JUDGE_MODEL` | No | `GEMINI_MODEL` | Benchmark judge model |
 | `FILE_SEARCH_STORE_ID` | No for runtime, yes for sync/acceptance | | Gemini File Search store for ReferenceCards and teachings |
 | `DBT_MANIFEST_PATH` | No | `./dbt/manifest.json` | Path to dbt manifest |
