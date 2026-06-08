@@ -21,7 +21,8 @@ describe('generateForNode', () => {
   it('omits thinkingConfig when thinkingLevel is "default"', async () => {
     const { generateForNode } = await import('../../src/agents/modelGateway.js');
     const { ai, generateContent } = fakeAi();
-    await generateForNode('clarification', ai, { contents: [] });
+    // sqlGenerator is a model-managed (default-thinking) pro node.
+    await generateForNode('sqlGenerator', ai, { contents: [] });
     expect(generateContent.mock.calls[0][0].config?.thinkingConfig).toBeUndefined();
   });
 

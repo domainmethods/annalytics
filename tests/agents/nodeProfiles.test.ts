@@ -16,9 +16,18 @@ describe('nodeProfiles', () => {
     for (const n of PRO_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-pro-preview');
   });
 
-  it('defaults thinkingLevel to "default" (omit) for every node', async () => {
+  it('assigns provisional role-based thinking levels (minimal/low for flash, default for pro)', async () => {
     const { getNodeProfile } = await import('../../src/agents/nodeProfiles.js');
-    expect(getNodeProfile('clarification').thinkingLevel).toBe('default');
+    // minimal — closed-set routing / structured selection / reformatting
+    for (const n of ['slackIntake', 'followUpClassifier', 'dbtStatus', 'chart', 'summaryOverride'] as const) {
+      expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
+    }
+    // low — light open judgment over provided context
+    for (const n of ['clarification', 'metaQuestion', 'teachingCandidate'] as const) {
+      expect(getNodeProfile(n).thinkingLevel).toBe('low');
+    }
+    // default — hard reasoning nodes stay model-managed
+    for (const n of PRO_NODES) expect(getNodeProfile(n).thinkingLevel).toBe('default');
   });
 
   it('deep-merges a valid override over defaults', async () => {
