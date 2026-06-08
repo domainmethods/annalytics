@@ -186,8 +186,12 @@ before `pro/3` was dropped). **Note the `thinkingLevels` term is model-dependent
 constant 5:** Stage 2 walks only the levels the Stage-1 winner actually serves, and
 `gemini-3.1-pro-preview` rejects `minimal` (it walks `low/medium/high/default` = 4, not 5 —
 see `getSupportedThinkingLevels`). So if a Pro model wins Stage 1 for a node, that node costs
-one fewer pass (`4 + 4 − 1` = 7), making **18 passes** the realistic figure for the two Pro
-reasoning nodes rather than 19. **Treat `node-sweep-smoke.ts`'s printed estimate as
+one fewer pass (`4 models + 4 levels − 1` = 7, vs 8 for a Flash winner). If BOTH
+`sqlGenerator` and `supervisor` win Pro (the expected outcome for these reasoning nodes), the
+two-node sweep is `2 + 2×7 + 1` = **17 passes**, not 19; it rises toward 19 only if a Flash
+model unexpectedly wins. (`node-sweep-smoke.ts`'s printed estimate stays a conservative
+upper bound — it runs at the default profile, so it can't know the Stage-1 winners and
+assumes the full 5-level walk per node.) **Treat `node-sweep-smoke.ts`'s printed estimate as
 authoritative** — it derives passes from `listGemini3xModels()` and self-updates; the
 earlier "~13h / 16-pass" figure assumed the deleted 6-rung ladder and is stale. Run the
 2-pass smoke first to confirm ε actually shrank under bypass, then the full sweep, and
