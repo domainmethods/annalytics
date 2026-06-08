@@ -133,6 +133,48 @@ metric, a few flips = 0.33 ε. Expand `benchmarks/corpus.json` (currently 12 que
 exercising only clarification/sqlGenerator/supervisor) to shrink ε below a meaningful
 quality delta; only then can `sqlGenerator` + `supervisor` be sized rather than held.
 
+### Corpus-expansion attempt + clarification-gate finding (2026-06-08, later)
+
+Acting on the follow-up above, built a 47-question live corpus against the real
+(GA4) schema — `benchmarks/corpus.live.json`, **gitignored** (15 easy / 18 medium /
+10 hard / 4 ambiguous), kept out of the template because it is schema-coupled. The
+committed template corpus stays generic. A 2-pass smoke pre-check
+(`scripts/node-sweep-smoke.ts`) before the expensive full sweep surfaced a *second*,
+deeper root cause that corpus size alone cannot fix:
+
+- **The clarification gate suspends ~68% of a real-domain corpus before SQL gen.**
+  Classifying all 47 questions at the DEFAULT profile: **32/47 LOW → skip the quality
+  loop**, only 15 reach `sqlGenerator`/`supervisor`. Even plain anchors ("page views
+  over the last 30 days") classify LOW.
+- **Why:** the clarifier's confidence is driven by its injected `AVAILABLE CONTEXT`
+  (ReferenceCards/Teachings). This template ships exactly one generic card
+  (`references/revenue.yml`, an *orders* definition → `analytics.fct_orders`), so it has
+  zero canonical context for any GA4 metric and defaults them to LOW. This is the same
+  install-coupling `src/agents/CLAUDE.md` flags: clarification difficulty scales with
+  the installed knowledge layer, which the template deliberately ships empty.
+- **Consequence:** growing the corpus does **not** by itself size the SQL-path nodes —
+  with the gate live, most questions never reach them, so ε stays large for the same
+  small-N reason.
+
+**Groundwork landed (opt-in, default OFF — template sweep unchanged):**
+`createRunCorpusOnce` + `scripts/node-sweep.ts` + the smoke script now accept
+`--bypass-clarification`. When set, a LOW verdict no longer short-circuits the loop —
+every entry runs SQL gen + supervisor — while `classifyQuestion` is still called so the
+clarification metric stays measurable. This is a faithful proxy for a *populated*
+install (whose clarifier would pass in-domain questions), and isolates the SQL-path
+nodes; clarification itself is already sized clean (ε≈0.01). Validated end-to-end: a
+2-entry bypass run took both previously-skipped questions through the loop
+(`sqlGenerator` 0 → 17.5K tokens, `supervisor` 0 → 2.2K tokens).
+
+**Deferred (expensive — not run this session):** the full live sweep is
+`cd <main-repo> && npx tsx <worktree>/scripts/node-sweep.ts --corpus <worktree>/benchmarks/corpus.live.json --node sqlGenerator --node supervisor --bypass-clarification`
+(run from the main repo — it has `node_modules`, `.env`, dbt artifacts; the worktree has
+none). Cost is the reason it was deferred: the quality loop is ~63s/entry (Pro SQL gen
+p95 ~50s on the 52-table schema), so all 47 entries × 16 passes (2 calibration + 6 rungs
+× 2 nodes + verification) ≈ **~13 hours** wall-clock + real Gemini/BigQuery spend. Run
+it, then replace the held `sqlGenerator`/`supervisor` defaults in
+`src/agents/nodeProfiles.ts` only if a downsize holds within the now-smaller ε.
+
 ## Proven vs. provisional — the load-bearing caveat
 
 - **Proven:** the right-sizing *machinery* (calibration, per-node ladder sweep,

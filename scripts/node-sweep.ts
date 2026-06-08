@@ -51,16 +51,20 @@ interface SweepArgs {
   nodes: NodeId[];
   version?: string;
   corpus: string;
+  bypassClarification: boolean;
 }
 
 function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
   let version: string | undefined;
   let corpus = 'benchmarks/corpus.json';
+  let bypassClarification = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--node') {
+    if (arg === '--bypass-clarification') {
+      bypassClarification = true;
+    } else if (arg === '--node') {
       const value = argv[++i];
       if (value) {
         // Validate at the CLI boundary: an unknown node otherwise crashes deep in
@@ -81,6 +85,7 @@ function parseArgs(argv: string[]): SweepArgs {
     nodes: nodes.length > 0 ? nodes : [...DEFAULT_SWEEP_NODES],
     version,
     corpus,
+    bypassClarification,
   };
 }
 
@@ -494,6 +499,138 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   };
 }
 
+// ── Real corpus pass factory ───────────────────────────────────────────────────
+// The single Gemini/BigQuery-touching seam, extracted so both main() and the
+// dev smoke harness (scripts/node-sweep-smoke.ts) build the EXACT same corpus
+// pass — no logic drift between the cheap ε pre-check and the full sweep.
+
+export interface RealCorpusDeps {
+  ai: GoogleGenAI;
+  apiKey: string;
+  corpus: CorpusEntry[];
+  tables: TableContext[];
+  knowledgeSummaries: KnowledgeSummary[];
+  knownBenchmarkTables: string[];
+  judgeModel: string;
+  fileSearchStoreId?: string;
+  maxBytes?: number;
+  /**
+   * When true, a LOW clarification verdict no longer short-circuits the quality
+   * loop — every entry runs SQL generation + supervisor. Default false (the
+   * production gate). Enable ONLY when sizing the SQL-path nodes
+   * (sqlGenerator/supervisor) on an install whose knowledge layer is too thin to
+   * give the clarifier canonical context (e.g. this template, which ships one
+   * generic ReferenceCard). With the gate live, ~68% of a real-domain corpus is
+   * suspended LOW before reaching the reasoning nodes, leaving them unmeasurable.
+   * Bypassing is a faithful proxy for a populated install (whose clarifier WOULD
+   * pass in-domain questions); clarification itself is sized separately and is
+   * already clean (ε≈0.01). classifyQuestion is still CALLED so the clarification
+   * metric stays measurable — only its skip decision is ignored.
+   */
+  bypassClarification?: boolean;
+}
+
+export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusRunResult> {
+  const {
+    ai, apiKey, corpus, tables, knowledgeSummaries,
+    knownBenchmarkTables, judgeModel, fileSearchStoreId,
+  } = deps;
+  const maxBytes = deps.maxBytes ?? MAX_BYTES;
+  const bypassClarification = deps.bypassClarification ?? false;
+
+  // The real corpus pass: classify → quality loop → judge, with per-node telemetry.
+  return async function runCorpusOnce(): Promise<CorpusRunResult> {
+    const perEntry: PerEntry[] = [];
+    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
+
+    const sink = (r: UsageRecord) => {
+      let bucket = nodeUsage.get(r.nodeId);
+      if (!bucket) {
+        bucket = { latencies: [], tokens: 0 };
+        nodeUsage.set(r.nodeId, bucket);
+      }
+      bucket.latencies.push(r.latencyMs);
+      bucket.tokens += r.promptTokens + r.candidatesTokens + r.thoughtsTokens;
+    };
+
+    await withUsageSink(sink, async () => {
+      for (const entry of corpus) {
+        let result: BenchmarkResult;
+        try {
+          const clarification = await classifyQuestion(entry.question, [], knowledgeSummaries, apiKey);
+          const clarifyPassed = clarificationPassed(entry.expectedClarificationConfidence, clarification.confidence);
+
+          if (clarification.confidence === 'low' && !bypassClarification) {
+            // Record clarification metric, skip the quality loop, but STILL
+            // judge (generatedSql=null → judge scores low) for an overallScore.
+            result = buildResult(entry, null, {
+              confidence: 'low',
+              qualityVerdict: 'exhausted',
+              retryCount: 0,
+              supervisorNotes: 'Skipped: LOW clarification confidence',
+              bytesProcessed: null,
+              observedTables: [],
+            });
+          } else {
+            const resolved = clarification.resolved_question || entry.question;
+            const quality = await qualityLoop(
+              {
+                question: resolved,
+                tables,
+                threadContext: [],
+                apiKey,
+                fileSearchStoreId,
+                bqml_hint: clarification.bqml_hint ?? undefined,
+              },
+              apiKey,
+              resolved,
+              maxBytes,
+            );
+            const observedTables = extractTablesFromSql(quality.sqlResult.sql, knownBenchmarkTables);
+            result = buildResult(entry, quality.sqlResult.sql, {
+              confidence: quality.finalConfidence,
+              qualityVerdict: quality.verdict,
+              retryCount: quality.retryCount,
+              supervisorNotes: quality.supervisorNotes,
+              bytesProcessed: quality.bytesProcessed ?? null,
+              observedTables,
+            });
+          }
+
+          const judge = await judgeSingleResult(ai, entry, result, judgeModel);
+          const tableSel = tableSelectionPassed(entry.expectedTables, result.observedTables);
+          const sqlShape = sqlShapePassed(entry.expectedSqlContains, result.generatedSql);
+          const sqlGenMetric = mean([
+            tableSel ? 1 : 0,
+            sqlShape ? 1 : 0,
+            // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that
+            // is WRONG — the judge scores correctness on a 1–5 scale).
+            judge.scores.correctness / 5,
+          ]);
+
+          perEntry.push({
+            id: entry.id,
+            clarificationPassed: clarifyPassed === true,
+            sqlGenMetric,
+            overallScore: judge.overallScore,
+          });
+        } catch (err) {
+          // Do NOT zero-fill. A genuine measurement outcome (wrong table, bad SQL
+          // shape, low-confidence clarification) is *scored* above, never thrown —
+          // so any exception reaching here is an exceptional failure: a transient
+          // API error (429/timeout/overload), a parse error, or a bug. Scoring it
+          // as a 0 would masquerade infrastructure noise as a real rung result and
+          // corrupt the sizing. Re-throw so the rung-level loop in runSweep aborts
+          // the whole sweep (and restores NODE_PROFILE_OVERRIDES in its finally).
+          throw new Error(`corpus entry "${entry.id}" failed: ${(err as Error).message}`);
+        }
+      }
+    });
+
+    return { perEntry, nodeUsage };
+  };
+}
+
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
 async function main() {
@@ -574,97 +711,22 @@ async function main() {
     ]),
   ];
 
-  // The real corpus pass: classify → quality loop → judge, with per-node telemetry.
-  async function runCorpusOnce(): Promise<CorpusRunResult> {
-    const perEntry: PerEntry[] = [];
-    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
-
-    const sink = (r: UsageRecord) => {
-      let bucket = nodeUsage.get(r.nodeId);
-      if (!bucket) {
-        bucket = { latencies: [], tokens: 0 };
-        nodeUsage.set(r.nodeId, bucket);
-      }
-      bucket.latencies.push(r.latencyMs);
-      bucket.tokens += r.promptTokens + r.candidatesTokens + r.thoughtsTokens;
-    };
-
-    await withUsageSink(sink, async () => {
-      for (const entry of corpus) {
-        let result: BenchmarkResult;
-        try {
-          const clarification = await classifyQuestion(entry.question, [], knowledgeSummaries, apiKey);
-          const clarifyPassed = clarificationPassed(entry.expectedClarificationConfidence, clarification.confidence);
-
-          if (clarification.confidence === 'low') {
-            // Record clarification metric, skip the quality loop, but STILL
-            // judge (generatedSql=null → judge scores low) for an overallScore.
-            result = buildResult(entry, null, {
-              confidence: 'low',
-              qualityVerdict: 'exhausted',
-              retryCount: 0,
-              supervisorNotes: 'Skipped: LOW clarification confidence',
-              bytesProcessed: null,
-              observedTables: [],
-            });
-          } else {
-            const resolved = clarification.resolved_question || entry.question;
-            const quality = await qualityLoop(
-              {
-                question: resolved,
-                tables,
-                threadContext: [],
-                apiKey,
-                fileSearchStoreId,
-                bqml_hint: clarification.bqml_hint ?? undefined,
-              },
-              apiKey,
-              resolved,
-              MAX_BYTES,
-            );
-            const observedTables = extractTablesFromSql(quality.sqlResult.sql, knownBenchmarkTables);
-            result = buildResult(entry, quality.sqlResult.sql, {
-              confidence: quality.finalConfidence,
-              qualityVerdict: quality.verdict,
-              retryCount: quality.retryCount,
-              supervisorNotes: quality.supervisorNotes,
-              bytesProcessed: quality.bytesProcessed ?? null,
-              observedTables,
-            });
-          }
-
-          const judge = await judgeSingleResult(ai, entry, result, judgeModel);
-          const tableSel = tableSelectionPassed(entry.expectedTables, result.observedTables);
-          const sqlShape = sqlShapePassed(entry.expectedSqlContains, result.generatedSql);
-          const sqlGenMetric = mean([
-            tableSel ? 1 : 0,
-            sqlShape ? 1 : 0,
-            // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that
-            // is WRONG — the judge scores correctness on a 1–5 scale).
-            judge.scores.correctness / 5,
-          ]);
-
-          perEntry.push({
-            id: entry.id,
-            clarificationPassed: clarifyPassed === true,
-            sqlGenMetric,
-            overallScore: judge.overallScore,
-          });
-        } catch (err) {
-          // Do NOT zero-fill. A genuine measurement outcome (wrong table, bad SQL
-          // shape, low-confidence clarification) is *scored* above, never thrown —
-          // so any exception reaching here is an exceptional failure: a transient
-          // API error (429/timeout/overload), a parse error, or a bug. Scoring it
-          // as a 0 would masquerade infrastructure noise as a real rung result and
-          // corrupt the sizing. Re-throw so the rung-level loop in runSweep aborts
-          // the whole sweep (and restores NODE_PROFILE_OVERRIDES in its finally).
-          throw new Error(`corpus entry "${entry.id}" failed: ${(err as Error).message}`);
-        }
-      }
-    });
-
-    return { perEntry, nodeUsage };
+  if (args.bypassClarification) {
+    console.log('⚠ Clarification gate BYPASSED: every entry runs the quality loop (SQL-path node sizing mode).');
   }
+
+  const runCorpusOnce = createRunCorpusOnce({
+    ai,
+    apiKey,
+    corpus,
+    tables,
+    knowledgeSummaries,
+    knownBenchmarkTables,
+    judgeModel,
+    fileSearchStoreId,
+    maxBytes: MAX_BYTES,
+    bypassClarification: args.bypassClarification,
+  });
 
   const { report } = await runSweep({
     nodes: args.nodes,
