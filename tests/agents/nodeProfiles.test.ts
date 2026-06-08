@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-const FLASH_NODES = ['clarification','slackIntake','followUpClassifier','dbtStatus','metaQuestion','chart','teachingCandidate'] as const;
+const FLASH_NODES = ['clarification','slackIntake','followUpClassifier','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {

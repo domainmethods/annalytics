@@ -5,7 +5,7 @@ import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
-import { getFlashModel } from '../agents/modelConfig.js';
+import { generateForNode } from '../agents/modelGateway.js';
 import { rootLogger } from '../logging.js';
 export { formatValue };
 
@@ -97,8 +97,7 @@ export async function handleSummaryOverride(
     try {
       const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
       const sampleRows = result.rows.slice(0, 50);
-      const response = await ai.models.generateContent({
-        model: getFlashModel(),
+      const response = await generateForNode('summaryOverride', ai, {
         contents: [{
           role: 'user',
           parts: [{

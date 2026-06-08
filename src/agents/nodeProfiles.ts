@@ -3,7 +3,7 @@ import { resolveModelId, type ModelTier } from './modelConfig.js';
 export type NodeId =
   | 'clarification' | 'slackIntake' | 'followUpClassifier' | 'dbtStatus'
   | 'metaQuestion' | 'chart' | 'sqlGenerator' | 'supervisor'
-  | 'discrepancy' | 'teachingCandidate';
+  | 'discrepancy' | 'teachingCandidate' | 'summaryOverride';
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
 
@@ -21,6 +21,7 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 const DEFAULTS: Record<NodeId, NodeProfile> = {
   clarification: FLASH_DEFAULT, slackIntake: FLASH_DEFAULT, followUpClassifier: FLASH_DEFAULT,
   dbtStatus: FLASH_DEFAULT, metaQuestion: FLASH_DEFAULT, chart: FLASH_DEFAULT, teachingCandidate: FLASH_DEFAULT,
+  summaryOverride: FLASH_DEFAULT,
   sqlGenerator: PRO_DEFAULT, supervisor: PRO_DEFAULT, discrepancy: PRO_DEFAULT,
 };
 

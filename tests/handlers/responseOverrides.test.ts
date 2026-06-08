@@ -128,7 +128,7 @@ describe('handleSummaryOverride', () => {
     // Should call Gemini Flash
     expect(mockGenerateContent).toHaveBeenCalled();
     const callArgs = mockGenerateContent.mock.calls[0][0];
-    expect(callArgs.model).toBe('gemini-flash-latest');
+    expect(callArgs.model).toBe('gemini-3-flash-preview');
 
     // Final update should contain the summary
     const lastUpdate = mockClient.chat.update.mock.calls[mockClient.chat.update.mock.calls.length - 1][0];
