@@ -143,13 +143,19 @@ async function main() {
   const resolvedCatalogPath = join(root, catalogPath);
   let tables: TableContext[] = [];
   if (await fileExists(resolvedManifestPath) && await fileExists(resolvedCatalogPath)) {
-    const manifest = JSON.parse(await readFile(resolvedManifestPath, 'utf-8')) as { nodes: Record<string, unknown> };
-    const catalog = JSON.parse(await readFile(resolvedCatalogPath, 'utf-8')) as { nodes: Record<string, unknown> };
-    tables = parseDbtArtifacts(
-      manifest as Parameters<typeof parseDbtArtifacts>[0],
-      catalog as Parameters<typeof parseDbtArtifacts>[1],
-    );
-    console.log(`Loaded ${tables.length} dbt tables`);
+    try {
+      const manifest = JSON.parse(await readFile(resolvedManifestPath, 'utf-8')) as { nodes: Record<string, unknown> };
+      const catalog = JSON.parse(await readFile(resolvedCatalogPath, 'utf-8')) as { nodes: Record<string, unknown> };
+      tables = parseDbtArtifacts(
+        manifest as Parameters<typeof parseDbtArtifacts>[0],
+        catalog as Parameters<typeof parseDbtArtifacts>[1],
+      );
+      console.log(`Loaded ${tables.length} dbt tables`);
+    } catch (err) {
+      // Mirror node-sweep.ts: a malformed artifact degrades to no-schema with a loud
+      // warning rather than crashing the pre-check.
+      console.warn(`Warning: Could not load dbt artifacts: ${(err as Error).message}. Running without schema context (queries will fail dry-run).`);
+    }
   } else {
     console.warn('Warning: dbt artifacts not found. Running without schema context (queries will fail dry-run).');
   }

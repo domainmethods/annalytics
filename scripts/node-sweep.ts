@@ -1,6 +1,6 @@
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute } from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { initBigQuery } from '../src/validation/dryRun.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
@@ -597,7 +597,23 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
             });
           }
 
-          const judge = await judgeSingleResult(ai, entry, result, judgeModel);
+          // No SQL was generated (LOW clarification skip with the gate live) — judging
+          // a missing query is a wasted judge LLM call (quota + latency + tokens), and
+          // a null query is unambiguously the worst outcome. Assign the 1–5 floor
+          // deterministically; this also removes a noise source from ε. Only the skip
+          // branch ever sets generatedSql=null, so this never short-circuits a real
+          // SQL-path measurement (bypass mode always reaches the judge).
+          let correctness: number;
+          let overallScore: number;
+          if (result.generatedSql === null) {
+            correctness = 1;
+            overallScore = 1;
+          } else {
+            const judge = await judgeSingleResult(ai, entry, result, judgeModel);
+            correctness = judge.scores.correctness;
+            overallScore = judge.overallScore;
+          }
+
           const tableSel = tableSelectionPassed(entry.expectedTables, result.observedTables);
           const sqlShape = sqlShapePassed(entry.expectedSqlContains, result.generatedSql);
           const sqlGenMetric = mean([
@@ -605,14 +621,14 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
             sqlShape ? 1 : 0,
             // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that
             // is WRONG — the judge scores correctness on a 1–5 scale).
-            judge.scores.correctness / 5,
+            correctness / 5,
           ]);
 
           perEntry.push({
             id: entry.id,
             clarificationPassed: clarifyPassed === true,
             sqlGenMetric,
-            overallScore: judge.overallScore,
+            overallScore,
           });
         } catch (err) {
           // Do NOT zero-fill. A genuine measurement outcome (wrong table, bad SQL
@@ -674,7 +690,10 @@ async function main() {
 
   initBigQuery(projectId);
 
-  const corpusPath = join(root, args.corpus);
+  // resolve() (not join) so an ABSOLUTE --corpus path — e.g. running this from the
+  // main repo against <worktree>/benchmarks/corpus.live.json — is honoured rather
+  // than appended to root (which would ENOENT). Mirrors node-sweep-smoke.ts.
+  const corpusPath = isAbsolute(args.corpus) ? args.corpus : resolve(root, args.corpus);
   const corpusRaw = await readFile(corpusPath, 'utf-8');
   const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
   console.log(`Corpus: ${corpus.length} questions`);
