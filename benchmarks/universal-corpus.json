@@ -1,0 +1,129 @@
+{
+  "_comment": "Judge-free labeled corpus for sizing the data-invariant classifier nodes. slackIntake entries deliberately AVOID pure greetings/thanks (those hit the deterministic fast-path in slackIntakeAgent.ts and never reach the model) — every entry here is a borderline case that exercises generateForNode. Template-safe: generic business metrics only, no client/table/project names. See scripts/universal-sweep.ts.",
+  "slackIntake": [
+    { "id": "intake-immediate-help", "text": "can you help me?", "expectedRoute": "immediate_response" },
+    { "id": "intake-immediate-capabilities", "text": "what can you do?", "expectedRoute": "immediate_response" },
+    { "id": "intake-immediate-questions", "text": "what kinds of questions can I ask you?", "expectedRoute": "immediate_response" },
+    { "id": "intake-immediate-howwork", "text": "how do you work?", "expectedRoute": "immediate_response" },
+    { "id": "intake-immediate-bot", "text": "are you a real person or a bot?", "expectedRoute": "immediate_response" },
+    { "id": "intake-immediate-smalltalk", "text": "how's it going today?", "expectedRoute": "immediate_response" },
+    { "id": "intake-analytics-revenue", "text": "show me revenue for last month", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-signups", "text": "how many new users signed up yesterday?", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-aov", "text": "what's our average order value this quarter?", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-compare", "text": "compare conversion rates between mobile and desktop", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-cause", "text": "why did churn spike in March?", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-greeting-prefix", "text": "good morning, can you pull last week's sales numbers?", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-topn", "text": "top 10 products by units sold", "expectedRoute": "analytics_pipeline" },
+    { "id": "intake-analytics-trend", "text": "trend of weekly active users over the past 90 days", "expectedRoute": "analytics_pipeline" }
+  ],
+  "followUpClassifier": [
+    {
+      "id": "follow-newquery-tickets",
+      "thread": [
+        { "role": "user", "content": "what was our total revenue last month?" },
+        { "role": "assistant", "content": "Total revenue last month was $1.2M." }
+      ],
+      "message": "how many support tickets were opened last week?",
+      "expectedIntent": "new_query"
+    },
+    {
+      "id": "follow-newquery-refunds",
+      "thread": [
+        { "role": "user", "content": "how many new users signed up in May?" },
+        { "role": "assistant", "content": "There were 4,310 new signups in May." }
+      ],
+      "message": "what's our refund rate?",
+      "expectedIntent": "new_query"
+    },
+    {
+      "id": "follow-newquery-headcount",
+      "thread": [
+        { "role": "user", "content": "what's our average order value this quarter?" },
+        { "role": "assistant", "content": "Average order value this quarter is $84.20." }
+      ],
+      "message": "show me headcount by department",
+      "expectedIntent": "new_query"
+    },
+    {
+      "id": "follow-refinement-region",
+      "thread": [
+        { "role": "user", "content": "show me revenue by month for this year" },
+        { "role": "assistant", "content": "Here is monthly revenue for the year so far." }
+      ],
+      "message": "can you break that down by region?",
+      "expectedIntent": "refinement"
+    },
+    {
+      "id": "follow-refinement-topn",
+      "thread": [
+        { "role": "user", "content": "who are our top 10 customers by spend?" },
+        { "role": "assistant", "content": "Here are the top 10 customers by total spend." }
+      ],
+      "message": "make it top 25 instead",
+      "expectedIntent": "refinement"
+    },
+    {
+      "id": "follow-refinement-filter",
+      "thread": [
+        { "role": "user", "content": "how many signups did we get last month?" },
+        { "role": "assistant", "content": "There were 4,310 signups last month." }
+      ],
+      "message": "filter that to just paid plans",
+      "expectedIntent": "refinement"
+    },
+    {
+      "id": "follow-meta-whytable",
+      "thread": [
+        { "role": "user", "content": "what was revenue last quarter?" },
+        { "role": "assistant", "content": "Revenue last quarter was $3.4M, based on the orders data." }
+      ],
+      "message": "why did you use the orders table for that?",
+      "expectedIntent": "meta_question"
+    },
+    {
+      "id": "follow-meta-howcalc",
+      "thread": [
+        { "role": "user", "content": "what's our churn rate this month?" },
+        { "role": "assistant", "content": "Churn rate this month is 3.1%." }
+      ],
+      "message": "how did you calculate that number?",
+      "expectedIntent": "meta_question"
+    },
+    {
+      "id": "follow-meta-whichtables",
+      "thread": [
+        { "role": "user", "content": "what's our gross margin?" },
+        { "role": "assistant", "content": "Gross margin is 62%." }
+      ],
+      "message": "which tables did you query to get this?",
+      "expectedIntent": "meta_question"
+    },
+    {
+      "id": "follow-discrepancy-profit",
+      "thread": [
+        { "role": "user", "content": "how is revenue trending this year?" },
+        { "role": "assistant", "content": "Revenue is up 18% year over year." }
+      ],
+      "message": "if revenue is up, why is profit down?",
+      "expectedIntent": "discrepancy"
+    },
+    {
+      "id": "follow-discrepancy-signups",
+      "thread": [
+        { "role": "user", "content": "how is website traffic doing?" },
+        { "role": "assistant", "content": "Traffic grew 25% over the past quarter." }
+      ],
+      "message": "if traffic grew, how come signups fell?",
+      "expectedIntent": "discrepancy"
+    },
+    {
+      "id": "follow-discrepancy-orders",
+      "thread": [
+        { "role": "user", "content": "how many orders did we process last month?" },
+        { "role": "assistant", "content": "We processed 12,400 orders last month, up from 11,000." }
+      ],
+      "message": "orders went up but revenue dropped — what's going on?",
+      "expectedIntent": "discrepancy"
+    }
+  ]
+}
