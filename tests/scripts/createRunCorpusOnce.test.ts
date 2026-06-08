@@ -103,3 +103,41 @@ describe('createRunCorpusOnce clarification gate', () => {
     expect(res.perEntry[0].overallScore).toBe(5);
   });
 });
+
+describe('createRunCorpusOnce sqlGenMetric null-handling', () => {
+  // tableSelectionPassed / sqlShapePassed return null (not false) when the entry
+  // omits expectedTables / expectedSqlContains — "not applicable", not "failed".
+  // Those nulls must be EXCLUDED from the metric average, not coerced to 0, or an
+  // unannotated entry is penalized exactly like wrong SQL (compresses the metric
+  // range and inflates ε).
+  it('omits both null sub-metrics when neither expectation is supplied', async () => {
+    const bare: CorpusEntry = { id: 'e1', question: 'q', category: 'ambiguous', source: 'manual' };
+    vi.mocked(classifyQuestion).mockResolvedValue(clar('high'));
+    vi.mocked(qualityLoop).mockResolvedValue(goodQuality as never);
+    vi.mocked(judgeSingleResult).mockResolvedValue(goodJudge as never); // correctness 5
+
+    const res = await createRunCorpusOnce({ ...baseDeps(), corpus: [bare] })();
+
+    // tableSel=null, sqlShape=null → both dropped; metric is just correctness/5.
+    expect(res.perEntry[0].sqlGenMetric).toBeCloseTo(1.0, 6);
+  });
+
+  it('drops only the null sub-metric and keeps the supplied one', async () => {
+    const partial: CorpusEntry = {
+      id: 'e1', question: 'q', category: 'simple', source: 'manual',
+      expectedTables: ['analytics.t'], // present → tableSel scored; expectedSqlContains omitted → null
+    };
+    vi.mocked(classifyQuestion).mockResolvedValue(clar('high'));
+    vi.mocked(qualityLoop).mockResolvedValue(goodQuality as never); // SQL references analytics.t → tableSel=true
+    vi.mocked(judgeSingleResult).mockResolvedValue({
+      ...goodJudge,
+      scores: { ...goodJudge.scores, correctness: 3 },
+      overallScore: 3,
+    } as never);
+
+    const res = await createRunCorpusOnce({ ...baseDeps(), corpus: [partial] })();
+
+    // tableSel=true (1) + correctness 3/5 (0.6); sqlShape=null excluded → mean([1, 0.6]) = 0.8.
+    expect(res.perEntry[0].sqlGenMetric).toBeCloseTo(0.8, 6);
+  });
+});

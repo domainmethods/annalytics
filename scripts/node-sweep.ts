@@ -740,13 +740,17 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
           const tableSel = tableSelectionPassed(entry.expectedTables, result.observedTables);
           const sqlShape = sqlShapePassed(entry.expectedSqlContains, result.generatedSql);
-          const sqlGenMetric = mean([
-            tableSel ? 1 : 0,
-            sqlShape ? 1 : 0,
-            // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that
-            // is WRONG — the judge scores correctness on a 1–5 scale).
-            correctness / 5,
-          ]);
+          // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that is
+          // WRONG — the judge scores correctness on a 1–5 scale). Correctness is the
+          // one component that always applies, so it anchors the average.
+          const subMetrics: number[] = [correctness / 5];
+          // tableSel/sqlShape are boolean | null: null means the entry supplied no
+          // expectation, i.e. "not applicable" — EXCLUDE it from the average. Coercing
+          // null→0 would penalize an unannotated entry exactly like wrong SQL, pinning
+          // it low for every candidate and inflating ε against the quality signal.
+          if (tableSel !== null) subMetrics.push(tableSel ? 1 : 0);
+          if (sqlShape !== null) subMetrics.push(sqlShape ? 1 : 0);
+          const sqlGenMetric = mean(subMetrics);
 
           perEntry.push({
             id: entry.id,
