@@ -1,7 +1,7 @@
 # Benchmark Hardening — Validation Visibility, Teaching Retrieval & Provenance Completion
 
 **Created:** 2026-06-08
-**Status:** Design — approved scope, pending implementation plan
+**Status:** Design — implementation plan written (`2026-06-08-benchmark-hardening-implementation.md`)
 **Governance anchor:** `docs/trajectory-governance.md` → "Benchmark Hardening" (lines 104–121)
 **Scope decision:** Full hardening pass, sequenced keystone-first.
 
@@ -86,18 +86,19 @@ backward compatibility and the existing scorecard.
 import type { ValidationLayerRecord } from '../src/qualityLoop.js';
 
 validationResults: { l1: boolean; l2: boolean; l3: boolean; l4: boolean };  // keep
-validationHistory: ValidationLayerRecord[];                                 // NEW: full trace
+validationHistory?: ValidationLayerRecord[];                                // NEW: full trace (optional-on-read so older mock fixtures still satisfy the type)
 ```
 
 - `scripts/benchmark.ts` populates `validationHistory: quality.validationHistory ?? []`
   at the success construction site (`:262`), and `[]` at the error site (`:320`) and the
   early-skip site (`~:182`). `validationResultsFromFailures` is unchanged.
-- `scripts/benchmarkAcceptance.ts`: for any case with a blocking failure, render a
-  **Validation Trace** — per attempt, the layers that ran and the `detail` of the
-  failing one — built from `validationHistory`. L2 entries appear in the trace marked
-  advisory (visible, never escalated to a blocking failure). When `validationHistory` is
-  empty (older fixtures), fall back to today's "Final SQL failed L1, L3" string so
-  existing mock-results still render.
+- `scripts/benchmarkAcceptance.ts`: for any case with a blocking failure, append a compact
+  **validation trace** to that failure's `detail` in the Failures table — per attempt, the
+  *failing* layers and their `detail`, built from `validationHistory` via a pure
+  `formatValidationTrace` helper. Failing L2 entries appear in the trace marked `advisory`
+  (visible, never escalated to a blocking failure). When `validationHistory` is empty
+  (older fixtures), the detail falls back to today's "Final SQL failed L1, L3" string with
+  no trace appended, so existing mock-results still render.
 
 **Acceptance:** a failing case's report names the failing layer, its attempt index, and
 its error detail; an advisory L2 failure is visible in the trace without blocking.
@@ -160,7 +161,7 @@ reports surfaces a judge/project difference instead of silently absorbing it.
 ## Data flow (after)
 
 ```
-qualityLoop  ──validationHistory[]──►  benchmark.ts  ──►  BenchmarkResult.validationHistory   ──►  acceptance: Validation Trace
+qualityLoop  ──validationHistory[]──►  benchmark.ts  ──►  BenchmarkResult.validationHistory   ──►  acceptance: trace appended to Failures detail
 grounding.ts ──teaching: citations──►  benchmark.ts  ──►  observedTeachingIds + teachingRetrievalPassed ──►  acceptance: teaching column
 BenchmarkMetadata.judgeModel/gcpProjectId ─────────────────────────────────────────────────►  acceptance: Run Provenance rows
 ```
