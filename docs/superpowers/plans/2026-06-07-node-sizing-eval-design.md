@@ -165,6 +165,24 @@ corpus run — making `thoughtsTokenCount` attributable to a specific node even 
 harness only calls agents, not Gemini directly. `recordUsage` zero-fills missing token
 counts when `usageMetadata` is undefined (safety blocks, mocked responses).
 
+### Residual model aliases (judge + config) — pin to 3.x
+
+Routing the agents through the seam does **not** by itself satisfy "only Gemini 3.x":
+two paths bypass `nodeProfiles` and must be pinned explicitly.
+
+1. **Benchmark judge.** `getJudgeModel()` → `getProModel()` → `DEFAULT_PRO_MODEL`. Pin
+   `DEFAULT_FLASH_MODEL`/`DEFAULT_PRO_MODEL` to `gemini-3-flash-preview` /
+   `gemini-3.1-pro-preview` so every residual consumer (judge, and any leftover
+   `getProModel()` reference) defaults to 3.x.
+2. **`config.gemini.model` shadowing `sqlGenerator`.** `config.gemini.model` (= `getProModel()`)
+   is threaded as `opts.model` into `generateSql` (`pipeline.ts:254 → qualityLoop → generateSql`),
+   and the old `const model = opts.model || getProModel()` makes it an **always-on** override.
+   Left as-is it would (a) keep `sqlGenerator` off `nodeProfiles` and (b) make the `sqlGenerator`
+   sweep a no-op (`NODE_PROFILE_OVERRIDES.sqlGenerator` never applies, because `modelOverride`
+   always wins). **Sever it:** the seam owns `sqlGenerator`'s model; `modelOverride` stays
+   available in `generateForNode` for a future genuine per-call override but is **not** fed from
+   config. Without this, the primary labeled sweep target is un-sweepable.
+
 ### Ladder (cheapest → dearest)
 
 | Rung | model | thinkingLevel |

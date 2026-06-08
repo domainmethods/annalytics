@@ -59,7 +59,7 @@ describe('Gemini 3.x model resolution', () => {
 Run: `npx vitest run tests/agents/modelConfig.test.ts`
 Expected: FAIL — `resolveModelId` is not exported.
 
-**Step 3: Implement** — add to `src/agents/modelConfig.ts` (keep the existing `getFlashModel`/`getProModel`/`getJudgeModel` exports unchanged for now; they are removed in Task 4 once nothing imports them):
+**Step 3: Implement** — add to `src/agents/modelConfig.ts`. Keep the existing `getFlashModel`/`getProModel`/`getJudgeModel` exports — they are **retained** (still imported by `config.ts`, `scripts/benchmark.ts`, and `getJudgeModel`), and their default constants are pinned to Gemini 3.x below:
 
 ```ts
 export type ModelTier = 'flash-lite' | 'flash' | 'pro';
@@ -95,9 +95,18 @@ export function resolveModelId(tier: ModelTier, version: string): string {
 }
 ```
 
+**Also pin the default constants to Gemini 3.x.** This is what keeps the benchmark judge and any residual `getProModel()`/`getFlashModel()` consumer 3.x-compliant (see design §"Residual model aliases"):
+
+```ts
+export const DEFAULT_FLASH_MODEL = 'gemini-3-flash-preview';
+export const DEFAULT_PRO_MODEL = 'gemini-3.1-pro-preview';
+```
+
+Update the two default-alias assertions in `tests/agents/modelConfig.test.ts:12-13` to expect `'gemini-3-flash-preview'` / `'gemini-3.1-pro-preview'` (the env-override test below it is unchanged). Add these expectations to the failing test in Step 1 so the pin is TDD-driven.
+
 **Step 4: Run to verify pass**
 Run: `npx vitest run tests/agents/modelConfig.test.ts`
-Expected: PASS (including the pre-existing flash/pro/judge tests).
+Expected: PASS (including the updated default-alias + env-override tests).
 
 **Step 5: Commit**
 ```bash
@@ -238,6 +247,8 @@ export function resolveNodeModel(id: NodeId): string {
   return resolveModelId(p.tier, p.version);
 }
 ```
+
+> **Do not memoize the env parse.** `getNodeProfile` re-reads `NODE_PROFILE_OVERRIDES` (and `resolveModelId` re-reads `MODEL_ID_OVERRIDES`) on every call **by design**: the sweep (PR2, Task 8) mutates `process.env.NODE_PROFILE_OVERRIDES` between corpus runs, so caching the parsed object at module load would pin the first value and silently turn the sweep into a no-op. The parse is negligible — every call is gated behind a network LLM round-trip, not a hot loop. This is a deliberate decline of the "cache the parse" optimization.
 
 **Step 4: Run to verify pass**
 Run: `npx vitest run tests/agents/nodeProfiles.test.ts`
@@ -466,7 +477,11 @@ const response = await generateForNode('followUpClassifier', ai, {
 ```
 Test update — `tests/agents/followUpClassifier.test.ts`: change any `gemini-flash-latest` assertion to `gemini-3-flash-preview`.
 
-**Special case — `sqlGenerator.ts`:** two call sites (the File Search attempt at :156 and the degraded retry at :170). Both become `generateForNode('sqlGenerator', ai, { contents, config }, opts.model ? { modelOverride: opts.model } : undefined)`. Preserve the `opts.model` override via `modelOverride`. Delete `const model = opts.model || getProModel();` and the `getProModel` import. Update `tests/agents/sqlGenerator*.test.ts` model assertions to `gemini-3.1-pro-preview`.
+**Special case — `sqlGenerator.ts` (model-shadow fix — BLOCKER):** two call sites (the File Search attempt at :156 and the degraded retry at :170). The current `const model = opts.model || getProModel();` at :130 makes `opts.model` an **always-on** override, because `opts.model` is fed from `config.gemini.model` (`pipeline.ts:254 → qualityLoop → generateSql`). If you preserve it as `modelOverride`, `sqlGenerator` never resolves via `nodeProfiles`, stays off 3.x, and its sweep is a **no-op**. **Sever it instead:**
+- Both calls become `generateForNode('sqlGenerator', ai, { contents, config })` — **no** `modelOverride` from `opts.model`. The seam owns the model.
+- Delete `const model = opts.model || getProModel();` (line 130) and the `getProModel` import.
+- In `src/pipeline.ts:254`, remove the `model: config.geminiModel,` line from the `qualityLoop(...)` argument so nothing re-feeds the config alias into generation. (`geminiModel` / `GenerateSqlOptions.model` may stay in the types as a dormant future per-call override, but must **not** be wired from `config.gemini.model`.)
+- Update `tests/agents/sqlGenerator*.test.ts` model assertions to `gemini-3.1-pro-preview`, **and add a regression test** asserting that `NODE_PROFILE_OVERRIDES={"sqlGenerator":{"tier":"flash","version":"3","thinkingLevel":"minimal"}}` actually changes the resolved model (proves the shadow is gone).
 
 **Special case — `slackIntakeAgent.ts`:** the call is inside `withTimeout(...)`. Wrap the seam call: `withTimeout(generateForNode('slackIntake', ai, { contents, config }), options.timeoutMs ?? INTAKE_TIMEOUT_MS)`.
 
@@ -487,7 +502,7 @@ Model-string assertions to update (from grep):
 `tests/agents/discrepancyHandler.test.ts:86`, `tests/agents/dbtStatusAgent.test.ts:79`,
 `tests/teachings/candidateGenerator.test.ts:110`, `tests/agents/metaQuestionHandler.test.ts:74`,
 `tests/agents/slackIntakeAgent.test.ts:66`, `tests/agents/supervisorAgent.test.ts:142`.
-Also delete the two obsolete assertions in `tests/agents/modelConfig.test.ts:12-13` only if `getFlashModel`/`getProModel` are removed; otherwise leave them. **Recommendation:** keep `getFlashModel`/`getProModel`/`getFlashLiteModel`/`getJudgeModel` for now — `getJudgeModel` is still used by the benchmark. Add a `getFlashLiteModel` env helper only if a test needs it.
+**Keep** `getFlashModel`/`getProModel`/`getJudgeModel` — they are still imported by `config.ts`, `scripts/benchmark.ts`, and `getJudgeModel`, so they are **not** removed (this supersedes any earlier "removed in Task 4" wording). Their default constants are now pinned to 3.x (Task 1), so the assertions in `tests/agents/modelConfig.test.ts:12-13` are **updated** to the 3.x ids rather than deleted. There is no `getFlashLiteModel` today; add one only if a test needs it.
 
 **Definition of done for Task 4:** `npm test` and `npm run typecheck` both green; no agent imports `getFlashModel`/`getProModel` except where genuinely still needed; production behavior is structure-identical with model identity on pinned 3.x.
 
@@ -558,6 +573,12 @@ describe('pickRecommendation', () => {
     const cands = [base, { rung: 'R', metric: 0.90, e2e: 7.5, p95LatencyMs: 300, cost: 20 }];
     expect(pickRecommendation(base, cands, 0.02, 0.3).rung).toBe('DEFAULT'); // e2e drop 0.5 > eps 0.3
   });
+
+  it('falls back to baseline when no candidate is viable (defensive guard)', () => {
+    // Contract is "candidates includes baseline"; an empty list violates it.
+    // The guard must return baseline rather than crash on Math.min(...[]) → Infinity.
+    expect(pickRecommendation(base, [], 0.02, 0.3).rung).toBe('DEFAULT');
+  });
 });
 ```
 
@@ -594,6 +615,7 @@ export function pickRecommendation(
   latencyBand = 0.05,
 ): RungScore {
   const viable = candidates.filter(c => c.metric >= baseline.metric - metricEps && c.e2e >= baseline.e2e - e2eEps);
+  if (viable.length === 0) return baseline; // contract: candidates includes baseline; defensive against a caller that forgot
   const fastest = Math.min(...viable.map(c => c.p95LatencyMs));
   const contenders = viable.filter(c => c.p95LatencyMs <= fastest * (1 + latencyBand));
   contenders.sort((a, b) => (b.metric - a.metric) || (a.cost - b.cost));
@@ -637,10 +659,10 @@ Tests: identical runs → floor; a single 0.2 jitter → 0.2. Commit.
 **Files:** Create `scripts/node-sweep.ts`. No CI test (mirrors `benchmark.ts` posture).
 
 **Structure** (compose, don't reinvent — import the corpus loop pieces from `benchmark.ts`/`benchmarkSupport.ts`):
-1. Parse args: `--node <id>` (repeatable; default = sweepable set `clarification,sqlGenerator,supervisor`), `--version <v>` (pins the ladder version line), `--corpus <path>`.
+1. Parse args: `--node <id>` (repeatable; default = sweepable set `clarification,sqlGenerator,supervisor`), `--version <v>` (optional — default uses each rung's own version from `DEFAULT_LADDER`; when set it overrides the version of every rung **whose `(tier, version)` exists** and drops rungs that don't, e.g. `--version 3.5` keeps only the `flash` rungs since there is no `flash-lite/3.5` or `pro/3.5`. Validate each via `resolveModelId`, which throws on a nonexistent pair), `--corpus <path>`.
 2. Preflight: `assertGenerateContentModelsAvailable` over every model id the ladder will touch (`scripts/benchmarkPreflight.ts`).
 3. Install a usage sink via `withUsageSink` from `modelGateway` to capture per-node tokens/latency for each corpus run.
-4. **ε calibration:** run baseline corpus twice → `computeEpsilon` over the node's metric series.
+4. **ε calibration (two epsilons):** run the baseline corpus twice and compute **both** `metricEps = computeEpsilon(metricRunA, metricRunB)` over the node's metric series **and** `e2eEps = computeEpsilon(e2eRunA, e2eRunB)` over the end-to-end judge series. `pickRecommendation` requires both — the decision rule gates on the node metric **and** the e2e score (design §"Decision rule"). Reusing one ε for both would mis-gate whichever series is noisier.
 5. For each node: run baseline, then each ladder rung by setting `process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({ [node]: rung })` before the run and restoring after. A rung run that throws → record `metric=0` (failed), continue; a baseline throw → skip the node with a logged error.
 6. Map each node's metric:
    - `clarification` → `clarificationPassed` rate (from `benchmarkSupport.ts`).
@@ -649,7 +671,8 @@ Tests: identical runs → floor; a single 0.2 jitter → 0.2. Commit.
    Cost = `Σ tokens × TIER_PRICES[tier]` (config map at top of file, prices as constants with a comment to update from billing).
 7. `pickRecommendation` per node.
 8. **Combined pass:** set `NODE_PROFILE_OVERRIDES` to all chosen rungs at once, run the corpus, assert e2e ≥ baseline − ε; if it regresses, revert the node whose chosen rung had the smallest metric margin toward DEFAULT and log it.
-9. Write `benchmarks/results/node-sweep-<date>.md`: per-node ladder table (metric / p95 / cost, recommended rung marked) + combined verdict + the ε used.
+9. Write `benchmarks/results/node-sweep-<date>.md`: per-node ladder table (metric / p95 / cost, recommended rung marked) + combined verdict + both ε values used.
+10. **Gitignore the evidence.** Add `benchmarks/results/*` with a `!benchmarks/results/.gitkeep` negation to `.gitignore`, so sweep reports (which contain client benchmark evidence) are never committed — `docs/trajectory-governance.md` forbids committing benchmark evidence to this template. Verify with `git check-ignore benchmarks/results/node-sweep-test.md`.
 
 **Add npm script** to `package.json`: `"node-sweep": "tsx scripts/node-sweep.ts"`.
 
@@ -676,6 +699,11 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 3. Read @superpowers:verification-before-completion and confirm each design claim is met:
    defaults pinned to 3.x, overrides validated, thinking omitted by default, seam telemetry
    attributable per node, decision rule baseline-safe + latency-banded, combined pass present.
+   **Also confirm the blocker fixes:** (a) `sqlGenerator` resolves its model via `nodeProfiles`,
+   **not** `config.gemini.model` — verify by setting `NODE_PROFILE_OVERRIDES` for `sqlGenerator`
+   and observing the resolved id change; (b) `getJudgeModel()` / `DEFAULT_PRO_MODEL` default to a
+   3.x id (no `-latest` alias survives anywhere in the generation or judge path); (c) the sweep
+   computes **two** epsilons (metric + e2e); (d) `benchmarks/results/*` is gitignored.
 4. Open PR 2.
 
 ---
@@ -685,3 +713,5 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - **Do not** widen the seam to own retries/timeouts/File-Search fallback — those stay in the agents (design §The seam).
 - Verify the exact `gemini-3.5-flash` / `*-preview` ids against the live model list before deploy; use `MODEL_ID_OVERRIDES` if any differ. Only Gemini 3.x.
 - `tsconfig` is `module: NodeNext` — keep `.js` import extensions.
+- **`config.gemini.model` severance (Task 4):** after removing `model: config.geminiModel` at `pipeline.ts:254`, check no other call site silently re-feeds a `-latest` alias into generation. `grep -rn "geminiModel\|getProModel\|getFlashModel" src/` should show only `config.ts`, `benchmark.ts`, and `getJudgeModel` as consumers — none on a live agent generation path.
+- **Do not memoize** `MODEL_ID_OVERRIDES` / `NODE_PROFILE_OVERRIDES` parsing — the sweep mutates `process.env` between runs (Task 2 note). The per-call parse is intentional.
