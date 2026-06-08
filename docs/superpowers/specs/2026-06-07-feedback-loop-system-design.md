@@ -193,13 +193,13 @@ The through-line: **every side-bar failure degrades to existing behavior**, and 
 - **Side bar wiring:** integration test in `tests/integration/` with external services mocked — assert that org-knowledge LOW confidence suspends to the admin target (not the user thread), the user sees the neutral status, an admin reply resumes and answers, and a teaching candidate is created.
 - **Fail-safes:** explicit tests for each row of §9.
 
-## 11. Open questions (for review)
+## 11. Resolved decisions (2026-06-07)
 
-1. **Domain taxonomy.** Is `domain` driven purely by ReferenceCards (so unattributed until cards exist for a domain), or do we want a small standalone domain list up front? Recommendation: cards-first, `unclassified` fallback — keeps the template honest (no invented client domains).
-2. **Side bar scope in v1.** Confirm v1 = clarification-gate routing only, deferring post-SQL semantic verification. Recommendation: yes (minimal surface).
-3. **`escalation_state` reuse vs `sidebar_state`.** Reuse with a new `trigger` (DRY) vs a dedicated collection (clearer separation, more code). Recommendation: reuse.
-4. **Readout surface.** CLI-only for v1, or also a scheduled digest to the admin channel? Recommendation: CLI-only first (no new outbound posting behavior to sanction).
-5. **Calibration gate strictness.** Hard-block side-bar shipping on a calibration threshold, or ship behind a config flag and measure in production? Recommendation: config flag (`escalation.sideBar` off by default) + measure, so calibration data accrues before broad enablement.
+1. **Domain taxonomy — cards-first + table fallback.** `domain` is resolved as: cited ReferenceCard `domain` → tag derived from the dominant table touched → `unclassified`. The table-derived fallback is load-bearing, not a nicety: it is the bootstrap taxonomy that keeps the sensor's pain ranking meaningful before any cards exist (avoids a cold-start "unclassified: 95%"). No standalone domain enum — inventing domains is template-unsafe and rots.
+2. **Side bar v1 scope — clarification-gate routing only.** v1 swaps *who* gets asked at the existing clarification halt (org-knowledge ambiguity → admin instead of user), proving the consult/resume primitive at minimal surface (governance: prove the primitive narrowly first). **Deferred to v2:** post-SQL validation — letting the pipeline generate SQL and asking the admin to validate the concrete table/SQL choice on low reconciled confidence. v2 catches confident-but-wrong answers and yields cheaper analyst rulings (validate-an-artifact beats answer-an-open-question), but requires clarification to not halt on org-knowledge ambiguity plus a new pre-response decision point that must not collide with `best_effort_verify`. Build v1 first, then v2 as a fast-follow.
+3. **Suspend/resume — reuse `escalation_state`.** New `trigger: 'sidebar_consult'`; rides the existing suspend, admin-target routing, reply-matching, reminders, and timeouts. No parallel `sidebar_state` collection.
+4. **Readout — CLI-only for v1.** `scripts/feedback-report.ts` + fold into `promote-teachings.ts`. A scheduled digest to the admin channel is deferred: it is new proactive outbound behavior and warrants its own governance step.
+5. **Calibration gate — config flag, off by default.** Ship behind `escalation.sideBar = off`. The default-off flag is the soft gate (the side bar fires nothing until explicitly enabled), and meanwhile the sensor accrues calibration data (negative-rate per confidence bucket). This breaks the measure-vs-ship chicken-and-egg that a hard threshold would create.
 
 ## 12. Suggested sequence (not the plan — that's a writing-plans pass)
 
