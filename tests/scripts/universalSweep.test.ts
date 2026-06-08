@@ -75,12 +75,12 @@ describe('pickFloorUp', () => {
 });
 
 describe('buildModelLadder', () => {
-  it('enumerates ALL FIVE Gemini 3.x models — coverage is registry-derived, not a hand subset', () => {
+  it('enumerates ALL FOUR Gemini 3.x models — coverage is registry-derived, not a hand subset', () => {
     const ladder = buildModelLadder();
-    expect(ladder).toHaveLength(5);
+    expect(ladder).toHaveLength(4);
     const models = ladder.map((r) => `${r.tier}/${r.version}`);
     expect(new Set(models)).toEqual(
-      new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3', 'pro/3.1']),
+      new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3.1']),
     );
     // Every candidate must resolve to a real Gemini 3.x model id.
     for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();

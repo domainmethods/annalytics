@@ -52,7 +52,7 @@ const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervi
 // ── Two-stage coordinate isolation ────────────────────────────────────────────
 //
 // The old design swept a single hand-authored "diagonal ladder" that (a) covered
-// only 3 of the 5 Gemini 3.x models and (b) changed model AND thinking level at
+// only 3 of the 4 Gemini 3.x models and (b) changed model AND thinking level at
 // each step, so a quality move could never be attributed to one axis. This sweep
 // separates the two axes:
 //

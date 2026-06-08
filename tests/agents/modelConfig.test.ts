@@ -54,11 +54,11 @@ describe('listGemini3xModels — the sweep enumeration source of truth', () => {
     const { listGemini3xModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
     const models = listGemini3xModels();
     // The whole point of this helper: a sweep that walks it can never cover a
-    // subset. There are exactly five real 3.x coordinates today — assert all five,
+    // subset. There are exactly four real 3.x coordinates today — assert all four,
     // and that each one actually resolves to a model id.
     const keys = models.map((m) => `${m.tier}/${m.version}`).sort();
     expect(keys).toEqual(
-      ['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3', 'pro/3.1'].sort(),
+      ['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3.1'].sort(),
     );
     for (const m of models) {
       expect(() => resolveModelId(m.tier, m.version)).not.toThrow();
@@ -79,7 +79,7 @@ describe('listGemini3xModels — the sweep enumeration source of truth', () => {
     const a = listGemini3xModels();
     a.pop();
     (a[0] as { tier: string }).tier = 'mutated';
-    expect(listGemini3xModels()).toHaveLength(5);
+    expect(listGemini3xModels()).toHaveLength(4);
     expect(listGemini3xModels()[0].tier).not.toBe('mutated');
   });
 });

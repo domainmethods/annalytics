@@ -122,15 +122,15 @@ describe('runSweep — two-stage coordinate isolation', () => {
     expect(r.stage1Anchor).toBe('high');
   });
 
-  it('Stage 1 evaluates ALL FIVE Gemini 3.x models, every one at the fixed anchor (axis isolation)', async () => {
+  it('Stage 1 evaluates ALL FOUR Gemini 3.x models, every one at the fixed anchor (axis isolation)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    expect(o.stage1).toHaveLength(5);
+    expect(o.stage1).toHaveLength(4);
     // Every Stage-1 point holds thinking at the anchor — only the model varies.
     for (const p of o.stage1) expect(parseLabel(p.label).level).toBe('high');
-    // All five distinct models appear.
+    // All four distinct models appear.
     const models = o.stage1.map(p => { const x = parseLabel(p.label); return `${x.tier}/${x.version}`; });
-    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3', 'pro/3.1']));
+    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3.1']));
   });
 
   it('Stage 2 holds the winning model fixed and walks every thinking level incl. `default` (axis isolation)', async () => {

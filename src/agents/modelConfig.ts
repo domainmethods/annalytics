@@ -25,7 +25,6 @@ const GEMINI_3X_MODELS: Record<string, string> = {
   'flash-lite/3.1': 'gemini-3.1-flash-lite',
   'flash/3': 'gemini-3-flash-preview',
   'flash/3.5': 'gemini-3.5-flash',
-  'pro/3': 'gemini-3-pro-preview',
   'pro/3.1': 'gemini-3.1-pro-preview',
 };
 
@@ -38,7 +37,7 @@ const TIER_RANK: Record<ModelTier, number> = { 'flash-lite': 0, 'flash': 1, 'pro
  * Every Gemini 3.x (tier, version) the template knows about — the SINGLE SOURCE OF
  * TRUTH for "all the models". Sizing sweeps MUST enumerate this rather than a
  * hand-authored list: that way adding a model to GEMINI_3X_MODELS automatically
- * enrolls it in every sweep, and a partial-coverage sweep (e.g. 3 of 5 models)
+ * enrolls it in every sweep, and a partial-coverage sweep (e.g. 3 of 4 models)
  * becomes structurally impossible. Returns fresh objects so callers can't mutate
  * the registry. Ordered cheapest tier first (stable within a tier).
  */

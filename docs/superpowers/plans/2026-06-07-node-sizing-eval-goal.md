@@ -204,9 +204,9 @@ reasoning-node defaults with measured picks from
 An adversarial re-read of the sweep surfaced **two structural flaws in the diagonal
 ladder** (`DEFAULT_LADDER`), serious enough to rebuild the search core:
 
-1. **Incomplete model coverage.** The hand-authored ladder sampled only **3 of the 5**
-   Gemini 3.x models (no `flash/3.5`, no `pro/3` *and* `pro/3.1` together) — so the sweep
-   could never have recommended two of the models it was supposed to choose among.
+1. **Incomplete model coverage.** The hand-authored ladder sampled only **3 of the 4**
+   Gemini 3.x models (no `flash/3.5`) — so the sweep could never have recommended a model
+   it was supposed to choose among.
 2. **Confounded axes.** Each ladder step changed model *and* thinking together, so a
    quality move could never be attributed to one axis. `thinkingLevel` was never sized in
    isolation; `default` (model-managed budget) wasn't even on the ladder.
@@ -224,7 +224,7 @@ ladder** (`DEFAULT_LADDER`), serious enough to rebuild the search core:
 - The decision rule is `pickWithinEpsilon` (gate within ε of the **best observed** point on
   **both** the node metric and e2e; tie-break `'cost'` in Stage 1, `'latency'` in Stage 2).
 - The same coverage fix landed in the judge-free classifier track: `universal-sweep.ts`
-  `buildModelLadder()` enumerates all 5 models at a fixed `minimal` anchor, then floor-up.
+  `buildModelLadder()` enumerates all 4 models at a fixed `minimal` anchor, then floor-up.
 
 **Single source of truth:** both sweeps enumerate `listGemini3xModels()` (derived from the
 `modelConfig` registry), so partial model coverage is now structurally impossible — adding a

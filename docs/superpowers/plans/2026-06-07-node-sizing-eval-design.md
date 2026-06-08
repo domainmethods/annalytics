@@ -50,7 +50,7 @@ Only Gemini 3.x models are used. Thinking is **discrete** in Gemini 3.x (not a t
 - Allowed values: `"minimal" | "low" | "medium" | "high"`
 - Model defaults vary: 3.1 Pro / 3 Flash → `high`; 3.1 Flash-Lite → `minimal`; 3.5 Flash → `medium`.
 - Exact model ids (verify exact strings against the live model list at impl time):
-  - Pro: `gemini-3.1-pro-preview`, `gemini-3-pro-preview`
+  - Pro: `gemini-3.1-pro-preview`
   - Flash: `gemini-3-flash-preview`, `gemini-3.5-flash`
   - Flash-Lite: `gemini-3.1-flash-lite`
 - The tier×version grid is **sparse** (no 3.5 Pro, no 3 Flash-Lite). Model selection uses an

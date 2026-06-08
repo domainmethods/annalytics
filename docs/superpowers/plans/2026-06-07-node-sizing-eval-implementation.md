@@ -70,7 +70,6 @@ const GEMINI_3X_MODELS: Record<string, string> = {
   'flash-lite/3.1': 'gemini-3.1-flash-lite',
   'flash/3': 'gemini-3-flash-preview',
   'flash/3.5': 'gemini-3.5-flash',
-  'pro/3': 'gemini-3-pro-preview',
   'pro/3.1': 'gemini-3.1-pro-preview',
 };
 

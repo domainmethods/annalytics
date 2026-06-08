@@ -49,7 +49,7 @@ measured it at minimum difficulty. Don't generalize an empty-corpus pick to ever
 ## Two-stage coordinate isolation (the sweep search shape)
 
 `node-sweep.ts` no longer walks a hand-authored diagonal "ladder". The old ladder had
-two flaws now both fixed: it covered only **3 of the 5** Gemini 3.x models, and each step
+two flaws now both fixed: it covered only **3 of the 4** Gemini 3.x models, and each step
 changed model **and** thinking together, so a quality move could never be attributed to
 one axis (`thinkingLevel` was confounded with tier — never sized in isolation). The sweep
 now separates the axes:
@@ -64,7 +64,7 @@ now separates the axes:
   (`pickWithinEpsilon`, `'latency'`, 5% latency band). ~10 evals/node total.
 
 `universal-sweep.ts` (judge-free classifiers) got the same coverage fix: `buildModelLadder()`
-enumerates all 5 models via `listGemini3xModels()` at a fixed `minimal` anchor, then floor-up
+enumerates all 4 models via `listGemini3xModels()` at a fixed `minimal` anchor, then floor-up
 picks the cheapest that clears exact-match accuracy.
 
 **Residual caveat (documented, accepted):** this is greedy coordinate descent, not a full
