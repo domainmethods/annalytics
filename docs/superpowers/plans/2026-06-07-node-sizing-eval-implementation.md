@@ -176,6 +176,21 @@ describe('nodeProfiles', () => {
     expect(resolveNodeModel('clarification')).toBe('gemini-3-flash-preview'); // dropped
     expect(getNodeProfile('supervisor').thinkingLevel).toBe('low');           // kept
   });
+
+  it('falls back to default when a well-shaped override names an unresolvable model', async () => {
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      sqlGenerator: { tier: 'pro', version: '3.5', thinkingLevel: 'low' }, // shape ok, no pro/3.5 model
+    }));
+    const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('sqlGenerator')).toBe('gemini-3.1-pro-preview'); // default, no throw
+  });
+
+  it('falls back when a tier-only override inherits an incompatible version', async () => {
+    // {tier:'flash-lite'} merges with the flash default's version '3' → 'flash-lite/3', which has no model.
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({ clarification: { tier: 'flash-lite' } }));
+    const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('clarification')).toBe('gemini-3-flash-preview'); // default, no throw
+  });
 });
 ```
 
@@ -201,13 +216,15 @@ export interface NodeProfile {
   thinkingLevel: ThinkingLevel;
 }
 
-const flash = (): NodeProfile => ({ tier: 'flash', version: '3', thinkingLevel: 'default' });
-const pro = (): NodeProfile => ({ tier: 'pro', version: '3.1', thinkingLevel: 'default' });
+// Shared constants — safe because getNodeProfile NEVER hands out a DEFAULTS
+// reference directly; every return is a fresh spread (see below).
+const FLASH_DEFAULT: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'default' };
+const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
 
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  clarification: flash(), slackIntake: flash(), followUpClassifier: flash(),
-  dbtStatus: flash(), metaQuestion: flash(), chart: flash(), teachingCandidate: flash(),
-  sqlGenerator: pro(), supervisor: pro(), discrepancy: pro(),
+  clarification: FLASH_DEFAULT, slackIntake: FLASH_DEFAULT, followUpClassifier: FLASH_DEFAULT,
+  dbtStatus: FLASH_DEFAULT, metaQuestion: FLASH_DEFAULT, chart: FLASH_DEFAULT, teachingCandidate: FLASH_DEFAULT,
+  sqlGenerator: PRO_DEFAULT, supervisor: PRO_DEFAULT, discrepancy: PRO_DEFAULT,
 };
 
 const TIERS: ModelTier[] = ['flash-lite', 'flash', 'pro'];
@@ -238,13 +255,32 @@ function loadOverrides(): Partial<Record<NodeId, Partial<NodeProfile>>> {
   return out;
 }
 
+const warnedBadProfiles = new Set<string>();
+
 export function getNodeProfile(id: NodeId): NodeProfile {
-  return { ...DEFAULTS[id], ...loadOverrides()[id] };
+  const merged: NodeProfile = { ...DEFAULTS[id], ...loadOverrides()[id] };
+  // A well-SHAPED override can still name an UNRESOLVABLE (tier, version) pair —
+  // either directly ({tier:'pro', version:'3.5'}) or by a tier-only override that
+  // inherits an incompatible version ({tier:'flash-lite'} → merged 'flash-lite/3',
+  // which has no model). isValidPartial only sees the partial; resolvability is a
+  // property of the MERGED profile. Re-check it here and fall back rather than
+  // throwing on every request that hits this node.
+  try {
+    resolveModelId(merged.tier, merged.version);
+    return merged;
+  } catch {
+    const key = `${id}:${merged.tier}/${merged.version}`;
+    if (!warnedBadProfiles.has(key)) {
+      console.warn(`NODE_PROFILE_OVERRIDES[${id}] resolves to no Gemini 3.x model (${merged.tier}/${merged.version}); using default`);
+      warnedBadProfiles.add(key);
+    }
+    return { ...DEFAULTS[id] };   // fresh copy — never a shared DEFAULTS reference
+  }
 }
 
 export function resolveNodeModel(id: NodeId): string {
   const p = getNodeProfile(id);
-  return resolveModelId(p.tier, p.version);
+  return resolveModelId(p.tier, p.version);   // always resolvable — getNodeProfile guarantees it
 }
 ```
 
@@ -652,6 +688,8 @@ export function computeEpsilon(runA: number[], runB: number[], floor = 0.01): nu
 ```
 Tests: identical runs → floor; a single 0.2 jitter → 0.2. Commit.
 
+> **Caller must pass id-aligned arrays.** `computeEpsilon` compares by index, so `runA[i]` and `runB[i]` must be the **same corpus case**. Two benchmark runs can finish in a different order or drop a failed case, so Task 8 builds `runA`/`runB` by keying each run's results on corpus id and iterating the shared ids in a fixed sorted order — never from raw result-array order. A test should cover the "B dropped a case" alignment path (build the arrays from a keyed map, not by zipping raw arrays).
+
 ---
 
 ### Task 8: Sweep driver (integration, real Gemini — not in CI)
@@ -662,7 +700,7 @@ Tests: identical runs → floor; a single 0.2 jitter → 0.2. Commit.
 1. Parse args: `--node <id>` (repeatable; default = sweepable set `clarification,sqlGenerator,supervisor`), `--version <v>` (optional — default uses each rung's own version from `DEFAULT_LADDER`; when set it overrides the version of every rung **whose `(tier, version)` exists** and drops rungs that don't, e.g. `--version 3.5` keeps only the `flash` rungs since there is no `flash-lite/3.5` or `pro/3.5`. Validate each via `resolveModelId`, which throws on a nonexistent pair), `--corpus <path>`.
 2. Preflight: `assertGenerateContentModelsAvailable` over every model id the ladder will touch (`scripts/benchmarkPreflight.ts`).
 3. Install a usage sink via `withUsageSink` from `modelGateway` to capture per-node tokens/latency for each corpus run.
-4. **ε calibration (two epsilons):** run the baseline corpus twice and compute **both** `metricEps = computeEpsilon(metricRunA, metricRunB)` over the node's metric series **and** `e2eEps = computeEpsilon(e2eRunA, e2eRunB)` over the end-to-end judge series. `pickRecommendation` requires both — the decision rule gates on the node metric **and** the e2e score (design §"Decision rule"). Reusing one ε for both would mis-gate whichever series is noisier.
+4. **ε calibration (two epsilons):** run the baseline corpus twice and compute **both** `metricEps = computeEpsilon(metricRunA, metricRunB)` over the node's metric series **and** `e2eEps = computeEpsilon(e2eRunA, e2eRunB)` over the end-to-end judge series. `pickRecommendation` requires both — the decision rule gates on the node metric **and** the e2e score (design §"Decision rule"). Reusing one ε for both would mis-gate whichever series is noisier. **Build each `run*` array id-aligned:** key both runs' results on corpus id and iterate the shared ids in a fixed sorted order (drop ids missing from either run). Do **not** rely on result-array ordering — it can differ between runs or shrink when a case fails, which would compare different cases and inflate ε.
 5. For each node: run baseline, then each ladder rung by setting `process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({ [node]: rung })` before the run and restoring after. A rung run that throws → record `metric=0` (failed), continue; a baseline throw → skip the node with a logged error.
 6. Map each node's metric:
    - `clarification` → `clarificationPassed` rate (from `benchmarkSupport.ts`).
@@ -670,7 +708,7 @@ Tests: identical runs → floor; a single 0.2 jitter → 0.2. Commit.
    - `supervisor` → end-to-end judge `overallScore` (proxy; all other nodes pinned at baseline).
    Cost = `Σ tokens × TIER_PRICES[tier]` (config map at top of file, prices as constants with a comment to update from billing).
 7. `pickRecommendation` per node.
-8. **Combined pass:** set `NODE_PROFILE_OVERRIDES` to all chosen rungs at once, run the corpus, assert e2e ≥ baseline − ε; if it regresses, revert the node whose chosen rung had the smallest metric margin toward DEFAULT and log it.
+8. **Combined pass:** set `NODE_PROFILE_OVERRIDES` to all chosen rungs at once, run the corpus, assert e2e ≥ baseline − `e2eEps`. If it regresses, compute each downsized node's **gate margin** `margin = chosen.metric - (baseline.metric - metricEps)` (its remaining headroom above its own quality floor) and revert the node with the **smallest** margin toward DEFAULT — it is the most marginal pick and the likeliest regression source. Re-run the combined pass; if it **still** regresses after one revert, ship DEFAULT for the entire e2e-critical set and flag for manual review. Log every revert. (This explicit `margin` formula supersedes the looser "cheapest-marginal-gain" phrasing — design §"Sweep algorithm" is updated to match.)
 9. Write `benchmarks/results/node-sweep-<date>.md`: per-node ladder table (metric / p95 / cost, recommended rung marked) + combined verdict + both ε values used.
 10. **Gitignore the evidence.** Add `benchmarks/results/*` with a `!benchmarks/results/.gitkeep` negation to `.gitignore`, so sweep reports (which contain client benchmark evidence) are never committed — `docs/trajectory-governance.md` forbids committing benchmark evidence to this template. Verify with `git check-ignore benchmarks/results/node-sweep-test.md`.
 

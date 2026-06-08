@@ -216,8 +216,9 @@ for each sweepable node:
    contenders = viable where p95 ≤ min(viable.p95) × 1.05
    recommend  = argmax(contenders, quality), tie → argmin(cost)
 combined pass: set ALL recommended overrides at once → run corpus →
-   assert no end-to-end regression vs baseline; if regressed, flag + revert the
-   cheapest-marginal-gain node toward baseline.
+   assert e2e ≥ baseline − e2eEps; if regressed, flag + revert the node with the
+   smallest gate margin = chosen.metric − (baseline.metric − metricEps) toward
+   baseline, re-run; if still regressed, ship baseline for the e2e-critical set.
 emit node-sweep-report.md (ladder table per node, recommended rung circled, combined verdict)
 ```
 
@@ -251,6 +252,7 @@ config, not hardcoded — same rationale as model ids.
 |---------|----------|
 | Malformed `NODE_PROFILE_OVERRIDES` JSON | caught, logged once, `{}` → DEFAULTS. Boot never fails. |
 | Override entry with invalid shape | validated; bad entries dropped individually. |
+| Well-shaped override, unresolvable merged `(tier,version)` | `getNodeProfile` re-checks the **merged** profile via `resolveModelId` (catches both direct `pro/3.5` and tier-only overrides that inherit an incompatible version); on failure it logs once and falls back to that node's default. No per-request crash. |
 | `usageMetadata` undefined | `recordUsage` zero-fills token counts. |
 | No telemetry sink (prod) | `recordUsage` early-returns. |
 | Gateway gets API/timeout error | pass-through; agent's existing handling owns it. |
