@@ -56,15 +56,15 @@ They share two things, which is why they are one system:
                  └───────────────────────────────────────────────────────┘
    REACTIVE ARM (sensor)                         PROACTIVE ARM (side bar)
    ─────────────────────                         ────────────────────────
-   thumbs handler → persist                      clarification gate → ambiguity
-     feedback_signal (domain,                      classifier → org-knowledge?
-     verdict, ts)                                   ├─ no  → ask USER (today)
+   thumbs handler → recordFeedback               clarification gate → ambiguity
+     writes negativeFeedback onto                  classifier → org-knowledge?
+     response_context (EXISTING)                    ├─ no  → ask USER (today)
         │                                           └─ yes → SIDE BAR:
-   aggregate by domain/window                          suspend, post to admin,
-        │                                              user sees "checking with
-   readout: domain pain ranking                        the team", match reply,
-   (CLI report + feed promote-teachings)               resume, answer, capture
-                                                       ruling as teaching candidate
+   sensor READS response_context                       suspend, post to admin,
+   window → aggregate by domain                        user sees "checking with
+        │                                              the team", match reply,
+   readout: domain pain ranking                        resume, answer, capture
+   (CLI report + feed promote-teachings)               ruling as teaching candidate
 ```
 
 ## 5. Component A — Feedback Sensor (reactive)
@@ -85,18 +85,18 @@ This means the sensor works on historical data with zero migration, and the prop
 
 ### 5.2 Domain attribution (derived at read time)
 
-Pure helper `resolveDomain(tablesUsed: string[], cards: ReferenceCard[]): string`, priority order:
-1. **Cards-first:** build a `table → domain` map from loaded ReferenceCards (each card's `canonical_table`, and optionally other referenced tables, maps to `card.domain`). If any `tablesUsed` entry matches, return that domain (e.g. `analytics.fct_orders` → `revenue`).
-2. **Table fallback:** a coarse tag from the dominant table (e.g. dataset/model prefix). This is the bootstrap taxonomy that keeps the ranking meaningful before cards exist.
+Pure helper `resolveDomain(tablesUsed: string[], domainMap: DomainMapEntry[]): string`, where `DomainMapEntry = { table, domain }`. The map is precomputed once from loaded ReferenceCards in the CLI (`card.canonical_table → card.domain`) and passed in — this keeps `src/feedback/` free of any `ReferenceCard` type dependency and makes the helper trivially unit-testable. Priority order:
+1. **Cards-first:** if any `tablesUsed` entry matches a map entry, return that domain (e.g. `analytics.fct_orders` → `revenue`). Both sides are normalized (lowercased, backticks stripped) because `tablesUsed` is LLM output and BigQuery is case-insensitive.
+2. **Table fallback:** a coarse tag from the dominant table (dataset/model prefix). This is the bootstrap taxonomy that keeps the ranking meaningful before cards exist.
 3. `unclassified` when `tablesUsed` is empty.
 
 Derived from already-stored `tablesUsed`, so it applies to historical docs with no backfill.
 
 ### 5.3 Aggregate + read out
 
-Pure reducers over `response_context` docs in a window:
-- `getDomainPainRanking(windowDays)` → per domain `{ domain, total, negative, negativeRate }`, sorted by `negativeRate` with a minimum-sample floor so a 1/1 domain doesn't top a 40/100 one.
-- `getConfidenceCalibration(windowDays)` → per reconciled-confidence bucket `{ confidence, total, negative, negativeRate }`. This is the calibration instrument the side bar (§7.1) gates on — nearly free, since confidence is already stored next to the verdict.
+A single windowed query, `getResponseContextsSince(windowDays)` (added to `state/responseContext.ts`), fetches the docs; `toFeedbackRecords` maps them to `FeedbackRecord[]` (dropping docs with no thumb or no confidence); then **pure reducers** run over that array — no Firestore in the reducer, so they test without mocks:
+- `getDomainPainRanking(records, minSample)` → per domain `{ domain, total, negative, negativeRate, belowSample }`, sorted by `negativeRate` with a minimum-sample floor so a 1/1 domain doesn't top a 40/100 one.
+- `getConfidenceCalibration(records)` → per reconciled-confidence bucket `{ confidence, total, negative, negativeRate }`. This is the calibration instrument the side bar (§7.1) gates on — nearly free, since confidence is already stored next to the verdict.
 
 Two consumers:
 - **CLI readout** (`scripts/feedback-report.ts`): prints the domain pain ranking and the calibration table. The instrument an admin uses to choose the next ReferenceCard domain *and* to judge whether `low` confidence is trustworthy enough to enable the side bar.
@@ -159,7 +159,7 @@ The side bar's value depends on the reconciled-confidence signal being trustwort
 
 ### 7.2 Domain attribution is shared
 
-Both arms need "what domain is this?" Implement once (`src/agents/domain.ts` or a helper on the response path) and reuse: the sensor tags feedback events; the side-bar classifier tags rulings.
+Both arms need "what domain is this?" Implement once as a pure helper (`src/feedback/domainAttribution.ts`, built by the sensor) and reuse: the sensor tags feedback records; the side-bar classifier can import the same `resolveDomain` to tag rulings.
 
 ### 7.3 Relationship to items 2 and 3
 
@@ -169,9 +169,10 @@ Both arms need "what domain is this?" Implement once (`src/agents/domain.ts` or 
 ## 8. Module boundaries (must hold)
 
 Per `CLAUDE.md`:
-- `agents/` (ambiguity classifier, domain helper) never imports from `slack/` or `state/`.
-- `state/feedbackSignal.ts` is a leaf (no domain-module imports).
-- `handlers/` delegates to the pipeline; the thumbs/sensor wiring lives in handlers/pipeline, not business logic in `app.ts`.
+- `agents/` (ambiguity classifier) never imports from `slack/` or `state/`.
+- `src/feedback/` (domain attribution, aggregation reducers, report formatter) is pure — imports only `types.ts`; no `slack/`, no `state/`, no `agents/`.
+- The sensor adds **no new collection**. Its one stateful touch is a read-only windowed query (`getResponseContextsSince`) added to the existing `state/responseContext.ts` leaf.
+- `handlers/` delegates to the pipeline; the thumbs wiring already lives there (existing `recordFeedback`), not business logic in `app.ts`.
 - Side-bar suspend/resume goes through `pipeline.ts` + `escalationState`, mirroring existing escalation flow.
 
 ## 9. Error handling / fail-safe summary
@@ -179,7 +180,8 @@ Per `CLAUDE.md`:
 | Failure | Behavior |
 |---|---|
 | Domain unresolved | tag `unclassified`; never block the response |
-| `feedback_signal` write fails | best-effort; never block the thumbs ack |
+| Sensor read/aggregation fails | the CLI reports the error and exits; read-only and offline, so it can never affect a live query or the thumbs ack |
+| Legacy doc missing `confidence` | dropped by `toFeedbackRecords` so it can't poison the calibration table |
 | Ambiguity classifier errors | default `user_intent` (ask the user, not the admin) |
 | No admin target configured | side bar disabled → existing clarification (ask user) |
 | Admin doesn't answer in time | escalation timeout → ask user / best-effort with caveat |
@@ -188,7 +190,7 @@ The through-line: **every side-bar failure degrades to existing behavior**, and 
 
 ## 10. Testing strategy
 
-- **Sensor (pure where possible):** `getDomainPainRanking` is a pure reducer over events — test the min-sample floor and sort without mocks. `feedbackSignal.ts` write/idempotency with the Firestore mock. Domain attribution priority (card → table → unclassified) as a pure function.
+- **Sensor (pure where possible):** `getDomainPainRanking` / `getConfidenceCalibration` are pure reducers over `FeedbackRecord[]` — test the min-sample floor and sort without mocks. Domain attribution priority (card → table → unclassified), including backtick/casing normalization, as a pure function. The one Firestore-touching piece, `getResponseContextsSince`, is tested with the Firestore mock folded into the existing `tests/state/responseContext.test.ts`.
 - **Ambiguity classifier:** mock Gemini; assert `org_knowledge` vs `user_intent` routing on fixtures, and the fail-safe default on error.
 - **Side bar wiring:** integration test in `tests/integration/` with external services mocked — assert that org-knowledge LOW confidence suspends to the admin target (not the user thread), the user sees the neutral status, an admin reply resumes and answers, and a teaching candidate is created.
 - **Fail-safes:** explicit tests for each row of §9.
@@ -203,7 +205,7 @@ The through-line: **every side-bar failure degrades to existing behavior**, and 
 
 ## 12. Suggested sequence (not the plan — that's a writing-plans pass)
 
-1. Domain attribution helper + `feedback_signal` capture + ranking + CLI readout. *(Sensor; immediately useful; also the calibration instrument.)*
+1. Domain attribution helper + windowed read over `response_context` + pure ranking/calibration reducers + CLI readout. *(Sensor; immediately useful; also the calibration instrument. Detailed in `docs/plans/2026-06-07-feedback-sensor.md`.)*
 2. `feedback_notes` reader (item 2) folded into `promote-teachings`. *(Already flagged.)*
 3. Ambiguity classifier + calibration validation slice. *(Gates the side bar.)*
 4. Side-bar suspend/consult/resume on `escalation_state`, behind `escalation.sideBar` flag, ruling→candidate capture.
