@@ -45,6 +45,18 @@ measured it at minimum difficulty. Don't generalize an empty-corpus pick to ever
   three to R0"; only `clarification` (ε=0.01) was real. **Do not trust the auto-verdict
   when ε ≳ a meaningful quality delta.** Root cause is corpus size, not the judge — grow
   `benchmarks/corpus.json` before trying to size the reasoning nodes.
+- **`thinkingLevel` is confounded with tier — it was NOT sized in isolation.** The ladder
+  (`DEFAULT_LADDER`) is a diagonal sweep: each tier samples only 2 of 4 levels
+  (flash-lite: minimal/low, flash: minimal/medium, pro: low/high), so a rung step bumps
+  thinking *and/or* model together. The only clean thinking evidence is the same-model
+  pairs — and there, more thinking bought nothing for the classifiers (R0 `minimal` =
+  R1 `low` = 1.000), which is why `minimal` on `slackIntake`/`followUpClassifier` is
+  measured, not guessed. Every other `thinkingLevel` default is a role-based HEURISTIC:
+  `low` on clarification/metaQuestion/teachingCandidate and `default` on the pro nodes
+  were never measured. Note `default` (model-managed budget) isn't even on the ladder —
+  we never tested whether pinning pro to a fixed level beats letting it self-manage. A
+  clean thinking-only sweep (hold tier+version fixed, walk minimal→high) is a real gap,
+  gated on the same corpus growth.
 
 ## Judge-free sizing for install-invariant classifiers
 
