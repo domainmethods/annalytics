@@ -53,9 +53,7 @@ function isValidPartial(v: unknown): v is Partial<NodeProfile> {
   return true;
 }
 
-function loadOverrides(): Partial<Record<NodeId, Partial<NodeProfile>>> {
-  const raw = process.env.NODE_PROFILE_OVERRIDES;
-  if (!raw) return {};
+function parseOverrides(raw: string): Partial<Record<NodeId, Partial<NodeProfile>>> {
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch {
     console.warn('NODE_PROFILE_OVERRIDES is not valid JSON; ignoring');
@@ -67,6 +65,26 @@ function loadOverrides(): Partial<Record<NodeId, Partial<NodeProfile>>> {
     if (k in DEFAULTS && isValidPartial(v)) out[k as NodeId] = v;
   }
   return out;
+}
+
+// Cache keyed on the RAW env string — NOT a one-time memo. The sweep mutates
+// NODE_PROFILE_OVERRIDES per rung and relies on each getNodeProfile call seeing
+// the current value, so we must re-parse whenever the string changes. Caching on
+// the raw string preserves that semantics while avoiding (a) a JSON.parse on every
+// single agent call and (b) repeated "not valid JSON" warning spam from a malformed
+// value that stays constant across thousands of calls.
+let cachedRaw: string | undefined;
+let cachedOverrides: Partial<Record<NodeId, Partial<NodeProfile>>> = {};
+let cacheValid = false;
+
+function loadOverrides(): Partial<Record<NodeId, Partial<NodeProfile>>> {
+  const raw = process.env.NODE_PROFILE_OVERRIDES;
+  if (!raw) return {};
+  if (cacheValid && raw === cachedRaw) return cachedOverrides;
+  cachedOverrides = parseOverrides(raw);
+  cachedRaw = raw;
+  cacheValid = true;
+  return cachedOverrides;
 }
 
 const warnedBadProfiles = new Set<string>();

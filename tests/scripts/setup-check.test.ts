@@ -111,6 +111,22 @@ describe('runSetupCheck', () => {
     });
   });
 
+  it('reports non-flash/pro floating -latest aliases as stale', async () => {
+    // The old narrow regex (gemini-(?:pro|flash)-latest) would NOT match this —
+    // the broadened -latest\b pattern must catch ANY floating alias, since any of
+    // them can silently resolve to a non-3.x model.
+    const root = await createRepoFixture({
+      'README.md': 'Legacy default model is gemini-1.5-pro-latest.',
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Stale Gemini model ID found in README.md; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases',
+    });
+  });
+
   it('reports ReferenceCard table mismatches when dbt artifacts are present', async () => {
     const root = await createRepoFixture({
       'references/revenue.yml': [

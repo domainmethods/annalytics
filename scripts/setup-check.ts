@@ -146,7 +146,7 @@ async function checkModelDocs(
   // `-latest` could silently resolve to a non-3.x model, violating the hard 3.x constraint.
   for (const file of ['README.md', '.env.example']) {
     const content = await readText(rootDir, file);
-    if (/gemini-3\.0|gemini-(?:pro|flash)-latest/.test(content)) {
+    if (/gemini-3\.0|-latest\b/.test(content)) {
       add(
         'error',
         `Stale Gemini model ID found in ${file}; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases`,

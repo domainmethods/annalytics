@@ -148,4 +148,31 @@ describe('runSweep orchestration', () => {
     await sweep(['clarification']);
     expect(process.env.NODE_PROFILE_OVERRIDES).toBeUndefined();
   });
+
+  it('aborts (does not zero-fill) when a rung run throws — a transient API error must not corrupt sizing', async () => {
+    // The two calibration runs at baseline must succeed so calibration completes;
+    // the first ladder rung then throws (simulating a rate-limit/quota error). A
+    // zero-filled metric would make the rung look broken and silently get gated out,
+    // corrupting the recommendation. The sweep must surface the error instead.
+    const inner = makeRunCorpusOnce();
+    let call = -1;
+    const runCorpusOnce = async (): Promise<CorpusRunResult> => {
+      call += 1;
+      if (call >= 2) throw new Error('simulated rate limit');
+      return inner();
+    };
+    await expect(
+      runSweep({
+        nodes: ['clarification'],
+        ladder: [...DEFAULT_LADDER],
+        corpusCount: 12,
+        corpusLabel: 'synthetic',
+        runDate: '2026-06-07',
+        runCorpusOnce,
+        log: () => {},
+      }),
+    ).rejects.toThrow('simulated rate limit');
+    // The env-restoring finally must still run on the abort path.
+    expect(process.env.NODE_PROFILE_OVERRIDES).toBeUndefined();
+  });
 });

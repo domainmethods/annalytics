@@ -1,7 +1,6 @@
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { initBigQuery } from '../src/validation/dryRun.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
@@ -320,8 +319,13 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
         });
         log(`  ${rung.rung} (${rung.tier}/${rung.version}): metric=${rungScores[rungScores.length - 1].metric.toFixed(3)}`);
       } catch (err) {
-        log(`  ${rung.rung}: run threw (${(err as Error).message}); recording metric=0`);
-        rungScores.push({ rung: rung.rung, metric: 0, e2e: 0, p95LatencyMs: 0, cost: 0 });
+        // Do NOT silently zero-fill a failed rung. A transient API error (rate limit,
+        // timeout, quota) would make the rung look broken and get gated out — silently
+        // corrupting the sizing recommendation while still emitting a plausible-looking
+        // report. Abort instead so the developer knows the run was invalid and can
+        // re-run. (The finally below still restores NODE_PROFILE_OVERRIDES first.)
+        log(`  [ERROR] ${rung.rung} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
+        throw err;
       } finally {
         if (prev === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
         else process.env.NODE_PROFILE_OVERRIDES = prev;
@@ -668,7 +672,10 @@ async function main() {
 }
 
 // Only self-execute when invoked directly (tsx scripts/node-sweep.ts), never on import.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// A suffix match on argv[1] is robust across tsx (.ts) and compiled (.js) launch
+// without the loader-specific URL/path normalization that fileURLToPath comparison
+// is sensitive to (symlinks, trailing slashes, file:// scheme differences).
+if (process.argv[1]?.endsWith('node-sweep.ts') || process.argv[1]?.endsWith('node-sweep.js')) {
   main().then(() => {
     process.exit(0);
   }).catch(err => {
