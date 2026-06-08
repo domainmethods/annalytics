@@ -138,7 +138,7 @@ describe('sweepNode', () => {
 
   it('sets a per-rung override and picks the cheapest perfect model, restoring env after', async () => {
     const prevSeen: Array<string | undefined> = [];
-    const result = await sweepNode('slackIntake', buildModelLadder(), 1.0, (rung) => async () => {
+    const result = await sweepNode('slackIntake', buildModelLadder(), 1.0, (_rung) => async () => {
       // The override for THIS node/rung must be live while the runner executes.
       prevSeen.push(process.env.NODE_PROFILE_OVERRIDES);
       // Every model classifies perfectly → floor-up should take the cheapest one.
@@ -148,7 +148,7 @@ describe('sweepNode', () => {
       ];
     });
 
-    expect(result.pick.chosen.rung).toBe('flash-lite/3.1'); // cheapest of the five
+    expect(result.pick.chosen.rung).toBe('flash-lite/3.1'); // cheapest of the four
     expect(result.pick.metThreshold).toBe(true);
     // Each model saw its own override JSON set.
     expect(prevSeen.every((o) => o && o.includes('slackIntake'))).toBe(true);

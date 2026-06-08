@@ -31,7 +31,6 @@ const BASE_SQLMETRIC = 0.95;
 
 const THINK_TOKENS: Record<ThinkingLevel, number> = { minimal: 50, low: 150, medium: 400, high: 900, default: 300 };
 const TIER_LAT: Record<ModelTier, number> = { 'flash-lite': 100, 'flash': 200, 'pro': 500 };
-const TIER_PRICE: Record<ModelTier, number> = { 'flash-lite': 0.0000001, 'flash': 0.0000003, 'pro': 0.000002 };
 
 interface EffProfile { tier: ModelTier; version: string; level: ThinkingLevel; }
 
