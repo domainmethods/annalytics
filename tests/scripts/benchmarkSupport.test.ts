@@ -11,6 +11,9 @@ import {
   sqlShapePassed,
   tableSelectionPassed,
   referenceRetrievalPassed,
+  extractTeachingIdsFromCitations,
+  teachingRetrievalPassed,
+  teachingComplianceLabel,
   validationResultsFromFailures,
 } from '../../scripts/benchmarkSupport.js';
 import type { FailureRecord, ValidationLayerRecord } from '../../src/qualityLoop.js';
@@ -199,6 +202,29 @@ describe('reference retrieval helpers', () => {
     )).toBe('explicit_probe');
     expect(referenceRetrievalSource([], ['revenue-monthly-grain'])).toBe('sql_grounding');
     expect(referenceRetrievalSource([], [])).toBe('none');
+  });
+});
+
+describe('teaching retrieval helpers', () => {
+  it('extracts teaching ids from source files and chunk text', () => {
+    expect(extractTeachingIdsFromCitations([
+      { sourceFile: 'teaching:revenue-grain', chunkText: '', relevanceScore: 1 },
+      { sourceFile: 'x', chunkText: 'Teaching: session-window', relevanceScore: 1 },
+      { sourceFile: 'reference_card:rev-001', chunkText: '', relevanceScore: 1 },
+    ])).toEqual(['revenue-grain', 'session-window']);
+  });
+
+  it('passes when every expected teaching id is observed; null when none expected', () => {
+    expect(teachingRetrievalPassed(['a', 'b'], ['a', 'b', 'c'])).toBe(true);
+    expect(teachingRetrievalPassed(['a', 'b'], ['a'])).toBe(false);
+    expect(teachingRetrievalPassed(undefined, [])).toBeNull();
+    expect(teachingRetrievalPassed([], ['a'])).toBeNull();
+  });
+
+  it('labels compliance from the pass/null state', () => {
+    expect(teachingComplianceLabel(null)).toBe('no_relevant_teaching');
+    expect(teachingComplianceLabel(true)).toBe('followed');
+    expect(teachingComplianceLabel(false)).toBe('missed');
   });
 });
 

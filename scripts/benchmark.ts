@@ -20,12 +20,15 @@ import {
   combineReferenceIds,
   extractTablesFromSql,
   extractReferenceIdsFromCitations,
+  extractTeachingIdsFromCitations,
   getGitDirty,
   getGitSha,
   referenceRetrievalPassed,
   referenceRetrievalSource,
   sqlShapePassed,
   tableSelectionPassed,
+  teachingComplianceLabel,
+  teachingRetrievalPassed,
   validationResultsFromFailures,
 } from './benchmarkSupport.js';
 import { probeReferenceCards } from './referenceProbe.js';
@@ -180,7 +183,10 @@ async function main() {
           validationHistory: [],
           bytesProcessed: null,
           supervisorNotes: 'Skipped: LOW clarification confidence',
-          teachingCompliance: 'no_relevant_teaching',
+          teachingCompliance: teachingComplianceLabel(teachingRetrievalPassed(entry.expectedTeachingIds, [])),
+          expectedTeachingIds: entry.expectedTeachingIds,
+          observedTeachingIds: [],
+          teachingRetrievalPassed: teachingRetrievalPassed(entry.expectedTeachingIds, []),
           expectedReferenceIds: entry.expectedReferenceIds,
           observedReferenceIds: [],
           referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),
@@ -255,6 +261,10 @@ async function main() {
         referenceProbe.referenceIds,
         sqlGroundingReferenceIds,
       );
+      const observedTeachingIds = extractTeachingIdsFromCitations(
+        quality.sqlResult.groundingCitations,
+      );
+      const teachingPassed = teachingRetrievalPassed(entry.expectedTeachingIds, observedTeachingIds);
       const observedTables = extractTablesFromSql(
         quality.sqlResult.sql,
         knownBenchmarkTables,
@@ -275,7 +285,10 @@ async function main() {
         validationHistory: quality.validationHistory ?? [],
         bytesProcessed: quality.bytesProcessed ?? null,
         supervisorNotes: quality.supervisorNotes,
-        teachingCompliance: 'no_relevant_teaching',
+        teachingCompliance: teachingComplianceLabel(teachingPassed),
+        expectedTeachingIds: entry.expectedTeachingIds,
+        observedTeachingIds,
+        teachingRetrievalPassed: teachingPassed,
         expectedReferenceIds: entry.expectedReferenceIds,
         observedReferenceIds,
         referenceRetrievalPassed: referenceRetrievalPassed(
@@ -330,7 +343,10 @@ async function main() {
         validationHistory: [],
         bytesProcessed: null,
         supervisorNotes: `Error: ${(err as Error).message}`,
-        teachingCompliance: 'no_relevant_teaching',
+        teachingCompliance: teachingComplianceLabel(teachingRetrievalPassed(entry.expectedTeachingIds, [])),
+        expectedTeachingIds: entry.expectedTeachingIds,
+        observedTeachingIds: [],
+        teachingRetrievalPassed: teachingRetrievalPassed(entry.expectedTeachingIds, []),
         expectedReferenceIds: entry.expectedReferenceIds,
         observedReferenceIds: [],
         referenceRetrievalPassed: referenceRetrievalPassed(entry.expectedReferenceIds, []),

@@ -7,6 +7,10 @@ import {
   generateSummary,
   writeBenchmarkAnalysisOutputs,
 } from '../../scripts/benchmark-analyze.js';
+import {
+  evaluateReferenceCardAcceptance,
+  formatReferenceCardAcceptanceReport,
+} from '../../scripts/benchmarkAcceptance.js';
 import type {
   BenchmarkMetadata,
   BenchmarkResult,
@@ -147,6 +151,28 @@ describe('generateSummary', () => {
 
     expect(summary).toContain('| revenue-ref-bad\\|id | retrieval_miss |');
     expect(summary).not.toContain('| revenue-ref-bad|id | retrieval_miss |');
+  });
+});
+
+describe('committed teaching-retrieval mock fixture', () => {
+  it('renders a Teaching column and a clean ACCEPTED decision over the fixture', async () => {
+    const fixturePath = join(
+      process.cwd(),
+      'benchmarks',
+      'mock-results',
+      '2026-06-08-teaching-retrieval.json',
+    );
+    const fixture: BenchmarkRun = JSON.parse(await readFile(fixturePath, 'utf-8'));
+
+    const acceptance = evaluateReferenceCardAcceptance(fixture);
+    expect(acceptance.decision).toBe('ACCEPTED');
+    expect(acceptance.failures).toEqual([]);
+
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+    expect(report).toContain('Teaching');
+    // revenue-ref-001 observed its expected teaching id; revenue-ref-002 expects none.
+    expect(report).toContain('| revenue-ref-001 | pass | true | true |');
+    expect(report).toContain('| revenue-ref-002 | pass | true | n/a |');
   });
 });
 

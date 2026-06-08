@@ -34,6 +34,9 @@ function result(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
     bytesProcessed: 1024,
     supervisorNotes: 'ok',
     teachingCompliance: 'no_relevant_teaching',
+    expectedTeachingIds: undefined,
+    observedTeachingIds: [],
+    teachingRetrievalPassed: null,
     expectedReferenceIds: ['revenue-canonical-definition'],
     observedReferenceIds: ['revenue-canonical-definition'],
     referenceRetrievalPassed: true,
@@ -160,6 +163,44 @@ describe('evaluateReferenceCardAcceptance', () => {
     expect(acceptance.failures).toContainEqual(expect.objectContaining({
       corpusId: 'revenue-ref-001',
       failureClass: 'retrieval_miss',
+    }));
+  });
+
+  it('classifies teaching misses when an expected teaching id is not observed', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        expectedTeachingIds: ['t1'],
+        observedTeachingIds: [],
+        teachingRetrievalPassed: false,
+      }),
+    ]));
+
+    expect(acceptance.decision).toBe('NEEDS_REVISION');
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      corpusId: 'revenue-ref-001',
+      failureClass: 'teaching_miss',
+    }));
+  });
+
+  it('does not classify a teaching miss when every expected teaching is observed', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        expectedTeachingIds: ['t1'],
+        observedTeachingIds: ['t1'],
+        teachingRetrievalPassed: true,
+      }),
+    ]));
+
+    expect(acceptance.failures).not.toContainEqual(expect.objectContaining({
+      failureClass: 'teaching_miss',
+    }));
+  });
+
+  it('does not classify a teaching miss when no teaching is expected', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([result()]));
+
+    expect(acceptance.failures).not.toContainEqual(expect.objectContaining({
+      failureClass: 'teaching_miss',
     }));
   });
 
@@ -382,7 +423,8 @@ describe('formatReferenceCardAcceptanceReport', () => {
     expect(report).toContain('**Decision:** `ACCEPTED`');
     expect(report).toContain('## ReferenceCard Scorecard');
     expect(report).toContain('| Git SHA | abc123 |');
-    expect(report).toContain('| revenue-ref-001 | pass | true | explicit_probe | true | true | true | pass |');
+    expect(report).toContain('Teaching');
+    expect(report).toContain('| revenue-ref-001 | pass | true | n/a | explicit_probe | true | true | true | pass |');
     expect(report).toContain('Expand to one next high-confusion domain.');
   });
 

@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { GroundingCitation } from '../src/agents/types.js';
 import type { FailureRecord, QualityResult, ValidationLayerRecord } from '../src/qualityLoop.js';
-import { extractReferenceIdsFromCitations as extractCitationReferenceIds } from '../src/agents/grounding.js';
+import {
+  extractReferenceIdsFromCitations as extractCitationReferenceIds,
+  extractTeachingIdsFromCitations as extractCitationTeachingIds,
+} from '../src/agents/grounding.js';
 
 export interface BenchmarkMetadataInput {
   packageJson: string;
@@ -144,6 +147,28 @@ export function referenceRetrievalPassed(
   if (!expectedReferenceIds || expectedReferenceIds.length === 0) return null;
   const observed = new Set(observedReferenceIds);
   return expectedReferenceIds.every(id => observed.has(id));
+}
+
+export function extractTeachingIdsFromCitations(
+  citations: Pick<GroundingCitation, 'sourceFile' | 'chunkText' | 'relevanceScore'>[],
+): string[] {
+  return extractCitationTeachingIds(citations);
+}
+
+// Same shape as referenceRetrievalPassed: null when nothing expected, else
+// "every expected id observed". Keeps the two retrieval signals symmetric.
+export function teachingRetrievalPassed(
+  expectedTeachingIds: string[] | undefined,
+  observedTeachingIds: string[],
+): boolean | null {
+  if (!expectedTeachingIds || expectedTeachingIds.length === 0) return null;
+  const observed = new Set(observedTeachingIds);
+  return expectedTeachingIds.every(id => observed.has(id));
+}
+
+export function teachingComplianceLabel(passed: boolean | null): string {
+  if (passed === null) return 'no_relevant_teaching';
+  return passed ? 'followed' : 'missed';
 }
 
 export function extractTablesFromSql(sql: string | null | undefined, knownTables: string[]): string[] {

@@ -3,6 +3,7 @@ import {
   citationSourceFile,
   extractGroundingCitations,
   extractReferenceIdsFromCitations,
+  extractTeachingIdsFromCitations,
 } from '../../src/agents/grounding.js';
 
 describe('grounding extraction', () => {
@@ -55,5 +56,13 @@ describe('grounding extraction', () => {
       'revenue-canonical-definition',
       'revenue-monthly-grain',
     ]);
+  });
+
+  it('extracts teaching ids from source files and chunk text', () => {
+    expect(extractTeachingIdsFromCitations([
+      { sourceFile: 'teaching:revenue-grain', chunkText: '' },
+      { sourceFile: 'x', chunkText: 'Teaching: session-window' },
+      { sourceFile: 'reference_card:rev-001', chunkText: '' },  // not a teaching
+    ])).toEqual(['revenue-grain', 'session-window']);
   });
 });

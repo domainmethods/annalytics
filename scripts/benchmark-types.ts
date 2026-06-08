@@ -41,6 +41,9 @@ export interface BenchmarkResult {
   bytesProcessed: number | null;
   supervisorNotes: string;
   teachingCompliance: string;
+  expectedTeachingIds?: string[];
+  observedTeachingIds: string[];
+  teachingRetrievalPassed: boolean | null;
   expectedReferenceIds?: string[];
   observedReferenceIds: string[];
   referenceRetrievalPassed: boolean | null;

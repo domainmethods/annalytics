@@ -47,6 +47,20 @@ export function extractReferenceIdsFromCitations(
   return [...ids].sort();
 }
 
+export function extractTeachingIdsFromCitations(
+  citations: Pick<GroundingCitation, 'sourceFile' | 'chunkText'>[],
+): string[] {
+  const ids = new Set<string>();
+  for (const citation of citations) {
+    const sourceMatch = citation.sourceFile.match(/teaching:([a-z0-9-]+)/i);
+    if (sourceMatch) ids.add(sourceMatch[1]);
+
+    const chunkMatch = citation.chunkText.match(/Teaching:\s*([a-z0-9-]+)/i);
+    if (chunkMatch) ids.add(chunkMatch[1]);
+  }
+  return [...ids].sort();
+}
+
 export function citationSourceFile(retrievedContext: RetrievedContext): string {
   const uri = retrievedContext.uri;
   if (typeof uri === 'string' && uri.trim()) return uri;

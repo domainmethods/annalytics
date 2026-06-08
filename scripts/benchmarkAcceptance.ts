@@ -13,6 +13,7 @@ export type ReferenceCardDecision = 'ACCEPTED' | 'NEEDS_REVISION';
 export type ReferenceCardFailureClass =
   | 'missing_metadata'
   | 'retrieval_miss'
+  | 'teaching_miss'
   | 'table_mismatch'
   | 'sql_shape_mismatch'
   | 'validation_failure'
@@ -32,6 +33,7 @@ export interface ReferenceCardCaseAcceptance {
   expectedReferenceIds: string[];
   observedReferenceIds: string[];
   referenceRetrievalPassed: boolean | null;
+  teachingRetrievalPassed: boolean | null;
   referenceRetrievalSource: 'explicit_probe' | 'sql_grounding' | 'none' | 'legacy';
   expectedTables: string[];
   observedTables: string[];
@@ -154,13 +156,14 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
 
   lines.push('## ReferenceCard Scorecard');
   lines.push('');
-  lines.push('| Corpus ID | Status | Retrieval | Source | Tables | SQL Shape | L1/L3/L4 | L2 |');
-  lines.push('|-----------|--------|-----------|--------|--------|-----------|----------|----|');
+  lines.push('| Corpus ID | Status | Retrieval | Teaching | Source | Tables | SQL Shape | L1/L3/L4 | L2 |');
+  lines.push('|-----------|--------|-----------|----------|--------|--------|-----------|----------|----|');
   for (const item of result.cases) {
     lines.push(`| ${[
       escapeMarkdown(item.corpusId),
       item.status,
       boolLabel(item.referenceRetrievalPassed),
+      boolLabel(item.teachingRetrievalPassed),
       item.referenceRetrievalSource,
       boolLabel(item.tableSelectionPassed),
       boolLabel(item.sqlShapePassed),
@@ -222,6 +225,16 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     });
   }
 
+  const expectedTeachingIds = arrayOrEmpty(result.expectedTeachingIds);
+  const observedTeachingIds = arrayOrEmpty(result.observedTeachingIds);
+  if (expectedTeachingIds.length > 0 && result.teachingRetrievalPassed !== true) {
+    failures.push({
+      corpusId: result.corpusId,
+      failureClass: 'teaching_miss',
+      detail: `Expected teachings ${formatList(expectedTeachingIds)}; observed ${formatList(observedTeachingIds)}`,
+    });
+  }
+
   if (expectedTables.length > 0 && result.tableSelectionPassed !== true) {
     failures.push({
       corpusId: result.corpusId,
@@ -280,6 +293,7 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     expectedReferenceIds,
     observedReferenceIds,
     referenceRetrievalPassed: result.referenceRetrievalPassed,
+    teachingRetrievalPassed: result.teachingRetrievalPassed ?? null,
     referenceRetrievalSource,
     expectedTables,
     observedTables,
