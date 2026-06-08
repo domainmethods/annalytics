@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveModelId } from '../src/agents/modelConfig.js';
-import { DEFAULT_LADDER, type LadderRung } from './node-sweep-types.js';
+import { listGemini3xModels } from '../src/agents/modelConfig.js';
+import type { ThinkingLevel } from '../src/agents/nodeProfiles.js';
 import { classifySlackIntake } from '../src/agents/slackIntakeAgent.js';
 import { classifyFollowUp } from '../src/agents/followUpClassifier.js';
 import type { ThreadMessage } from '../src/types.js';
@@ -9,6 +9,7 @@ import {
   accuracy,
   pickFloorUp,
   type Prediction,
+  type ModelRung,
   type RungAccuracy,
   type FloorUpResult,
 } from './universal-sweep-core.js';
@@ -48,17 +49,27 @@ export type RungRunner = () => Promise<Prediction[]>;
  *  documented reason (e.g. a deliberately adversarial corpus). */
 export const DEFAULT_THRESHOLD = 1.0;
 
-/** Drop ladder rungs whose (tier, version) has no resolvable 3.x model, mirroring
- *  node-sweep's buildLadder so both sweeps walk an identical, valid ladder. */
-export function buildLadder(): LadderRung[] {
-  return DEFAULT_LADDER.filter((rung) => {
-    try {
-      resolveModelId(rung.tier, rung.version);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+// Thinking anchor for the model sweep. These nodes do CLOSED-SET classification
+// (route / intent) — structurally the kind of task that needs no open reasoning —
+// and the prior sweep found them flat-at-CEILING (1.000) at every model. So we
+// hold thinking at `minimal` and let the floor-up rule pick across MODELS only;
+// paying for more thinking on a task that already classifies perfectly is pure waste.
+export const UNIVERSAL_ANCHOR: ThinkingLevel = 'minimal';
+
+/**
+ * The candidate ladder: EVERY Gemini 3.x model (listGemini3xModels — the registry,
+ * not a hand-authored subset, so coverage can't silently drop a model) at the fixed
+ * thinking anchor. listGemini3xModels() is already ordered cheapest-tier-first, which
+ * is exactly the ordering pickFloorUp requires ("cheapest that passes" = "first that
+ * passes"). One axis varies — the model — so a pick is attributable to the model alone.
+ */
+export function buildModelLadder(): ModelRung[] {
+  return listGemini3xModels().map((m) => ({
+    rung: `${m.tier}/${m.version}`,
+    tier: m.tier,
+    version: m.version,
+    thinkingLevel: UNIVERSAL_ANCHOR,
+  }));
 }
 
 /**
@@ -72,9 +83,9 @@ export function buildLadder(): LadderRung[] {
  */
 export async function sweepNode(
   nodeId: string,
-  ladder: LadderRung[],
+  ladder: ModelRung[],
   threshold: number,
-  runRung: (rung: LadderRung) => RungRunner,
+  runRung: (rung: ModelRung) => RungRunner,
 ): Promise<{ nodeId: string; rungs: RungAccuracy[]; pick: FloorUpResult }> {
   const rungs: RungAccuracy[] = [];
 
@@ -228,12 +239,12 @@ async function main(): Promise<void> {
     followUpClassifier: FollowUpEntry[];
   };
 
-  const ladder = buildLadder();
+  const ladder = buildModelLadder();
   const threshold = DEFAULT_THRESHOLD;
   const runDate = new Date().toISOString().slice(0, 10);
 
   console.log(`Universal-node sweep: ${runDate}`);
-  console.log(`Ladder: ${ladder.map((r) => `${r.rung}(${r.tier}/${r.version})`).join(', ')}`);
+  console.log(`Models (@thinking=${UNIVERSAL_ANCHOR}): ${ladder.map((r) => r.rung).join(', ')}`);
   console.log(
     `Corpus: slackIntake=${corpus.slackIntake.length}, followUpClassifier=${corpus.followUpClassifier.length}\n`,
   );

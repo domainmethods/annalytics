@@ -15,12 +15,17 @@ export interface Prediction {
   predicted: string;
 }
 
-/** A ladder rung's measured accuracy, carrying enough to write it back as a profile. */
-export interface RungAccuracy {
+/** A candidate model point to sweep: one Gemini 3.x model at the fixed thinking
+ *  anchor. `rung` is a human label (e.g. "flash-lite/3.1"). */
+export interface ModelRung {
   rung: string;
   tier: ModelTier;
   version: string;
   thinkingLevel: ThinkingLevel;
+}
+
+/** A candidate's measured accuracy, carrying enough to write it back as a profile. */
+export interface RungAccuracy extends ModelRung {
   accuracy: number;
 }
 
@@ -40,9 +45,9 @@ export function accuracy(predictions: Prediction[]): number {
 /**
  * Floor-up pick: the CHEAPEST rung whose accuracy clears `threshold`.
  *
- * `rungs` MUST be ordered cheapest → most expensive (the natural DEFAULT_LADDER
- * order), because "cheapest that passes" is just "first that passes" over that
- * ordering. If no rung clears the threshold, fall back to the highest-accuracy
+ * `rungs` MUST be ordered cheapest → most expensive (the cheapest-tier-first
+ * order of `listGemini3xModels()`), because "cheapest that passes" is just "first
+ * that passes" over that ordering. If no rung clears the threshold, fall back to the highest-accuracy
  * rung, tie-breaking to the cheapest (earliest) — and flag `metThreshold:false`
  * so the caller surfaces it as a non-confident pick rather than a clean win.
  */

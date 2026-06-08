@@ -41,22 +41,41 @@ measured it at minimum difficulty. Don't generalize an empty-corpus pick to ever
 - **Large ε makes `node-sweep`'s auto-verdict vacuous.** When ε(metric/e2e) is a large
   fraction of scale (`sqlGenerator` ε=0.33, `supervisor` ε=2.85 on the 12-question
   corpus), the quality gate passes everything "within ε" and the cost tie-break hands
-  back the cheapest rung as a fake downsize. The script printed "ACCEPTED — downsize all
-  three to R0"; only `clarification` (ε=0.01) was real. **Do not trust the auto-verdict
+  back the cheapest point as a fake downsize. An earlier run printed "ACCEPTED — downsize
+  all three"; only `clarification` (ε=0.01) was real. **Do not trust the auto-verdict
   when ε ≳ a meaningful quality delta.** Root cause is corpus size, not the judge — grow
   `benchmarks/corpus.json` before trying to size the reasoning nodes.
-- **`thinkingLevel` is confounded with tier — it was NOT sized in isolation.** The ladder
-  (`DEFAULT_LADDER`) is a diagonal sweep: each tier samples only 2 of 4 levels
-  (flash-lite: minimal/low, flash: minimal/medium, pro: low/high), so a rung step bumps
-  thinking *and/or* model together. The only clean thinking evidence is the same-model
-  pairs — and there, more thinking bought nothing for the classifiers (R0 `minimal` =
-  R1 `low` = 1.000), which is why `minimal` on `slackIntake`/`followUpClassifier` is
-  measured, not guessed. Every other `thinkingLevel` default is a role-based HEURISTIC:
-  `low` on clarification/metaQuestion/teachingCandidate and `default` on the pro nodes
-  were never measured. Note `default` (model-managed budget) isn't even on the ladder —
-  we never tested whether pinning pro to a fixed level beats letting it self-manage. A
-  clean thinking-only sweep (hold tier+version fixed, walk minimal→high) is a real gap,
-  gated on the same corpus growth.
+
+## Two-stage coordinate isolation (the sweep search shape)
+
+`node-sweep.ts` no longer walks a hand-authored diagonal "ladder". The old ladder had
+two flaws now both fixed: it covered only **3 of the 5** Gemini 3.x models, and each step
+changed model **and** thinking together, so a quality move could never be attributed to
+one axis (`thinkingLevel` was confounded with tier — never sized in isolation). The sweep
+now separates the axes:
+
+- **Stage 1 — MODEL axis.** Hold thinking at a fixed anchor (`STAGE1_ANCHOR = 'high'`),
+  evaluate **all** models (`listGemini3xModels()` — the registry, so coverage can't
+  silently drop a model), pick the cheapest within ε of the best (`pickWithinEpsilon`,
+  `'cost'`). Anchor is `high` on purpose — **capability-first**: give every model ample
+  reasoning so the comparison reflects best-case capability, then trim.
+- **Stage 2 — THINKING axis.** Hold the winning model fixed, walk every level incl.
+  `default` (model-managed budget — now actually tested), pick the fastest within ε
+  (`pickWithinEpsilon`, `'latency'`, 5% latency band). ~10 evals/node total.
+
+`universal-sweep.ts` (judge-free classifiers) got the same coverage fix: `buildModelLadder()`
+enumerates all 5 models via `listGemini3xModels()` at a fixed `minimal` anchor, then floor-up
+picks the cheapest that clears exact-match accuracy.
+
+**Residual caveat (documented, accepted):** this is greedy coordinate descent, not a full
+model×thinking grid, so it can miss an interaction where a pricier model would have won
+only at a level the anchor didn't use. `anchor=high` is what blunts that risk; the ~10-vs-25
+evals/node saving is the deliberate trade.
+
+**Status:** engine + unit tests landed; the **live re-run is deferred** until
+`benchmarks/corpus.json` grows (a bigger corpus shrinks ε so the auto-verdict stops being
+vacuous on the reasoning nodes). The current `nodeProfiles.ts` thinking defaults outside the
+two measured classifiers remain role-based HEURISTICS until that re-run.
 
 ## Judge-free sizing for install-invariant classifiers
 

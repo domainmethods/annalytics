@@ -138,3 +138,11 @@ export function resolveNodeModel(id: NodeId): string {
 export function defaultTierForNode(id: NodeId): ModelTier {
   return DEFAULTS[id].tier;
 }
+
+// The node's full default profile (tier+version+thinkingLevel), ignoring env
+// overrides. A fresh copy so callers can't mutate DEFAULTS. Used by the sizing
+// sweep to tell "a downsize the node didn't already run" apart from "the search
+// landed back on the existing default".
+export function defaultProfileForNode(id: NodeId): NodeProfile {
+  return { ...DEFAULTS[id] };
+}

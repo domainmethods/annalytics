@@ -9,8 +9,16 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
-import { getJudgeModel, resolveModelId, type ModelTier } from '../src/agents/modelConfig.js';
-import { resolveNodeModel, defaultTierForNode, isNodeId, NODE_IDS, type NodeId } from '../src/agents/nodeProfiles.js';
+import { getJudgeModel, resolveModelId, listGemini3xModels, type ModelTier } from '../src/agents/modelConfig.js';
+import {
+  resolveNodeModel,
+  defaultTierForNode,
+  defaultProfileForNode,
+  isNodeId,
+  NODE_IDS,
+  type NodeId,
+  type ThinkingLevel,
+} from '../src/agents/nodeProfiles.js';
 import { withUsageSink, type UsageRecord } from '../src/agents/modelGateway.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
@@ -21,12 +29,8 @@ import {
   extractTablesFromSql,
 } from './benchmarkSupport.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
-import {
-  DEFAULT_LADDER,
-  type LadderRung,
-  type RungScore,
-} from './node-sweep-types.js';
-import { pickRecommendation } from './node-sweep-decision.js';
+import { type SweepProfile, type PointScore } from './node-sweep-types.js';
+import { pickWithinEpsilon } from './node-sweep-decision.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
 
 // NB: env reads + validation live inside main() (not module scope) so importing
@@ -45,17 +49,41 @@ const TIER_PRICES: Record<ModelTier, number> = {
 
 const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervisor'];
 
+// ── Two-stage coordinate isolation ────────────────────────────────────────────
+//
+// The old design swept a single hand-authored "diagonal ladder" that (a) covered
+// only 3 of the 5 Gemini 3.x models and (b) changed model AND thinking level at
+// each step, so a quality move could never be attributed to one axis. This sweep
+// separates the two axes:
+//
+//   Stage 1 (MODEL axis): hold thinking at a fixed anchor, evaluate ALL models
+//     (listGemini3xModels — the registry, not a hand list), pick the cheapest
+//     within ε of the best.
+//   Stage 2 (THINKING axis): hold the winning model fixed, walk every thinking
+//     level (incl. `default`), pick the fastest within ε of the best.
+//
+// The anchor is `high` on purpose: give every model ample reasoning budget in
+// Stage 1 so the model comparison reflects each one's best-case capability (we
+// don't want a cheap model to look adequate only because nobody was allowed to
+// think). Stage 2 then trims thinking down to the cheapest level the WINNER still
+// needs. Capability-first, cost-second.
+//
+// Caveat (documented, accepted): this is greedy coordinate descent, not a full
+// model×thinking grid, so it can miss an interaction where a pricier model would
+// have won only at a thinking level the anchor didn't use. That's the deliberate
+// ~10-evals/node trade vs. 25; the anchor=high choice is what blunts the risk.
+const STAGE1_ANCHOR: ThinkingLevel = 'high';
+const THINKING_LEVELS: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'default'];
+
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
 interface SweepArgs {
   nodes: NodeId[];
-  version?: string;
   corpus: string;
 }
 
 function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
-  let version: string | undefined;
   let corpus = 'benchmarks/corpus.json';
 
   for (let i = 0; i < argv.length; i++) {
@@ -64,14 +92,12 @@ function parseArgs(argv: string[]): SweepArgs {
       const value = argv[++i];
       if (value) {
         // Validate at the CLI boundary: an unknown node otherwise crashes deep in
-        // the ladder with a cryptic "no Gemini 3.x model for tier=undefined".
+        // the search with a cryptic "no Gemini 3.x model for tier=undefined".
         if (!isNodeId(value)) {
           throw new Error(`Unknown --node "${value}". Valid nodes: ${NODE_IDS.join(', ')}`);
         }
         nodes.push(value);
       }
-    } else if (arg === '--version') {
-      version = argv[++i];
     } else if (arg === '--corpus') {
       corpus = argv[++i] ?? corpus;
     }
@@ -79,7 +105,6 @@ function parseArgs(argv: string[]): SweepArgs {
 
   return {
     nodes: nodes.length > 0 ? nodes : [...DEFAULT_SWEEP_NODES],
-    version,
     corpus,
   };
 }
@@ -97,25 +122,6 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/**
- * Build the per-node ladder. If `version` is supplied, every rung's version is
- * replaced with it and rungs whose (tier, version) pair has no resolvable model
- * are dropped. Without `version`, each rung keeps its own version.
- */
-function buildLadder(version?: string): LadderRung[] {
-  if (!version) return [...DEFAULT_LADDER];
-  const out: LadderRung[] = [];
-  for (const rung of DEFAULT_LADDER) {
-    try {
-      resolveModelId(rung.tier, version);
-      out.push({ ...rung, version });
-    } catch {
-      // (tier, version) pair has no model — drop this rung.
-    }
-  }
-  return out;
 }
 
 function p95(values: number[]): number {
@@ -188,17 +194,22 @@ export interface CorpusRunResult {
 
 export interface NodeOutcome {
   nodeId: NodeId;
-  baseline: RungScore;
-  chosen: RungScore;
-  candidates: RungScore[];
-  chosenRung?: LadderRung;
+  baseline: PointScore;
+  chosen: PointScore;
+  /** All Stage-1 points (every model at the anchor thinking level). */
+  stage1: PointScore[];
+  /** All Stage-2 points (every thinking level on the winning model). */
+  stage2: PointScore[];
+  /** The model Stage 1 settled on, carried into Stage 2. */
+  stage1Winner: SweepProfile;
+  /** The final (model, thinking) profile to apply — undefined when the search
+   *  landed back on the node's existing default (no change). */
+  chosenRung?: SweepProfile;
   e2eCritical: boolean;
 }
 
 export interface SweepConfig {
   nodes: NodeId[];
-  version?: string;
-  ladder: LadderRung[];
   corpusCount: number;
   corpusLabel: string;
   runDate: string;
@@ -216,6 +227,8 @@ export interface SweepResult {
   combinedE2e: number;
   e2eEps: number;
   manualReview: boolean;
+  /** The fixed thinking level held constant across Stage 1's model comparison. */
+  stage1Anchor: ThinkingLevel;
 }
 
 // ── Per-entry metric helpers (pure over a CorpusRunResult) ─────────────────────
@@ -265,15 +278,114 @@ function alignById(
   };
 }
 
+export interface CombinedVerificationParams {
+  /** The per-node outcomes from the two-stage search. MUTATED in place on revert:
+   *  a reverted node has `chosenRung` cleared and `chosen` reset to `baseline`. */
+  outcomes: NodeOutcome[];
+  baselineE2e: number;
+  e2eEps: number;
+  /** Per-node metric ε, used to normalize revert margins into noise-band units. */
+  metricEpsForNode: (node: NodeId) => number;
+  /** Run the corpus once with every still-downsized node's override applied,
+   *  returning the combined end-to-end score. The only Gemini/BigQuery seam. */
+  runCombined: (downsized: NodeOutcome[]) => Promise<number>;
+  log: (msg: string) => void;
+}
+
 /**
- * Coordinate-descent orchestration: ε calibration → per-node ladder sweep →
- * combined verification pass with margin-ordered revert → markdown report.
- * Pure of all IO except the injected `runCorpusOnce`, which is the only seam that
- * touches Gemini/BigQuery. The per-rung loop mutates `process.env.NODE_PROFILE_OVERRIDES`
- * and always restores it (try/finally), so a caller's env is left untouched.
+ * Combined verification pass with a two-step revert cascade. Extracted from
+ * `runSweep` as a pure-of-IO function (the corpus seam is the injected
+ * `runCombined`) so its revert/escalation logic can be unit-tested directly with
+ * hand-built outcomes — the full two-stage search rarely produces a combined
+ * regression on a quiet corpus, so testing it end-to-end can't exercise the cascade.
+ *
+ * Cascade:
+ *  1. Run all downsized nodes together. If combined e2e holds within ε → done.
+ *  2. On regression, revert ONE node — e2e-critical nodes first (only they can
+ *     recover an e2e regression), then smallest ε-normalized margin within that
+ *     group — and re-run.
+ *  3. If still regressed, revert ALL e2e-critical nodes and flag manual review.
+ *
+ * Returns the final combined e2e (or baseline when nothing remains downsized) and
+ * whether the run needs manual review.
+ */
+export async function runCombinedVerification(
+  params: CombinedVerificationParams,
+): Promise<{ combinedE2e: number; manualReview: boolean }> {
+  const { outcomes, baselineE2e, e2eEps, metricEpsForNode, runCombined, log } = params;
+
+  let downsized = outcomes.filter(o => o.chosenRung);
+  let combinedE2e = baselineE2e;
+  let manualReview = false;
+
+  if (downsized.length === 0) {
+    log('No nodes downsized; combined pass uses baseline.');
+    return { combinedE2e, manualReview };
+  }
+
+  combinedE2e = await runCombined(downsized);
+  log(`Combined e2e: ${combinedE2e.toFixed(3)} (baseline ${baselineE2e.toFixed(3)}, ε ${e2eEps.toFixed(4)})`);
+
+  if (combinedE2e < baselineE2e - e2eEps) {
+    // Revert the most-recoverable node first. A combined-pass regression is by
+    // construction an e2e (overallScore) regression, so it can only be cured by
+    // reverting a node whose quality is observed THROUGH e2e — i.e. an e2e-critical
+    // node. A non-e2e-critical node (clarification/sqlGenerator) already cleared its
+    // OWN dedicated gate-metric within ε; reverting it cannot recover an e2e
+    // regression and merely wastes a revert cycle, escalating to manual review
+    // prematurely. So order e2e-critical nodes ahead of non-critical ones, then by
+    // smallest margin within each group.
+    //
+    // Margin normalizes each node's raw headroom by its own metric ε so margins are
+    // in noise-band units — node metrics live on different scales (clarification/
+    // sqlGenerator pass-rate ∈ [0,1] vs supervisor e2e overallScore ∈ ~[1,5]), so
+    // comparing raw margins would bias the revert toward the narrower-scale node.
+    // ε is floored at 0.01 by computeEpsilon, so the division is always safe.
+    const withMargin = downsized.map(o => {
+      const eps = metricEpsForNode(o.nodeId);
+      return { outcome: o, margin: (o.chosen.metric - (o.baseline.metric - eps)) / eps };
+    });
+    withMargin.sort((a, b) =>
+      (Number(b.outcome.e2eCritical) - Number(a.outcome.e2eCritical)) || (a.margin - b.margin),
+    );
+    const toRevert = withMargin[0].outcome;
+    log(`Combined regressed; reverting smallest-margin node ${toRevert.nodeId} to DEFAULT`);
+    toRevert.chosenRung = undefined;
+    toRevert.chosen = toRevert.baseline;
+    downsized = outcomes.filter(o => o.chosenRung);
+
+    combinedE2e = downsized.length > 0 ? await runCombined(downsized) : baselineE2e;
+    log(`Combined e2e after revert: ${combinedE2e.toFixed(3)}`);
+
+    if (combinedE2e < baselineE2e - e2eEps) {
+      // Revert ALL e2e-critical nodes and flag for manual review.
+      manualReview = true;
+      for (const o of outcomes) {
+        if (o.e2eCritical && o.chosenRung) {
+          log(`Combined still regressed; reverting e2e-critical node ${o.nodeId} to DEFAULT`);
+          o.chosenRung = undefined;
+          o.chosen = o.baseline;
+        }
+      }
+      downsized = outcomes.filter(o => o.chosenRung);
+      combinedE2e = downsized.length > 0 ? await runCombined(downsized) : baselineE2e;
+      log(`Combined e2e after e2e-critical revert: ${combinedE2e.toFixed(3)} [FLAGGED FOR MANUAL REVIEW]`);
+    }
+  }
+
+  return { combinedE2e, manualReview };
+}
+
+/**
+ * Two-stage coordinate-isolation orchestration: ε calibration → per-node
+ * (model-axis → thinking-axis) search → combined verification pass with
+ * margin-ordered revert → markdown report. Pure of all IO except the injected
+ * `runCorpusOnce`, which is the only seam that touches Gemini/BigQuery. Every
+ * scored point mutates `process.env.NODE_PROFILE_OVERRIDES` and always restores
+ * it (try/finally), so a caller's env is left untouched.
  */
 export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
-  const { nodes, version, ladder, corpusCount, corpusLabel, runDate, runCorpusOnce } = cfg;
+  const { nodes, corpusCount, corpusLabel, runDate, runCorpusOnce } = cfg;
   const log = cfg.log ?? ((m: string) => console.log(m));
 
   // ── ε calibration: two baseline runs ─────────────────────────────────────────
@@ -292,63 +404,112 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   const baselineE2e = e2eOf(baselineRunA.perEntry);
   const outcomes: NodeOutcome[] = [];
 
-  // ── Per-node coordinate descent ──────────────────────────────────────────────
+  // Score one (model, thinking) point for a node: pin NODE_PROFILE_OVERRIDES to it,
+  // run the corpus once, read the per-node metrics, and ALWAYS restore env. A throw
+  // (transient API error) aborts — never zero-fill, which would make a point look
+  // broken and silently corrupt the sizing while emitting a plausible report.
+  const scorePoint = async (node: NodeId, profile: SweepProfile, label: string): Promise<PointScore> => {
+    const prev = process.env.NODE_PROFILE_OVERRIDES;
+    process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({ [node]: profile });
+    try {
+      const run = await runCorpusOnce();
+      return {
+        label,
+        metric: nodeMetric(node, run.perEntry),
+        e2e: e2eOf(run.perEntry),
+        p95LatencyMs: nodeP95(node, run.nodeUsage),
+        cost: nodeCost(node, profile.tier, run.nodeUsage),
+      };
+    } catch (err) {
+      log(`  [ERROR] ${label} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
+      throw err;
+    } finally {
+      if (prev === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
+      else process.env.NODE_PROFILE_OVERRIDES = prev;
+    }
+  };
+
+  const labelOf = (p: SweepProfile): string => `${p.tier}/${p.version}@${p.thinkingLevel}`;
+
+  // ── Per-node two-stage search ─────────────────────────────────────────────────
   for (const node of nodes) {
     log(`\n── Node: ${node} ──`);
     const metricEps = metricEpsForNode(node);
     log(`  ε(metric)=${metricEps.toFixed(4)}  ε(e2e)=${e2eEps.toFixed(4)}`);
 
-    const baseline: RungScore = {
-      rung: 'DEFAULT',
+    const baseline: PointScore = {
+      label: 'DEFAULT',
       metric: nodeMetric(node, baselineRunA.perEntry),
       e2e: e2eOf(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
       cost: nodeCost(node, defaultTierForNode(node), baselineRunA.nodeUsage),
     };
 
-    const rungScores: RungScore[] = [];
-    const rungByName = new Map<string, LadderRung>();
+    // Map every label we score back to its concrete profile so the winners can be
+    // reconstructed without re-parsing the label string.
+    const profileByLabel = new Map<string, SweepProfile>();
 
-    for (const rung of ladder) {
-      rungByName.set(rung.rung, rung);
-      const prev = process.env.NODE_PROFILE_OVERRIDES;
-      process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({
-        [node]: { tier: rung.tier, version: rung.version, thinkingLevel: rung.thinkingLevel },
-      });
-      try {
-        const run = await runCorpusOnce();
-        rungScores.push({
-          rung: rung.rung,
-          metric: nodeMetric(node, run.perEntry),
-          e2e: e2eOf(run.perEntry),
-          p95LatencyMs: nodeP95(node, run.nodeUsage),
-          cost: nodeCost(node, rung.tier, run.nodeUsage),
-        });
-        log(`  ${rung.rung} (${rung.tier}/${rung.version}): metric=${rungScores[rungScores.length - 1].metric.toFixed(3)}`);
-      } catch (err) {
-        // Do NOT silently zero-fill a failed rung. A transient API error (rate limit,
-        // timeout, quota) would make the rung look broken and get gated out — silently
-        // corrupting the sizing recommendation while still emitting a plausible-looking
-        // report. Abort instead so the developer knows the run was invalid and can
-        // re-run. (The finally below still restores NODE_PROFILE_OVERRIDES first.)
-        log(`  [ERROR] ${rung.rung} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
-        throw err;
-      } finally {
-        if (prev === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
-        else process.env.NODE_PROFILE_OVERRIDES = prev;
-      }
+    // Stage 1 — MODEL axis. Every Gemini 3.x model at the fixed anchor thinking
+    // level (so only the model varies). listGemini3xModels() is the registry, so
+    // coverage is always complete — no hand-authored subset.
+    log(`  Stage 1 (model axis @ thinking=${STAGE1_ANCHOR}):`);
+    const stage1: PointScore[] = [];
+    for (const model of listGemini3xModels()) {
+      const profile: SweepProfile = { tier: model.tier, version: model.version, thinkingLevel: STAGE1_ANCHOR };
+      const label = labelOf(profile);
+      profileByLabel.set(label, profile);
+      const score = await scorePoint(node, profile, label);
+      stage1.push(score);
+      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
     }
+    const modelWinnerScore = pickWithinEpsilon(stage1, metricEps, e2eEps, 'cost');
+    const stage1Winner = profileByLabel.get(modelWinnerScore.label)!;
+    log(`  → Stage 1 winner (cheapest within ε): ${stage1Winner.tier}/${stage1Winner.version}`);
 
-    const candidates = [baseline, ...rungScores];
-    const chosen = pickRecommendation(baseline, candidates, metricEps, e2eEps);
-    log(`  → chosen: ${chosen.rung}`);
+    // Stage 2 — THINKING axis. Hold the winning model fixed, walk every thinking
+    // level incl. `default`. Reuse the Stage-1 measurement at the anchor level
+    // (same model+thinking) rather than paying to re-run it.
+    log(`  Stage 2 (thinking axis on ${stage1Winner.tier}/${stage1Winner.version}):`);
+    const stage2: PointScore[] = [];
+    for (const level of THINKING_LEVELS) {
+      const profile: SweepProfile = { tier: stage1Winner.tier, version: stage1Winner.version, thinkingLevel: level };
+      const label = labelOf(profile);
+      profileByLabel.set(label, profile);
+      if (level === STAGE1_ANCHOR) {
+        stage2.push({ ...modelWinnerScore, label });
+        log(`    ${label}: metric=${modelWinnerScore.metric.toFixed(3)} (reused from Stage 1)`);
+        continue;
+      }
+      const score = await scorePoint(node, profile, label);
+      stage2.push(score);
+      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
+    }
+    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency');
+    const chosenProfile = profileByLabel.get(thinkingWinnerScore.label)!;
+
+    // Guard against the search landing somewhere worse than the node's current
+    // DEFAULT (corpus noise can make the best-in-stage point still regress the
+    // baseline) — or simply back on the default itself. Either way: don't change
+    // the node. Otherwise adopt the (model, thinking) the search found.
+    const def = defaultProfileForNode(node);
+    const sameAsDefault =
+      chosenProfile.tier === def.tier &&
+      chosenProfile.version === def.version &&
+      chosenProfile.thinkingLevel === def.thinkingLevel;
+    const regressed =
+      thinkingWinnerScore.metric < baseline.metric - metricEps ||
+      thinkingWinnerScore.e2e < baseline.e2e - e2eEps;
+    const keepDefault = sameAsDefault || regressed;
+    log(`  → chosen: ${keepDefault ? 'DEFAULT (no change)' : labelOf(chosenProfile)}`);
 
     outcomes.push({
       nodeId: node,
       baseline,
-      chosen,
-      candidates,
-      chosenRung: chosen.rung === 'DEFAULT' ? undefined : rungByName.get(chosen.rung),
+      chosen: keepDefault ? baseline : thinkingWinnerScore,
+      stage1,
+      stage2,
+      stage1Winner,
+      chosenRung: keepDefault ? undefined : chosenProfile,
       // A node whose metric proxy IS the e2e score is e2e-critical (supervisor
       // and any non-clarification/non-sqlGenerator node).
       e2eCritical: node !== 'clarification' && node !== 'sqlGenerator',
@@ -384,92 +545,54 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   }
 
   log('\n── Combined verification pass ──');
-  let downsized = outcomes.filter(o => o.chosenRung);
-  let combinedE2e = baselineE2e;
-  let manualReview = false;
-
-  if (downsized.length === 0) {
-    log('No nodes downsized; combined pass uses baseline.');
-  } else {
-    combinedE2e = await runCombined(downsized);
-    log(`Combined e2e: ${combinedE2e.toFixed(3)} (baseline ${baselineE2e.toFixed(3)}, ε ${e2eEps.toFixed(4)})`);
-
-    if (combinedE2e < baselineE2e - e2eEps) {
-      // Revert the most-recoverable node first. A combined-pass regression is by
-      // construction an e2e (overallScore) regression, so it can only be cured by
-      // reverting a node whose quality is observed THROUGH e2e — i.e. an e2e-critical
-      // node. A non-e2e-critical node (clarification/sqlGenerator) already cleared its
-      // OWN dedicated gate-metric within ε; reverting it cannot recover an e2e
-      // regression and merely wastes a revert cycle, escalating to manual review
-      // prematurely. So order e2e-critical nodes ahead of non-critical ones, then by
-      // smallest margin within each group.
-      //
-      // Margin normalizes each node's raw headroom by its own metric ε so margins are
-      // in noise-band units — node metrics live on different scales (clarification/
-      // sqlGenerator pass-rate ∈ [0,1] vs supervisor e2e overallScore ∈ ~[1,5]), so
-      // comparing raw margins would bias the revert toward the narrower-scale node.
-      // ε is floored at 0.01 by computeEpsilon, so the division is always safe.
-      const withMargin = downsized.map(o => {
-        const eps = metricEpsForNode(o.nodeId);
-        return { outcome: o, margin: (o.chosen.metric - (o.baseline.metric - eps)) / eps };
-      });
-      withMargin.sort((a, b) =>
-        (Number(b.outcome.e2eCritical) - Number(a.outcome.e2eCritical)) || (a.margin - b.margin),
-      );
-      const toRevert = withMargin[0].outcome;
-      log(`Combined regressed; reverting smallest-margin node ${toRevert.nodeId} to DEFAULT`);
-      toRevert.chosenRung = undefined;
-      toRevert.chosen = toRevert.baseline;
-      downsized = outcomes.filter(o => o.chosenRung);
-
-      combinedE2e = downsized.length > 0 ? await runCombined(downsized) : baselineE2e;
-      log(`Combined e2e after revert: ${combinedE2e.toFixed(3)}`);
-
-      if (combinedE2e < baselineE2e - e2eEps) {
-        // Revert ALL e2e-critical nodes and flag for manual review.
-        manualReview = true;
-        for (const o of outcomes) {
-          if (o.e2eCritical && o.chosenRung) {
-            log(`Combined still regressed; reverting e2e-critical node ${o.nodeId} to DEFAULT`);
-            o.chosenRung = undefined;
-            o.chosen = o.baseline;
-          }
-        }
-        downsized = outcomes.filter(o => o.chosenRung);
-        combinedE2e = downsized.length > 0 ? await runCombined(downsized) : baselineE2e;
-        log(`Combined e2e after e2e-critical revert: ${combinedE2e.toFixed(3)} [FLAGGED FOR MANUAL REVIEW]`);
-      }
-    }
-  }
+  const { combinedE2e, manualReview } = await runCombinedVerification({
+    outcomes,
+    baselineE2e,
+    e2eEps,
+    metricEpsForNode,
+    runCombined,
+    log,
+  });
 
   // ── Report ───────────────────────────────────────────────────────────────────
   const reportLines: string[] = [];
-  reportLines.push(`# Node Sweep — ${runDate}`);
+  reportLines.push(`# Node Sweep (two-stage coordinate isolation) — ${runDate}`);
   reportLines.push('');
   reportLines.push(`- Swept nodes: ${nodes.join(', ')}`);
-  if (version) reportLines.push(`- Global version override: ${version}`);
   reportLines.push(`- Corpus: ${corpusLabel} (${corpusCount} questions)`);
+  reportLines.push(`- Stage 1 thinking anchor: ${STAGE1_ANCHOR}`);
   reportLines.push(`- Baseline e2e: ${baselineE2e.toFixed(3)}`);
   reportLines.push(`- Combined e2e: ${combinedE2e.toFixed(3)}`);
   reportLines.push(`- ε(e2e): ${e2eEps.toFixed(4)}`);
   reportLines.push('');
 
-  for (const o of outcomes) {
-    reportLines.push(`## ${o.nodeId}`);
-    reportLines.push(`ε(metric): ${metricEpsForNode(o.nodeId).toFixed(4)}`);
-    reportLines.push('');
-    reportLines.push('| rung | model | metric | p95ms | cost | recommended |');
-    reportLines.push('|------|-------|--------|-------|------|-------------|');
-    for (const c of o.candidates) {
-      const model = c.rung === 'DEFAULT'
-        ? resolveNodeModel(o.nodeId)
-        : (() => {
-            const r = ladder.find(l => l.rung === c.rung);
-            return r ? resolveModelId(r.tier, r.version) : c.rung;
-          })();
-      const rec = c.rung === o.chosen.rung ? '✓' : '';
-      reportLines.push(`| ${c.rung} | ${model} | ${c.metric.toFixed(3)} | ${c.p95LatencyMs} | ${c.cost.toExponential(2)} | ${rec} |`);
+  const pointTable = (points: PointScore[], chosenLabel: string): string[] => {
+    const lines: string[] = [];
+    lines.push('| point | metric | e2e | p95ms | cost | chosen |');
+    lines.push('|-------|--------|-----|-------|------|--------|');
+    for (const c of points) {
+      const rec = c.label === chosenLabel ? '✓' : '';
+      lines.push(
+        `| ${c.label} | ${c.metric.toFixed(3)} | ${c.e2e.toFixed(3)} | ${c.p95LatencyMs} | ${c.cost.toExponential(2)} | ${rec} |`,
+      );
     }
+    return lines;
+  };
+
+  for (const o of outcomes) {
+    const chosenLabel = o.chosenRung ? `${o.chosenRung.tier}/${o.chosenRung.version}@${o.chosenRung.thinkingLevel}` : 'DEFAULT';
+    reportLines.push(`## ${o.nodeId}`);
+    reportLines.push(`- Default model: ${resolveNodeModel(o.nodeId)}`);
+    reportLines.push(`- ε(metric): ${metricEpsForNode(o.nodeId).toFixed(4)}`);
+    reportLines.push(`- Final: ${o.chosenRung ? chosenLabel : 'DEFAULT (no change)'}`);
+    reportLines.push('');
+    reportLines.push(`**Stage 1 — model axis @ thinking=${STAGE1_ANCHOR}** (winner: ${o.stage1Winner.tier}/${o.stage1Winner.version})`);
+    reportLines.push('');
+    reportLines.push(...pointTable(o.stage1, chosenLabel));
+    reportLines.push('');
+    reportLines.push(`**Stage 2 — thinking axis on ${o.stage1Winner.tier}/${o.stage1Winner.version}**`);
+    reportLines.push('');
+    reportLines.push(...pointTable(o.stage2, chosenLabel));
     reportLines.push('');
   }
 
@@ -481,7 +604,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       ? 'ACCEPTED — combined downsizing holds within ε'
       : 'REGRESSED';
   reportLines.push(`- Verdict: ${verdict}`);
-  reportLines.push(`- Final downsized nodes: ${outcomes.filter(o => o.chosenRung).map(o => `${o.nodeId}→${o.chosen.rung}`).join(', ') || 'none'}`);
+  reportLines.push(`- Final downsized nodes: ${outcomes.filter(o => o.chosenRung).map(o => `${o.nodeId}→${o.chosen.label}`).join(', ') || 'none'}`);
   reportLines.push('');
 
   return {
@@ -491,6 +614,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     combinedE2e,
     e2eEps,
     manualReview,
+    stage1Anchor: STAGE1_ANCHOR,
   };
 }
 
@@ -518,21 +642,19 @@ async function main() {
 
   console.log(`Node sweep run: ${runDate}`);
   console.log(`Sweeping nodes: ${args.nodes.join(', ')}`);
-  if (args.version) console.log(`Global version override: ${args.version}`);
 
   const ai = new GoogleGenAI({ apiKey });
   const root = join(process.cwd());
 
-  const ladder = buildLadder(args.version);
-  if (ladder.length === 0) {
-    throw new Error(`No ladder rungs survive --version ${args.version}: no (tier, version) pair resolves to a model`);
-  }
-  console.log(`Ladder: ${ladder.map(r => `${r.rung}(${r.tier}/${r.version})`).join(', ')}`);
+  const allModels = listGemini3xModels();
+  console.log(`Stage 1 models (${allModels.length}): ${allModels.map(m => `${m.tier}/${m.version}`).join(', ')}`);
+  console.log(`Stage 1 thinking anchor: ${STAGE1_ANCHOR}; Stage 2 thinking levels: ${THINKING_LEVELS.join(', ')}`);
 
-  // Preflight: resolve every kept rung's model id plus each node's baseline model.
-  const rungModelIds = ladder.map(rung => resolveModelId(rung.tier, rung.version));
+  // Preflight: resolve every Gemini 3.x model id (Stage 1 touches them all) plus
+  // each node's baseline model.
+  const allModelIds = allModels.map(m => resolveModelId(m.tier, m.version));
   const baselineModelIds = args.nodes.map(node => resolveNodeModel(node));
-  const requiredModels = [...new Set([judgeModel, ...rungModelIds, ...baselineModelIds])];
+  const requiredModels = [...new Set([judgeModel, ...allModelIds, ...baselineModelIds])];
   await assertGenerateContentModelsAvailable(apiKey, requiredModels);
 
   initBigQuery(projectId);
@@ -668,8 +790,6 @@ async function main() {
 
   const { report } = await runSweep({
     nodes: args.nodes,
-    version: args.version,
-    ladder,
     corpusCount: corpus.length,
     corpusLabel: args.corpus,
     runDate,

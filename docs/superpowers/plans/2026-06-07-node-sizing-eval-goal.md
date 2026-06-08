@@ -156,3 +156,43 @@ reasoning-node defaults with measured picks from
 - `npm run typecheck` clean; `npm test` → full suite passing.
 - Commits this work: `0dca832` (Phase C), `7ad57fa` (Phase D), `af774be` (Phase E);
   live sizing run + universal floor-up sweep land the measured classifier defaults.
+
+## Two-stage redesign (2026-06-08)
+
+An adversarial re-read of the sweep surfaced **two structural flaws in the diagonal
+ladder** (`DEFAULT_LADDER`), serious enough to rebuild the search core:
+
+1. **Incomplete model coverage.** The hand-authored ladder sampled only **3 of the 5**
+   Gemini 3.x models (no `flash/3.5`, no `pro/3` *and* `pro/3.1` together) — so the sweep
+   could never have recommended two of the models it was supposed to choose among.
+2. **Confounded axes.** Each ladder step changed model *and* thinking together, so a
+   quality move could never be attributed to one axis. `thinkingLevel` was never sized in
+   isolation; `default` (model-managed budget) wasn't even on the ladder.
+
+**The fix — two-stage coordinate isolation** (replaces the diagonal descent):
+
+- **Stage 1 (MODEL axis):** hold thinking at `STAGE1_ANCHOR = 'high'`, evaluate **all**
+  models via `listGemini3xModels()` (the registry — coverage is now structurally complete,
+  not a hand subset), pick the cheapest within ε of the best.
+- **Stage 2 (THINKING axis):** hold the winning model fixed, walk every level incl.
+  `default`, pick the fastest within ε. ~10 evals/node.
+- Anchor is `high` deliberately (**capability-first**): credit each model's best-case
+  capability before trimming thinking. Accepted caveat: greedy coordinate descent can miss
+  a model×thinking interaction; `anchor=high` blunts the risk, ~10-vs-25 evals is the trade.
+- The decision rule is `pickWithinEpsilon` (gate within ε of the **best observed** point on
+  **both** the node metric and e2e; tie-break `'cost'` in Stage 1, `'latency'` in Stage 2).
+- The same coverage fix landed in the judge-free classifier track: `universal-sweep.ts`
+  `buildModelLadder()` enumerates all 5 models at a fixed `minimal` anchor, then floor-up.
+
+**Single source of truth:** both sweeps enumerate `listGemini3xModels()` (derived from the
+`modelConfig` registry), so partial model coverage is now structurally impossible — adding a
+6th Gemini 3.x model to the registry automatically extends both sweeps.
+
+**Engine built + unit-tested; live re-run still deferred** until `benchmarks/corpus.json`
+grows (the corpus-size root cause above is unchanged — a bigger corpus shrinks ε so the
+reasoning nodes become sizeable). New/changed modules: `node-sweep-types.ts` (drop ladder,
+add `SweepProfile`/`PointScore`), `node-sweep-decision.ts` (`pickWithinEpsilon`),
+`node-sweep.ts` (two-stage search + extracted `runCombinedVerification`),
+`modelConfig.ts` (`listGemini3xModels`), `universal-sweep.ts`/`universal-sweep-core.ts`
+(`buildModelLadder`/`ModelRung`). All exercised by `tests/scripts/nodeSweep*.test.ts`,
+`tests/scripts/universalSweep.test.ts`, and `tests/agents/modelConfig.test.ts`.

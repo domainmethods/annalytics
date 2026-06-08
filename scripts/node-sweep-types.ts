@@ -1,16 +1,28 @@
 import type { NodeId, ThinkingLevel } from '../src/agents/nodeProfiles.js';
 import type { ModelTier } from '../src/agents/modelConfig.js';
 
-export interface LadderRung { rung: string; tier: ModelTier; version: string; thinkingLevel: ThinkingLevel; }
+export type { NodeId };
 
-export const DEFAULT_LADDER: LadderRung[] = [
-  { rung: 'R0', tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' },
-  { rung: 'R1', tier: 'flash-lite', version: '3.1', thinkingLevel: 'low' },
-  { rung: 'R2', tier: 'flash', version: '3', thinkingLevel: 'minimal' },
-  { rung: 'R3', tier: 'flash', version: '3', thinkingLevel: 'medium' },
-  { rung: 'R4', tier: 'pro', version: '3.1', thinkingLevel: 'low' },
-  { rung: 'R5', tier: 'pro', version: '3.1', thinkingLevel: 'high' },
-];
+/**
+ * A concrete point in the (model, thinking) search space — the thing a sweep pins
+ * NODE_PROFILE_OVERRIDES to for one corpus pass. Structurally identical to a
+ * nodeProfiles override entry, so it can be written straight into the env.
+ */
+export interface SweepProfile {
+  tier: ModelTier;
+  version: string;
+  thinkingLevel: ThinkingLevel;
+}
 
-export interface RungScore { rung: string; metric: number; e2e: number; p95LatencyMs: number; cost: number; }
-export interface NodeRecommendation { nodeId: NodeId; baseline: RungScore; chosen: RungScore; allViable: RungScore[]; }
+/**
+ * One evaluated point: its human-readable label plus the four numbers the decision
+ * rule weighs. `metric` is the node's own quality proxy; `e2e` is the end-to-end
+ * judge score; `p95LatencyMs` and `cost` are the trade-off levers.
+ */
+export interface PointScore {
+  label: string;
+  metric: number;
+  e2e: number;
+  p95LatencyMs: number;
+  cost: number;
+}

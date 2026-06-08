@@ -4,8 +4,8 @@ import {
   pickFloorUp,
   type RungAccuracy,
 } from '../../scripts/universal-sweep-core.js';
-import { sweepNode, withRetry } from '../../scripts/universal-sweep.js';
-import { DEFAULT_LADDER } from '../../scripts/node-sweep-types.js';
+import { sweepNode, withRetry, buildModelLadder, UNIVERSAL_ANCHOR } from '../../scripts/universal-sweep.js';
+import { resolveModelId } from '../../src/agents/modelConfig.js';
 
 describe('accuracy', () => {
   it('returns 1.0 when every prediction matches its label', () => {
@@ -74,6 +74,31 @@ describe('pickFloorUp', () => {
   });
 });
 
+describe('buildModelLadder', () => {
+  it('enumerates ALL FIVE Gemini 3.x models — coverage is registry-derived, not a hand subset', () => {
+    const ladder = buildModelLadder();
+    expect(ladder).toHaveLength(5);
+    const models = ladder.map((r) => `${r.tier}/${r.version}`);
+    expect(new Set(models)).toEqual(
+      new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3', 'pro/3.1']),
+    );
+    // Every candidate must resolve to a real Gemini 3.x model id.
+    for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();
+  });
+
+  it('holds thinking at the fixed anchor on every candidate (single-axis: model only)', () => {
+    const ladder = buildModelLadder();
+    for (const r of ladder) expect(r.thinkingLevel).toBe(UNIVERSAL_ANCHOR);
+  });
+
+  it('orders candidates cheapest-tier-first so floor-up = first-that-passes', () => {
+    const tiers = buildModelLadder().map((r) => r.tier);
+    // flash-lite before flash before pro.
+    expect(tiers.indexOf('flash-lite')).toBeLessThan(tiers.indexOf('flash'));
+    expect(tiers.indexOf('flash')).toBeLessThan(tiers.indexOf('pro'));
+  });
+});
+
 describe('withRetry', () => {
   it('resolves once an attempt succeeds, tolerating earlier transient failures', async () => {
     let calls = 0;
@@ -111,21 +136,21 @@ describe('sweepNode', () => {
     delete process.env.NODE_PROFILE_OVERRIDES;
   });
 
-  it('sets a per-rung override and picks the cheapest perfect rung, restoring env after', async () => {
+  it('sets a per-rung override and picks the cheapest perfect model, restoring env after', async () => {
     const prevSeen: Array<string | undefined> = [];
-    const result = await sweepNode('slackIntake', DEFAULT_LADDER, 1.0, (rung) => async () => {
+    const result = await sweepNode('slackIntake', buildModelLadder(), 1.0, (rung) => async () => {
       // The override for THIS node/rung must be live while the runner executes.
       prevSeen.push(process.env.NODE_PROFILE_OVERRIDES);
-      // Every rung classifies perfectly → floor-up should take the cheapest (R0).
+      // Every model classifies perfectly → floor-up should take the cheapest one.
       return [
         { expected: 'immediate_response', predicted: 'immediate_response' },
         { expected: 'analytics_pipeline', predicted: 'analytics_pipeline' },
       ];
     });
 
-    expect(result.pick.chosen.rung).toBe('R0');
+    expect(result.pick.chosen.rung).toBe('flash-lite/3.1'); // cheapest of the five
     expect(result.pick.metThreshold).toBe(true);
-    // Each rung saw its own override JSON set.
+    // Each model saw its own override JSON set.
     expect(prevSeen.every((o) => o && o.includes('slackIntake'))).toBe(true);
     // Env restored to undefined after the sweep.
     expect(process.env.NODE_PROFILE_OVERRIDES).toBeUndefined();
@@ -134,13 +159,13 @@ describe('sweepNode', () => {
   it('aborts the whole sweep when a rung runner throws, and restores env', async () => {
     let calls = 0;
     await expect(
-      sweepNode('followUpClassifier', DEFAULT_LADDER, 1.0, () => async () => {
+      sweepNode('followUpClassifier', buildModelLadder(), 1.0, () => async () => {
         calls += 1;
         if (calls >= 2) throw new Error('simulated 429');
         return [{ expected: 'refinement', predicted: 'refinement' }];
       }),
     ).rejects.toThrow(/simulated 429/);
-    // Aborted on the 2nd rung — did not silently continue through all six.
+    // Aborted on the 2nd model — did not silently continue through all five.
     expect(calls).toBe(2);
     // Env restored despite the throw.
     expect(process.env.NODE_PROFILE_OVERRIDES).toBeUndefined();
