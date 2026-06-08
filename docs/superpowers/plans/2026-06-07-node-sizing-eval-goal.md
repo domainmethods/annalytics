@@ -166,14 +166,27 @@ nodes; clarification itself is already sized clean (ε≈0.01). Validated end-to
 2-entry bypass run took both previously-skipped questions through the loop
 (`sqlGenerator` 0 → 17.5K tokens, `supervisor` 0 → 2.2K tokens).
 
-**Deferred (expensive — not run this session):** the full live sweep is
-`cd <main-repo> && npx tsx <worktree>/scripts/node-sweep.ts --corpus <worktree>/benchmarks/corpus.live.json --node sqlGenerator --node supervisor --bypass-clarification`
-(run from the main repo — it has `node_modules`, `.env`, dbt artifacts; the worktree has
-none). Cost is the reason it was deferred: the quality loop is ~63s/entry (Pro SQL gen
-p95 ~50s on the 52-table schema), so all 47 entries × 16 passes (2 calibration + 6 rungs
-× 2 nodes + verification) ≈ **~13 hours** wall-clock + real Gemini/BigQuery spend. Run
-it, then replace the held `sqlGenerator`/`supervisor` defaults in
-`src/agents/nodeProfiles.ts` only if a downsize holds within the now-smaller ε.
+**⚠️ The 47-question live corpus was LOST (2026-06-08).** `benchmarks/corpus.live.json`
+was gitignored and never committed; it lived only in the `silly-mcnulty-73ba04` worktree,
+which has since been removed. It is not recoverable from git (no blob/commit/dangling
+object) or disk. **The deferred sweep below cannot run until the corpus is rebuilt** — 47
+template-safe GA4 questions (15 easy / 18 medium / 10 hard / 4 ambiguous), generic, no
+client/project IDs. Regenerate it somewhere durable (outside the template, per the
+`benchmarks/results/*` gitignore rationale) before attempting the sweep.
+
+**Deferred (expensive — not run this session):** once the corpus is rebuilt, the full
+live sweep is (run from the **main repo** — it has `node_modules`, `.env`, dbt artifacts):
+`cd <main-repo> && npx tsx scripts/node-sweep.ts --corpus <durable-path>/corpus.live.json --node sqlGenerator --node supervisor --bypass-clarification`
+Cost (the reason it was deferred): the quality loop is ~63s/entry (Pro SQL gen p95 ~50s on
+the 52-table schema). Under two-stage coordinate isolation the pass count is
+`2 calibration + nodes × (models + thinkingLevels − 1) + 1 verification` =
+`2 + 2 × (4 + 5 − 1) + 1` = **19 passes** with the current 4-model registry (was 5 models
+before `pro/3` was dropped). **Treat `node-sweep-smoke.ts`'s printed estimate as
+authoritative** — it derives passes from `listGemini3xModels()` and self-updates; the
+earlier "~13h / 16-pass" figure assumed the deleted 6-rung ladder and is stale. Run the
+2-pass smoke first to confirm ε actually shrank under bypass, then the full sweep, and
+replace the held `sqlGenerator`/`supervisor` defaults in `src/agents/nodeProfiles.ts` only
+if a downsize holds within the now-smaller ε.
 
 ## Proven vs. provisional — the load-bearing caveat
 
