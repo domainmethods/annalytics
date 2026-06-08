@@ -12,7 +12,8 @@
  * vacuous"). Before paying for a ~20+ pass sweep, this 2-pass run answers the only
  * question that matters: did growing the corpus shrink ε below a meaningful quality
  * delta? It also prints total latency + token counts so the full sweep's cost can
- * be extrapolated (full sweep ≈ (2 + rungs × nodes + verification) corpus passes).
+ * be extrapolated (full sweep ≈ 2 calibration + nodes × (models + thinking-levels−1)
+ * + 1 verification corpus passes — the two-stage model-then-thinking search).
  *
  * Run from the MAIN REPO (it has node_modules, .env, and dbt artifacts); point
  * --corpus at the gitignored live corpus in the worktree:
@@ -32,7 +33,7 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry } from './benchmark-types.js';
-import { getJudgeModel, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, listGemini3xModels, type ModelTier } from '../src/agents/modelConfig.js';
 import { resolveNodeModel, defaultTierForNode, type NodeId } from '../src/agents/nodeProfiles.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
@@ -211,13 +212,12 @@ async function main() {
 
   // ── Cost + latency extrapolation ──────────────────────────────────────────────
   console.log('\n══ Cost / latency (per baseline pass) ══');
-  let totalTokens = 0, totalCost = 0;
+  let totalCost = 0;
   for (const node of SMOKE_NODES) {
     const usage = runA.nodeUsage.get(node);
     const tokens = usage?.tokens ?? 0;
     const tier = defaultTierForNode(node);
     const cost = tokens * TIER_PRICES[tier];
-    totalTokens += tokens;
     totalCost += cost;
     console.log(`${node.padEnd(14)} tier=${tier.padEnd(10)} tokens=${String(tokens).padStart(8)}  p95=${p95(usage?.latencies ?? []).toFixed(0)}ms  cost≈${cost.toExponential(2)}`);
   }
@@ -228,9 +228,14 @@ async function main() {
   console.log(`\nAll-node tokens/pass: ${allTokens}   swept-node cost/pass≈${totalCost.toExponential(2)}`);
   console.log(`Wall-clock/pass: ${(meanWall / 1000).toFixed(1)}s (mean of ${wallMs.length})`);
 
-  // Full sweep size: 2 calibration + (rungs × nodes) ladder + (1..3) verification.
-  // DEFAULT_LADDER has 6 rungs; SMOKE_NODES has 3 → 2 + 18 + ~2 ≈ 22 passes.
-  const estPasses = 2 + 6 * SMOKE_NODES.length + 2;
+  // Full sweep size (two-stage coordinate isolation): 2 calibration + per node
+  // [Stage 1: one pass per Gemini 3.x model] + [Stage 2: one pass per thinking
+  // level, minus the anchor level reused from Stage 1] + 1 combined verification.
+  // THINKING_LEVELS has 5 entries (minimal/low/medium/high/default); the anchor is
+  // reused → 4 new Stage-2 passes. Model count tracks the registry automatically.
+  const modelCount = listGemini3xModels().length;
+  const perNodePasses = modelCount + (5 - 1);
+  const estPasses = 2 + perNodePasses * SMOKE_NODES.length + 1;
   console.log(`\nFull sweep ≈ ${estPasses} passes → ~${((meanWall * estPasses) / 60000).toFixed(0)} min wall, ~${(allTokens * estPasses / 1e6).toFixed(1)}M tokens (order-of-magnitude).`);
 
   console.log('\nDecision rule: a node is sizable only if ε(metric) is small vs the quality delta');
