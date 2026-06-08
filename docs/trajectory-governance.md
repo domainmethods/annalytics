@@ -218,6 +218,20 @@ As of 2026-06-06:
 - Both of those remain deferred under the "Automatic correction harvesting from binary feedback" line; reviving either still requires updating this document first.
 - Evidence source for this update: `docs/superpowers/specs/2026-06-06-negative-feedback-escalation-design.md`.
 
+As of 2026-06-07:
+
+- Decision: the feedback loop between users, admins, and the agent is adopted as trust infrastructure that *serves* the implementation acceptance tranche, not as a competing feature tranche. An 80/20 analysis of the loop identifies three sanctioned investments:
+  - (1) Privacy-safe aggregation of 👍/👎 binary feedback into per-domain pain signal.
+  - (2) An informed, low-friction human review gate: close the write-only `feedback_notes` capture so the richest signal (free-text "why this was wrong") is readable, and attach impact/context to the `promote-teachings` review surface.
+  - (3) Measurement of whether a promoted teaching reduces future escalations or lifts its benchmark slice.
+- Why this serves the trajectory: item (1) is the sensor that satisfies guardrail #5 ("benchmarks decide sequencing") for selecting the *one high-confusion domain* the ReferenceCard acceptance pilot requires. Aggregated feedback chooses that domain from data instead of intuition; item (3) supplies the `ACCEPTED`/`NEEDS_REVISION` impact evidence. Feedback-loop work and the implementation acceptance run are therefore one pipeline, not competing tranches.
+- What stays deferred, with a sharpened rationale: "Automatic correction harvesting from binary feedback" remains deferred. Beyond guardrail #3, the new rationale is ROI-based — items (1)–(3) make the human approval gate cheap and measurable, which *reduces* the marginal value of removing the human entirely. Auto-promotion would trade away the system's core trust property (every production teaching was human-vetted) to save approval clicks that items (1)–(3) already make near-free. Reviving auto-promotion still requires updating this document first.
+- Loop audit that motivated this entry: `feedback_notes` is currently write-only (`src/state/feedbackNotes.ts` exports only `saveFeedbackNote`; no reader; `candidateGenerator.ts` does not consult it). The escalation → analyst → `teaching_candidates` → `scripts/promote-teachings.ts` (interactive a/r/s) → `teachings/*.yml` → CI sync path is the closed, human-gated correction loop.
+- Privacy boundary: aggregation stores counts/rates by domain, never a broad corpus of raw user queries — upholds the deferred "wide production-corpus ingestion without privacy-safe feedback events" line.
+- Template boundary: aggregation and measurement scaffolding is template-safe. No client domains, raw queries, project IDs, store IDs, or identifiers are committed here.
+- Sequencing: this governance entry is the anchor; a focused design doc for item (1) (the feedback sensor) is the intended next artifact. Item (2)'s `feedback_notes` reader fix is independent maintenance and may land separately.
+- Evidence source for this update: this session's 80/20 analysis of the user↔admin↔agent feedback loop and the loop audit cited above.
+
 ## Relationship to Existing Docs
 
 - `.spec-workflow/steering/product.md` remains the product overview.
