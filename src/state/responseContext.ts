@@ -62,6 +62,16 @@ export async function getLatestResponseContext(
   return snapshot.docs[0].data() as ResponseContext;
 }
 
+/** All response contexts created within the trailing window (for the feedback sensor). */
+export async function getResponseContextsSince(windowDays: number): Promise<ResponseContext[]> {
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  const snapshot = await getDb()
+    .collection('response_context')
+    .where('createdAt', '>=', since)
+    .get();
+  return snapshot.docs.map((d) => d.data() as ResponseContext);
+}
+
 export async function getLatestNegativeFeedback(
   threadTs: string,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {

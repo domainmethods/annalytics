@@ -27,6 +27,7 @@ import {
   botHasRepliedInThread,
   getResponseContext,
   getLatestResponseContext,
+  getResponseContextsSince,
 } from '../../src/state/responseContext.js';
 
 describe('saveResponseContext', () => {
@@ -143,5 +144,22 @@ describe('getLatestResponseContext', () => {
     expect(result!.responseId).toBe('r2');
     expect(mockWhere).toHaveBeenCalledWith('threadTs', '==', 'thread-1');
     expect(mockOrderBy).toHaveBeenCalledWith('createdAt', 'desc');
+  });
+});
+
+describe('getResponseContextsSince', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ get: mockGet });
+  });
+
+  it('queries response_context filtered by createdAt and returns the docs', async () => {
+    mockGet.mockResolvedValue({
+      docs: [{ data: () => ({ traceId: 't1', tablesUsed: ['analytics.fct_orders'] }) }],
+    });
+    const rows = await getResponseContextsSince(30);
+    expect(mockWhere).toHaveBeenCalledWith('createdAt', '>=', expect.any(Date));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].traceId).toBe('t1');
   });
 });
