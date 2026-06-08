@@ -105,6 +105,19 @@ export function validationResultsFromFailures(
   };
 }
 
+// Compact, deterministic per-attempt failure trace for the acceptance report.
+// Only failing layers appear; L2 is marked advisory (visible, never blocking).
+export function formatValidationTrace(history: ValidationLayerRecord[] = []): string {
+  return history
+    .filter(r => !r.valid)
+    .map(r => {
+      const advisory = r.layer === 'l2' ? ' advisory' : '';
+      const detail = r.detail ? ` (${r.detail})` : '';
+      return `a${r.attempt} ${r.layer.toUpperCase()}✗${advisory}${detail}`;
+    })
+    .join('; ');
+}
+
 export function extractReferenceIdsFromCitations(
   citations: Pick<GroundingCitation, 'sourceFile' | 'chunkText' | 'relevanceScore'>[],
 ): string[] {

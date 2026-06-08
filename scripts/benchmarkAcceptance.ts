@@ -1,4 +1,5 @@
 import type { BenchmarkMetadata, BenchmarkResult, BenchmarkRun } from './benchmark-types.js';
+import { formatValidationTrace } from './benchmarkSupport.js';
 
 const FAILED_VALIDATION_RESULTS: BenchmarkResult['validationResults'] = {
   l1: false,
@@ -255,10 +256,12 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
       detail: 'Final SQL missing validation results',
     });
   } else if (!isClarificationOnly && blockingValidationFailures.length > 0) {
+    const trace = formatValidationTrace(result.validationHistory);
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'validation_failure',
-      detail: `Final SQL failed ${blockingValidationFailures.join(', ')}`,
+      detail: `Final SQL failed ${blockingValidationFailures.join(', ')}`
+        + (trace ? `. Trace: ${trace}` : ''),
     });
   }
 

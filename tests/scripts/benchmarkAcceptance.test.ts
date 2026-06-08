@@ -235,6 +235,39 @@ describe('evaluateReferenceCardAcceptance', () => {
     }));
   });
 
+  it('enriches the blocking validation failure detail with the per-attempt trace', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        qualityVerdict: 'exhausted',
+        validationResults: { l1: true, l2: true, l3: false, l4: true },
+        validationHistory: [
+          { attempt: 1, layer: 'l3', valid: false, detail: 'Table not found: foo' },
+        ],
+      }),
+    ]));
+
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      failureClass: 'validation_failure',
+      detail: expect.stringContaining('L3'),
+    }));
+    const validationFailure = acceptance.failures.find(f => f.failureClass === 'validation_failure');
+    expect(validationFailure?.detail).toContain('Table not found: foo');
+  });
+
+  it('keeps the blocking validation failure detail unchanged when no trace is present (older fixtures)', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        qualityVerdict: 'exhausted',
+        validationResults: { l1: true, l2: true, l3: false, l4: true },
+      }),
+    ]));
+
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({
+      failureClass: 'validation_failure',
+      detail: 'Final SQL failed L3',
+    }));
+  });
+
   it('classifies missing validation results without crashing', () => {
     const malformed = {
       ...result(),

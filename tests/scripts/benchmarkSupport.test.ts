@@ -6,6 +6,7 @@ import {
   combineReferenceIds,
   extractTablesFromSql,
   extractReferenceIdsFromCitations,
+  formatValidationTrace,
   referenceRetrievalSource,
   sqlShapePassed,
   tableSelectionPassed,
@@ -13,6 +14,32 @@ import {
   validationResultsFromFailures,
 } from '../../scripts/benchmarkSupport.js';
 import type { FailureRecord, ValidationLayerRecord } from '../../src/qualityLoop.js';
+
+describe('formatValidationTrace', () => {
+  it('names the failing layer, attempt index, and detail per attempt', () => {
+    const history: ValidationLayerRecord[] = [
+      { attempt: 0, layer: 'l1', valid: false, detail: 'DML keyword blocked' },
+      { attempt: 1, layer: 'l1', valid: true },
+      { attempt: 1, layer: 'l2', valid: false, detail: 'parse: unexpected token' },
+      { attempt: 1, layer: 'l3', valid: false, detail: 'Table not found: foo' },
+    ];
+    const trace = formatValidationTrace(history);
+    expect(trace).toContain('a0 L1✗ (DML keyword blocked)');
+    expect(trace).toContain('a1 L3✗ (Table not found: foo)');
+    expect(trace).toContain('L2✗ advisory');
+  });
+  it('returns an empty string for empty/undefined history (older fixtures)', () => {
+    expect(formatValidationTrace([])).toBe('');
+    expect(formatValidationTrace(undefined)).toBe('');
+  });
+  it('omits passing layers from the trace, keeping only failures', () => {
+    const history: ValidationLayerRecord[] = [
+      { attempt: 0, layer: 'l1', valid: true },
+      { attempt: 0, layer: 'l3', valid: true },
+    ];
+    expect(formatValidationTrace(history)).toBe('');
+  });
+});
 
 describe('validationResultsFromFailures', () => {
   it('reports final SQL validation as passing when a retry succeeds', () => {
