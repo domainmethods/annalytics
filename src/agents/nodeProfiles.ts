@@ -16,25 +16,34 @@ export interface NodeProfile {
 // Shared constants — safe because getNodeProfile NEVER hands out a DEFAULTS
 // reference directly; every return is a fresh spread (see below).
 //
-// PROVISIONAL thinking levels (tiers are NOT provisional — they encode real domain
-// knowledge: flash for classify/format, pro for generate/review). The levels below
-// are role-based HEURISTICS, not measured: thinking scales with the openness of the
-// reasoning required —
+// MEASURED vs PROVISIONAL. Two install-invariant classifier nodes (slackIntake,
+// followUpClassifier) are MEASURED: the judge-free floor-up sweep
+// (scripts/universal-sweep.ts, benchmarks/results/universal-sweep-2026-06-08.md)
+// scored exact-match route/intent accuracy across the full ladder and found BOTH
+// perfect (1.000) at every rung — including the cheapest model, flash-lite/3.1.
+// Flat-at-ceiling means the task sits below the model-difficulty floor, so floor-up
+// takes the cheapest rung (CLASSIFIER_LITE) rather than paying for unused capability.
+//
+// The remaining levels are PROVISIONAL role-based HEURISTICS, not measured (tiers
+// are NOT provisional — they encode real domain knowledge: flash for classify/format,
+// pro for generate/review). Thinking scales with the openness of the reasoning —
 //   minimal → closed-set classification / structured extraction / reformatting
 //   low     → light judgment over provided context
 //   default → hard open generation & critique (let the model manage its own budget)
-// Replace these with measured picks from a live run of `scripts/node-sweep.ts`
-// (the coordinate-descent right-sizing tool) once Gemini credentials are available;
-// the three pro reasoning nodes are deliberately left model-managed (no evidence yet
-// justifies forcing them higher or lower).
+// dbtStatus/chart/summaryOverride stay at flash/3 (un-measured: the universal corpus
+// only labels intake + follow-up routing). The three pro reasoning nodes are corpus-
+// limited on the SQL path (ε too large on the 12-question corpus to size safely) and
+// stay model-managed — see docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md.
+const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' };
 const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'minimal' };
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
 
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  // minimal — closed-set routing / structured selection / reformatting
-  slackIntake: FLASH_MINIMAL, followUpClassifier: FLASH_MINIMAL, dbtStatus: FLASH_MINIMAL,
-  chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
+  // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
+  slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
+  // minimal — closed-set routing / structured selection / reformatting (un-measured)
+  dbtStatus: FLASH_MINIMAL, chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
   // low — light open judgment over provided context
   clarification: FLASH_LOW, metaQuestion: FLASH_LOW, teachingCandidate: FLASH_LOW,
   // default — hard reasoning, model-managed thinking budget

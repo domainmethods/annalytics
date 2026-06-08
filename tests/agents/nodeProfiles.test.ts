@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-const FLASH_NODES = ['clarification','slackIntake','followUpClassifier','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
+// flash/3 nodes — the un-measured minimal/low roles still pinned to flash-preview.
+const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
+// MEASURED classifier nodes — the judge-free floor-up sweep found them perfect at
+// every rung, so the cheapest model (flash-lite/3.1) is the right-sized default.
+const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
-  it('defaults every Flash node to gemini-3-flash-preview', async () => {
+  it('defaults every un-measured Flash node to gemini-3-flash-preview', async () => {
     const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     for (const n of FLASH_NODES) expect(resolveNodeModel(n)).toBe('gemini-3-flash-preview');
+  });
+
+  it('defaults the measured classifier nodes to gemini-3.1-flash-lite (floor-up pick)', async () => {
+    const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    for (const n of CLASSIFIER_LITE_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-flash-lite');
   });
 
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {

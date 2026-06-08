@@ -73,24 +73,86 @@ domain knowledge):
   `supervisor`, `discrepancy`.
 Committed `af774be`.
 
+## Live sizing run (2026-06-08)
+
+The sizing exercise was re-run against **live Gemini 3.x** (real `GEMINI_API_KEY`),
+which the earlier phases could not do. Two complementary tracks were run, serialized
+to avoid shared-quota 429s corrupting the fail-fast SQL sweep.
+
+### Track 1 — SQL-path coordinate-descent sweep (`scripts/node-sweep.ts`)
+
+Judge-scored, 12-question corpus. Results in
+`benchmarks/results/node-sweep-2026-06-08.md`.
+
+| Node | ε(metric) | Verdict | Decision |
+|------|-----------|---------|----------|
+| `clarification` | 0.010 | flat across all rungs (metric 0.083 everywhere); R0 p95 1432ms vs 4798ms baseline | **Genuine downsize available** — but borderline node; documented as recommended `NODE_PROFILE_OVERRIDES`, not a template default |
+| `sqlGenerator` | 0.333 | metrics span 0.106–0.222; ε ≈ ⅓ of scale | **HOLD at PRO_DEFAULT** — ε-inflated, noise-dominated, not sizable on this corpus |
+| `supervisor` | 2.850 | only signal is the judge; ε ≈ 57% of the 1–5 scale | **HOLD at PRO_DEFAULT** — corpus too small to size |
+
+The script's own auto-verdict ("ACCEPTED — downsize all three to R0") is **rejected**
+for `sqlGenerator` + `supervisor`: a large ε makes the quality gate vacuous (everything
+"passes within ε"), and the cost tie-break then hands back the cheapest rung by default
+— noise masquerading as a downsize. Only `clarification`'s pick reflects a real
+flat-quality/lower-latency result.
+
+### Track 2 — universal judge-free floor-up sweep (`scripts/universal-sweep.ts`)
+
+The two install-invariant classifier nodes have objectively-checkable labels
+(route / intent), so they were sized with **exact-match accuracy and no judge** —
+immune to the ε(e2e) judge noise that sinks Track 1's reasoning nodes. Corpus:
+`benchmarks/universal-corpus.json` (14 intake + 12 follow-up entries). Results in
+`benchmarks/results/universal-sweep-2026-06-08.md`; run was clean (0 fallbacks/errors).
+
+| Node | R0…R5 accuracy | Floor-up pick |
+|------|----------------|---------------|
+| `slackIntake` | 1.000 at **every** rung | `flash-lite/3.1` / `minimal` |
+| `followUpClassifier` | 1.000 at **every** rung | `flash-lite/3.1` / `minimal` |
+
+Flat-at-ceiling (not flat-at-noise) is positive evidence the task sits *below* the
+model-difficulty floor: the cheapest model saturates it. These picks were applied to
+the **template** `nodeProfiles.ts` defaults (`CLASSIFIER_LITE`) — they are
+install-invariant, so they belong in the template, not in `NODE_PROFILE_OVERRIDES`.
+
+### Consolidated recommendation
+
+| Node | Default | Status | Source |
+|------|---------|--------|--------|
+| `slackIntake` | `flash-lite/3.1` / minimal | **ADOPTED** (template default) | Track 2, measured |
+| `followUpClassifier` | `flash-lite/3.1` / minimal | **ADOPTED** (template default) | Track 2, measured |
+| `clarification` | `flash/3` / low | recommended `NODE_PROFILE_OVERRIDES` → R0 | Track 1, borderline node |
+| `sqlGenerator` | `pro/3.1` / default | **HELD** — unsized (corpus-limited) | Track 1 |
+| `supervisor` | `pro/3.1` / default | **HELD** — unsized (corpus-limited) | Track 1 |
+| `discrepancy` | `pro/3.1` / default | provisional (not exercised by corpus) | heuristic |
+| `dbtStatus`, `chart`, `summaryOverride` | `flash/3` / minimal | provisional (not in universal corpus) | heuristic |
+| `metaQuestion`, `teachingCandidate` | `flash/3` / low | provisional (not exercised by corpus) | heuristic |
+
+**Follow-up (the real fix for the reasoning nodes):** the unifying root cause of the
+unsizable Track-1 nodes is corpus size, not a bad judge — 1 question flip = 0.083
+metric, a few flips = 0.33 ε. Expand `benchmarks/corpus.json` (currently 12 questions,
+exercising only clarification/sqlGenerator/supervisor) to shrink ε below a meaningful
+quality delta; only then can `sqlGenerator` + `supervisor` be sized rather than held.
+
 ## Proven vs. provisional — the load-bearing caveat
 
 - **Proven:** the right-sizing *machinery* (calibration, per-node ladder sweep,
   decision rule, combined-pass revert cascade, report generation) works end-to-end
   and is regression-tested. The runtime registry + seam + telemetry are wired and
-  tested.
-- **Provisional:** the per-node *default thinking levels* are role-based heuristics,
-  **not** measured. No live Gemini 3.x credentials were available in this
-  environment, so the sizing exercise ran against a synthetic corpus model that
-  validates orchestration, not real per-node quality/latency/cost.
+  tested. As of the 2026-06-08 live run, the machinery has been exercised against real
+  Gemini 3.x, and the two universal classifier nodes are now **measured** picks.
+- **Provisional:** the SQL-path reasoning nodes (`sqlGenerator`, `supervisor`) remain
+  **unsized** — the 12-question corpus inflates ε past any usable quality delta, so
+  they are held at `PRO_DEFAULT` rather than downsized on noise. The un-corpus'd nodes
+  (`dbtStatus`, `chart`, `summaryOverride`, `metaQuestion`, `teachingCandidate`,
+  `discrepancy`) keep their role-based heuristic defaults.
 
-**To finish the job for real:** run `npx tsx scripts/node-sweep.ts` with live
-Gemini 3.x credentials (Task 8 — explicitly not in CI), then replace the provisional
-`thinkingLevel` defaults in `src/agents/nodeProfiles.ts` with the measured picks
-from `benchmarks/results/node-sweep-<date>.md`. Tiers should change only if the
-live sweep shows a tier downsize holds within ε.
+**To finish the job for real:** expand `benchmarks/corpus.json`, re-run
+`npx tsx scripts/node-sweep.ts` (Task 8 — explicitly not in CI), and replace the held
+reasoning-node defaults with measured picks from
+`benchmarks/results/node-sweep-<date>.md` once ε is small enough to trust.
 
 ## Verification at completion
 
-- `npm run typecheck` clean; `npm test` → 719 passing (102 files).
-- Commits this work: `0dca832` (Phase C), `7ad57fa` (Phase D), `af774be` (Phase E).
+- `npm run typecheck` clean; `npm test` → full suite passing.
+- Commits this work: `0dca832` (Phase C), `7ad57fa` (Phase D), `af774be` (Phase E);
+  live sizing run + universal floor-up sweep land the measured classifier defaults.
