@@ -83,7 +83,7 @@ describe('generateDiagnosticSql', () => {
     await generateDiagnosticSql('Discrepancy', baseCtx, 'test-key');
 
     const callArgs = mockGenerateContent.mock.calls[0][0];
-    expect(callArgs.model).toBe('gemini-pro-latest');
+    expect(callArgs.model).toBe('gemini-3.1-pro-preview');
     expect(callArgs.config.responseMimeType).toBe('application/json');
     expect(callArgs.config.responseJsonSchema).toBeDefined();
   });

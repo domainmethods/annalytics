@@ -139,10 +139,10 @@ describe('classifyQuestion', () => {
     expect(call.config.systemInstruction).toContain('multiple known metrics');
   });
 
-  it('uses GEMINI_FLASH_MODEL when configured', async () => {
-    vi.stubEnv('GEMINI_FLASH_MODEL', 'gemini-3-flash-preview');
-    vi.resetModules();
-    const { classifyQuestion: classifyQuestionWithEnv } = await import('../../src/agents/clarificationAgent.js');
+  it('honors NODE_PROFILE_OVERRIDES for the clarification node', async () => {
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      clarification: { tier: 'flash-lite', version: '3.1' },
+    }));
     mockLLMResponse({
       route: 'data_query',
       confidence: 'high',
@@ -153,10 +153,10 @@ describe('classifyQuestion', () => {
       resolved_question: 'query',
     });
 
-    await classifyQuestionWithEnv('revenue?', [], summaries, 'key');
+    await classifyQuestion('revenue?', [], summaries, 'key');
 
     const call = mockGenerateContent.mock.calls[0][0];
-    expect(call.model).toBe('gemini-3-flash-preview');
+    expect(call.model).toBe('gemini-3.1-flash-lite');
     vi.unstubAllEnvs();
   });
 

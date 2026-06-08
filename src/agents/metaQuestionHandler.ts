@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import type { ResponseContext } from '../types.js';
-import { getFlashModel } from './modelConfig.js';
+import { generateForNode } from './modelGateway.js';
 
 export async function handleMetaQuestion(
   followUpQuestion: string,
@@ -46,8 +46,7 @@ In your response:
 
 USER'S FOLLOW-UP QUESTION: ${followUpQuestion}`;
 
-  const response = await ai.models.generateContent({
-    model: getFlashModel(),
+  const response = await generateForNode('metaQuestion', ai, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   });
 

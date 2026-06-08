@@ -107,7 +107,7 @@ describe('generateTeachingCandidate', () => {
 
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     const call = mockGenerateContent.mock.calls[0][0];
-    expect(call.model).toBe('gemini-flash-latest');
+    expect(call.model).toBe('gemini-3-flash-preview');
     expect(call.config.responseMimeType).toBe('application/json');
     expect(call.config.responseJsonSchema).toBeDefined();
     expect(call.config.systemInstruction).toContain('reusable teaching');

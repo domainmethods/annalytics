@@ -4,7 +4,7 @@ import { toJSONSchema } from 'zod/v4/core';
 import type { ClarificationResult } from './types.js';
 import type { KnowledgeSummary } from '../teachings/types.js';
 import type { ThreadMessage } from '../types.js';
-import { getFlashModel } from './modelConfig.js';
+import { generateForNode } from './modelGateway.js';
 
 const ClarificationSchema = z.object({
   route: z.enum(['data_query', 'dbt_status']),
@@ -28,8 +28,7 @@ export async function classifyQuestion(
   const systemPrompt = buildClarificationPrompt(teachingSummaries);
   const contents = buildContents(question, threadContext);
 
-  const response = await ai.models.generateContent({
-    model: getFlashModel(),
+  const response = await generateForNode('clarification', ai, {
     contents,
     config: {
       systemInstruction: systemPrompt,

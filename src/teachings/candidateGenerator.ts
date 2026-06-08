@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { TeachingCandidate } from '../state/teachingCandidates.js';
-import { getFlashModel } from '../agents/modelConfig.js';
+import { generateForNode } from '../agents/modelGateway.js';
 
 export interface EscalationTeachingContext {
   escalationId: string;
@@ -57,8 +57,7 @@ export async function generateTeachingCandidate(
     { role: 'user' as const, parts: [{ text: buildUserContent(context) }] },
   ];
 
-  const response = await ai.models.generateContent({
-    model: getFlashModel(),
+  const response = await generateForNode('teachingCandidate', ai, {
     contents,
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,

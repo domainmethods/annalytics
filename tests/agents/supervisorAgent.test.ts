@@ -139,7 +139,7 @@ describe('reviewSql — Supervisor Agent', () => {
     await reviewSql(baseInput);
 
     const call = mockGenerateContent.mock.calls[0][0];
-    expect(call.model).toBe('gemini-pro-latest');
+    expect(call.model).toBe('gemini-3.1-pro-preview');
   });
 
   // ── New: dry-run metadata tests ─────────────────────────────────────

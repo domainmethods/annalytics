@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import type { ResponseContext } from '../types.js';
-import { getProModel } from './modelConfig.js';
+import { generateForNode } from './modelGateway.js';
 
 const DiagnosticSchema = z.object({
   diagnosticSql: z.string(),
@@ -30,8 +30,7 @@ Generate a diagnostic SQL query to investigate. Consider:
 - Look for data gaps (NULL values, missing dates)
 - Generate only SELECT statements`;
 
-  const response = await ai.models.generateContent({
-    model: getProModel(),
+  const response = await generateForNode('discrepancy', ai, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     config: {
       responseMimeType: 'application/json',
