@@ -130,6 +130,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
+| `feedback_notes` | `traceId` or `threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
 
 ### Config Conversion
 

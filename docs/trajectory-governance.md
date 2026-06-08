@@ -218,6 +218,11 @@ As of 2026-06-06:
 - Both of those remain deferred under the "Automatic correction harvesting from binary feedback" line; reviving either still requires updating this document first.
 - Evidence source for this update: `docs/superpowers/specs/2026-06-06-negative-feedback-escalation-design.md`.
 
+As of 2026-06-07:
+
+- Maintenance slice closing a write-only capture gap in the negative-feedback path: 👎 → "Other" free-text notes were persisted to `feedback_notes` but had no read path, so the richest correction signal was silently discarded. Added `getPendingFeedbackNotes()` / `markFeedbackNoteReviewed()` and surfaced pending notes in the `scripts/promote-teachings.ts` admin review so a human curating knowledge also sees what users flagged as wrong.
+- Boundary it respects: this only informs the existing human review gate (guardrail #3). It does NOT auto-promote notes into teachings or retrieval; turning a note into a teaching stays a deliberate, separate act. The "Automatic correction harvesting from binary feedback" line remains deferred.
+
 ## Relationship to Existing Docs
 
 - `.spec-workflow/steering/product.md` remains the product overview.

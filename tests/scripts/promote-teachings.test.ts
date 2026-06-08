@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import type { TeachingCandidate } from '../../src/state/teachingCandidates.js';
+import type { StoredFeedbackNote } from '../../src/state/feedbackNotes.js';
 
 vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
@@ -14,12 +15,18 @@ vi.mock('../../src/state/teachingCandidates.js', () => ({
   updateCandidateStatus: vi.fn(),
 }));
 
+vi.mock('../../src/state/feedbackNotes.js', () => ({
+  getPendingFeedbackNotes: vi.fn(),
+  markFeedbackNoteReviewed: vi.fn(),
+}));
+
 vi.mock('../../src/state/firestore.js', () => ({
   initFirestore: vi.fn(),
 }));
 
 import { updateCandidateStatus } from '../../src/state/teachingCandidates.js';
-import { runPromotion } from '../../scripts/promote-teachings.js';
+import { markFeedbackNoteReviewed } from '../../src/state/feedbackNotes.js';
+import { runPromotion, runFeedbackReview } from '../../scripts/promote-teachings.js';
 
 function createMockRl(answers: string[]) {
   let index = 0;
@@ -135,5 +142,76 @@ describe('promote-teachings CLI', () => {
     await runPromotion(rl, [candidate]);
 
     expect(mkdirSync).toHaveBeenCalledWith(expect.stringContaining('teachings'), { recursive: true });
+  });
+});
+
+function makeFeedbackNote(overrides: Partial<StoredFeedbackNote> = {}): StoredFeedbackNote {
+  return {
+    id: 'tr_abc123',
+    note: 'The answer counted refunded orders as revenue',
+    userId: 'U123',
+    threadTs: '1700000000.000100',
+    channel: 'C123',
+    status: 'pending',
+    createdAt: new Date('2026-06-01T10:00:00Z'),
+    ...overrides,
+  };
+}
+
+describe('promote-teachings feedback note review', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('marks a note reviewed on [m]', async () => {
+    const note = makeFeedbackNote();
+    const rl = createMockRl(['m']);
+
+    const counts = await runFeedbackReview(rl, [note]);
+
+    expect(markFeedbackNoteReviewed).toHaveBeenCalledWith('tr_abc123');
+    expect(counts).toEqual({ reviewed: 1, skipped: 0 });
+  });
+
+  it('skips a note on [s] without mutating it', async () => {
+    const note = makeFeedbackNote();
+    const rl = createMockRl(['s']);
+
+    const counts = await runFeedbackReview(rl, [note]);
+
+    expect(markFeedbackNoteReviewed).not.toHaveBeenCalled();
+    expect(counts).toEqual({ reviewed: 0, skipped: 1 });
+  });
+
+  it('surfaces the note text, user, thread, and channel to the admin', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const note = makeFeedbackNote();
+    const rl = createMockRl(['s']);
+
+    await runFeedbackReview(rl, [note]);
+
+    const output = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('The answer counted refunded orders as revenue');
+    expect(output).toContain('U123');
+    expect(output).toContain('1700000000.000100');
+    expect(output).toContain('C123');
+
+    logSpy.mockRestore();
+  });
+
+  it('tallies mixed reviewed/skipped decisions across notes', async () => {
+    const notes = [
+      makeFeedbackNote({ id: 'tr_1' }),
+      makeFeedbackNote({ id: 'tr_2' }),
+      makeFeedbackNote({ id: 'tr_3' }),
+    ];
+    const rl = createMockRl(['m', 's', 'm']);
+
+    const counts = await runFeedbackReview(rl, notes);
+
+    expect(counts).toEqual({ reviewed: 2, skipped: 1 });
+    expect(markFeedbackNoteReviewed).toHaveBeenCalledWith('tr_1');
+    expect(markFeedbackNoteReviewed).toHaveBeenCalledWith('tr_3');
+    expect(markFeedbackNoteReviewed).not.toHaveBeenCalledWith('tr_2');
   });
 });
