@@ -13,3 +13,5 @@ coverage/
 .delegate/
 dbt/manifest.json
 dbt/catalog.json
+benchmarks/results/*
+!benchmarks/results/.gitkeep

@@ -20,6 +20,7 @@
     "lint": "eslint src/ tests/ scripts/",
     "lint:fix": "eslint --fix src/ tests/ scripts/",
     "promote": "tsx scripts/promote-teachings.ts",
+    "node-sweep": "tsx scripts/node-sweep.ts",
     "prepare": "husky"
   },
   "lint-staged": {
