@@ -261,6 +261,8 @@ async function main() {
         referenceProbe.referenceIds,
         sqlGroundingReferenceIds,
       );
+      // Teachings have no explicit probe (unlike references, which combine
+      // referenceProbe.referenceIds above); capture them from SQL grounding citations only.
       const observedTeachingIds = extractTeachingIdsFromCitations(
         quality.sqlResult.groundingCitations,
       );
