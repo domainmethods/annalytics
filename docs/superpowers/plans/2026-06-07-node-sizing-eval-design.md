@@ -224,9 +224,13 @@ for each sweepable node:
    contenders = viable where p95 ≤ min(viable.p95) × 1.05
    recommend  = argmax(contenders, quality), tie → argmin(cost)
 combined pass: set ALL recommended overrides at once → run corpus →
-   assert e2e ≥ baseline − e2eEps; if regressed, flag + revert the node with the
-   smallest gate margin = chosen.metric − (baseline.metric − metricEps) toward
-   baseline, re-run; if still regressed, ship baseline for the e2e-critical set.
+   assert e2e ≥ baseline − e2eEps; if regressed, revert the most-recoverable node:
+   e2e-critical nodes FIRST (a combined regression is an e2e regression, so only a
+   node whose quality is seen THROUGH e2e can cure it — reverting a node that already
+   cleared its own dedicated gate-metric wastes a cycle), tie-broken by smallest
+   ε-normalized gate margin = (chosen.metric − (baseline.metric − metricEps)) /
+   metricEps; re-run; if still regressed, revert ALL e2e-critical nodes + flag for
+   manual review.
 emit node-sweep-report.md (ladder table per node, recommended rung circled, combined verdict)
 ```
 
