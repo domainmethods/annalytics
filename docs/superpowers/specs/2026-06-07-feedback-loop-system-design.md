@@ -69,38 +69,38 @@ They share two things, which is why they are one system:
 
 ## 5. Component A — Feedback Sensor (reactive)
 
-### 5.1 Capture with domain attribution
+### 5.1 No new capture — the signal already exists
 
-**Decision: attribute at render time, not lookup time.** When response blocks are built (`slack/blocks.ts`), embed the answer's domain in the thumbs button `value` payload (not just the `traceId` in `action_id`). The thumbs handler (`app.ts:157`) then has the domain in hand with no Firestore read.
+**Decision (revised after grounding): the sensor is a pure read/aggregation layer over the existing `response_context` collection. No new collection, no button-value change.**
 
-Domain is resolved when the response is produced, in priority order:
-1. The `domain` of any cited ReferenceCard (e.g. `revenue`).
-2. Fallback: a coarse tag derived from the dominant table touched (`retrievedSchema.tables` on `ResponseContext`) — e.g. dataset or model prefix.
-3. `unclassified` when neither is available.
+`recordFeedback()` (`src/state/responseContext.ts`) already writes `negativeFeedback: true|false` onto each per-response doc, which *already* persists everything the sensor needs:
+- the verdict (`negativeFeedback`),
+- `tablesUsed` (for domain attribution),
+- `createdAt` (for windowing),
+- all three confidence sub-signals (`clarificationConfidence`, `primaryAgentConfidence`, `supervisorConfidence`) plus reconciled `confidence` (for calibration).
 
-### 5.2 Persist the signal
+This means the sensor works on historical data with zero migration, and the proposed `feedback_signal` collection / render-time button payload are unnecessary.
 
-New leaf state module `src/state/feedbackSignal.ts` → Firestore collection `feedback_signal`:
+**Privacy boundary holds at the output, not the storage.** `response_context` already stores rich fields (SQL, question) as the pipeline's own persistence — the sensor neither adds to that nor exposes it. The sensor's *outputs* (rankings, calibration) are counts/rates by domain and confidence bucket only.
 
-```ts
-interface FeedbackSignalEvent {
-  traceId: string;          // dedupe key; one verdict per response
-  domain: string;           // 'revenue' | ... | 'unclassified'
-  verdict: 'positive' | 'negative';
-  createdAt: Date;
-}
-```
+### 5.2 Domain attribution (derived at read time)
 
-- Write is idempotent on `traceId` (a user toggling 👍↔👎 updates the same doc — last verdict wins). Follow the `firestore-rejects-undefined` convention: omit optional fields, never write `undefined`.
-- **Privacy:** no question text, no SQL, no userId stored here. Counts and a domain label only.
+Pure helper `resolveDomain(tablesUsed: string[], cards: ReferenceCard[]): string`, priority order:
+1. **Cards-first:** build a `table → domain` map from loaded ReferenceCards (each card's `canonical_table`, and optionally other referenced tables, maps to `card.domain`). If any `tablesUsed` entry matches, return that domain (e.g. `analytics.fct_orders` → `revenue`).
+2. **Table fallback:** a coarse tag from the dominant table (e.g. dataset/model prefix). This is the bootstrap taxonomy that keeps the ranking meaningful before cards exist.
+3. `unclassified` when `tablesUsed` is empty.
+
+Derived from already-stored `tablesUsed`, so it applies to historical docs with no backfill.
 
 ### 5.3 Aggregate + read out
 
-`getDomainPainRanking(windowDays)` returns, per domain: `{ domain, total, negative, negativeRate }`, sorted by `negativeRate` (with a minimum-sample floor so a 1/1 domain doesn't top a 40/100 one).
+Pure reducers over `response_context` docs in a window:
+- `getDomainPainRanking(windowDays)` → per domain `{ domain, total, negative, negativeRate }`, sorted by `negativeRate` with a minimum-sample floor so a 1/1 domain doesn't top a 40/100 one.
+- `getConfidenceCalibration(windowDays)` → per reconciled-confidence bucket `{ confidence, total, negative, negativeRate }`. This is the calibration instrument the side bar (§7.1) gates on — nearly free, since confidence is already stored next to the verdict.
 
 Two consumers:
-- **CLI readout** (`scripts/feedback-report.ts`): prints the ranking. This is the instrument an admin uses to choose the next ReferenceCard domain.
-- **Fold into `promote-teachings.ts`**: show the domain pain ranking alongside pending candidates, so the human reviewing knowledge sees *where* the pain concentrates.
+- **CLI readout** (`scripts/feedback-report.ts`): prints the domain pain ranking and the calibration table. The instrument an admin uses to choose the next ReferenceCard domain *and* to judge whether `low` confidence is trustworthy enough to enable the side bar.
+- **Fold into `promote-teachings.ts`** (light): show the domain pain ranking alongside pending candidates so the reviewer sees *where* pain concentrates. May land with the item-2 reader work.
 
 ## 6. Component B — The Side Bar (proactive)
 
