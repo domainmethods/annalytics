@@ -62,7 +62,9 @@ export async function getLatestResponseContext(
   return snapshot.docs[0].data() as ResponseContext;
 }
 
-/** All response contexts created within the trailing window (for the feedback sensor). */
+/** All response contexts created within the trailing window (for the feedback
+ *  sensor). Unbounded and unordered: returns every in-window doc with no limit —
+ *  intended for low-frequency CLI/offline use, not a request hot path. */
 export async function getResponseContextsSince(windowDays: number): Promise<ResponseContext[]> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
   const snapshot = await getDb()

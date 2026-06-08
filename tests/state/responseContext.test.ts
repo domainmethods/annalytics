@@ -153,12 +153,25 @@ describe('getResponseContextsSince', () => {
     mockWhere.mockReturnValue({ get: mockGet });
   });
 
-  it('queries response_context filtered by createdAt and returns the docs', async () => {
+  it('queries response_context filtered by a correct createdAt cutoff and maps docs', async () => {
     mockGet.mockResolvedValue({
       docs: [{ data: () => ({ traceId: 't1', tablesUsed: ['analytics.fct_orders'] }) }],
     });
-    const rows = await getResponseContextsSince(30);
+
+    const windowDays = 30;
+    const windowMs = windowDays * 24 * 60 * 60 * 1000;
+    const before = Date.now();
+    const rows = await getResponseContextsSince(windowDays);
+    const after = Date.now();
+
     expect(mockWhere).toHaveBeenCalledWith('createdAt', '>=', expect.any(Date));
+    const since = mockWhere.mock.calls[0][2] as Date;
+    // The cutoff must be `now - windowMs`, computed at call time. Bound it by the
+    // before/after wall-clock readings so a units bug (hours vs days, missing *1000)
+    // would fall outside the range and fail.
+    expect(since.getTime()).toBeGreaterThanOrEqual(before - windowMs);
+    expect(since.getTime()).toBeLessThanOrEqual(after - windowMs);
+
     expect(rows).toHaveLength(1);
     expect(rows[0].traceId).toBe('t1');
   });
