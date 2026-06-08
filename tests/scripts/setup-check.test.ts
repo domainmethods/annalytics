@@ -16,14 +16,14 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
     'README.md': [
       'Use references/ as the primary knowledge authoring surface.',
       'Run npx tsx scripts/sync-knowledge.ts for manual sync.',
-      'Models default to gemini-pro-latest and gemini-flash-latest.',
+      'Models default to gemini-3.1-pro-preview and gemini-3-flash-preview.',
       'GitHub secrets include GCP_PROJECT_ID, WIF_PROVIDER, WIF_SERVICE_ACCOUNT, GEMINI_API_KEY_CI, FILE_SEARCH_STORE_ID.',
       'Cloud Run uses us-west1 and Secret Manager secrets slack-bot-token, slack-signing-secret, gemini-api-key.',
     ].join('\n'),
     '.env.example': [
-      'GEMINI_MODEL=gemini-pro-latest',
-      'GEMINI_FLASH_MODEL=gemini-flash-latest',
-      'GEMINI_JUDGE_MODEL=gemini-pro-latest',
+      'GEMINI_MODEL=gemini-3.1-pro-preview',
+      'GEMINI_FLASH_MODEL=gemini-3-flash-preview',
+      'GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview',
     ].join('\n'),
     'docs/trajectory-governance.md': 'Setup simplification records gcloud primary deployment and optional Terraform infrastructure.',
     '.github/workflows/deploy.yml': [
@@ -94,7 +94,20 @@ describe('runSetupCheck', () => {
 
     expect(result.findings).toContainEqual({
       status: 'error',
-      message: 'Stale Gemini model ID found in README.md; use gemini-pro-latest/gemini-flash-latest aliases instead',
+      message: 'Stale Gemini model ID found in README.md; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases',
+    });
+  });
+
+  it('reports floating -latest aliases as stale (hard 3.x constraint)', async () => {
+    const root = await createRepoFixture({
+      '.env.example': 'GEMINI_MODEL=gemini-pro-latest',
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Stale Gemini model ID found in .env.example; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases',
     });
   });
 

@@ -141,12 +141,15 @@ async function checkModelDocs(
   rootDir: string,
   add: (status: SetupCheckStatus, message: string) => void,
 ): Promise<void> {
+  // Only pinned Gemini 3.x `-preview`/`-lite`/`-flash` ids are allowed. Both the
+  // nonexistent `gemini-3.0` and the floating `-latest` aliases are now stale —
+  // `-latest` could silently resolve to a non-3.x model, violating the hard 3.x constraint.
   for (const file of ['README.md', '.env.example']) {
     const content = await readText(rootDir, file);
-    if (/gemini-3\.0/.test(content)) {
+    if (/gemini-3\.0|gemini-(?:pro|flash)-latest/.test(content)) {
       add(
         'error',
-        `Stale Gemini model ID found in ${file}; use gemini-pro-latest/gemini-flash-latest aliases instead`,
+        `Stale Gemini model ID found in ${file}; pin a Gemini 3.x id (e.g. gemini-3.1-pro-preview / gemini-3-flash-preview) instead of -latest aliases`,
       );
     } else {
       add('ok', `Gemini model docs are current in ${file}`);

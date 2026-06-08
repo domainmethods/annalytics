@@ -10,7 +10,7 @@ import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
 import { getJudgeModel, resolveModelId, type ModelTier } from '../src/agents/modelConfig.js';
-import { resolveNodeModel, type NodeId } from '../src/agents/nodeProfiles.js';
+import { resolveNodeModel, defaultTierForNode, type NodeId } from '../src/agents/nodeProfiles.js';
 import { withUsageSink, type UsageRecord } from '../src/agents/modelGateway.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
@@ -459,7 +459,7 @@ async function main() {
       metric: nodeMetric(node, baselineRunA.perEntry),
       e2e: e2e(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
-      cost: nodeCost(node, profileTierForBaseline(node), baselineRunA.nodeUsage),
+      cost: nodeCost(node, defaultTierForNode(node), baselineRunA.nodeUsage),
     };
 
     const rungScores: RungScore[] = [];
@@ -571,11 +571,19 @@ async function main() {
     console.log(`Combined e2e: ${combinedE2e.toFixed(3)} (baseline ${baselineE2e.toFixed(3)}, ε ${e2eEps.toFixed(4)})`);
 
     if (combinedE2e < baselineE2e - e2eEps) {
-      // Revert the node with the smallest margin first.
-      const withMargin = downsized.map(o => ({
-        outcome: o,
-        margin: o.chosen.metric - (o.baseline.metric - metricEpsForNode(o.nodeId)),
-      }));
+      // Revert the node with the smallest margin first. Normalize each node's
+      // raw headroom by its own metric ε so margins are in noise-band units —
+      // node metrics live on different scales (clarification/sqlGenerator pass-rate
+      // ∈ [0,1] vs supervisor e2e overallScore ∈ ~[1,5]), so comparing raw margins
+      // would systematically bias the revert toward the narrower-scale node.
+      // ε is floored at 0.01 by computeEpsilon, so the division is always safe.
+      const withMargin = downsized.map(o => {
+        const eps = metricEpsForNode(o.nodeId);
+        return {
+          outcome: o,
+          margin: (o.chosen.metric - (o.baseline.metric - eps)) / eps,
+        };
+      });
       withMargin.sort((a, b) => a.margin - b.margin);
       const toRevert = withMargin[0].outcome;
       console.log(`Combined regressed; reverting smallest-margin node ${toRevert.nodeId} to DEFAULT`);
@@ -652,17 +660,6 @@ async function main() {
   const outputPath = join(resultsDir, `node-sweep-${runDate}.md`);
   await writeFile(outputPath, reportLines.join('\n'), 'utf-8');
   console.log(`\nReport written to benchmarks/results/node-sweep-${runDate}.md`);
-}
-
-// Resolve the swept node's baseline tier for cost weighting. The baseline run
-// uses each node's DEFAULT profile, so read the tier from nodeProfiles via the
-// resolved model — but since we only need the tier, infer from DEFAULTS shape.
-function profileTierForBaseline(node: NodeId): ModelTier {
-  // sqlGenerator/supervisor/discrepancy default to 'pro'; everything else 'flash'.
-  if (node === 'sqlGenerator' || node === 'supervisor' || node === 'discrepancy') {
-    return 'pro';
-  }
-  return 'flash';
 }
 
 main().then(() => {

@@ -96,7 +96,7 @@ export type ModelTier = 'flash-lite' | 'flash' | 'pro';
 export type NodeId =
   | 'clarification' | 'slackIntake' | 'followUpClassifier' | 'dbtStatus'
   | 'metaQuestion' | 'chart' | 'sqlGenerator' | 'supervisor'
-  | 'discrepancy' | 'teachingCandidate';
+  | 'discrepancy' | 'teachingCandidate' | 'summaryOverride';
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
 // 'default' = omit thinkingConfig entirely → model's own default
@@ -110,9 +110,17 @@ export interface NodeProfile {
 
 **Default registry (pinned 3.x, the high reference baseline):**
 - Flash nodes (clarification, slackIntake, followUpClassifier, dbtStatus, metaQuestion,
-  chart, teachingCandidate) → `gemini-3-flash-preview`, `thinkingLevel: 'default'`.
+  chart, teachingCandidate, summaryOverride) → `gemini-3-flash-preview`, `thinkingLevel: 'default'`.
 - Pro nodes (sqlGenerator, supervisor, discrepancy) → `gemini-3.1-pro-preview`,
   `thinkingLevel: 'default'`.
+
+> **Node count — 11, not 10.** Implementation surfaced an 11th hardcoded `getFlashModel()`
+> call site this enumeration originally missed: the **Summary** response-override button
+> (`handlers/responseOverrides.ts`), which re-summarizes a result set with Flash. It is a real
+> live generation path, so leaving it out would have stranded it off the registry and off the
+> 3.x pin. It is registered as `summaryOverride` (Flash default). It is **not** swept in v1 — it
+> has no corpus label — so it sits in the same "needs a node metric" deferred bucket as the
+> other unlabeled Flash nodes; it is runtime-configurable like the rest.
 
 Rationale: the baseline must be the high reference, not the floor — the no-regression gate
 is only meaningful if it's measured against a known-good config. The sweep ratchets down
@@ -233,10 +241,12 @@ whole. The combined pass makes the end-to-end guard hold for the shipped configu
 | clarification | `clarificationPassed` (confidence match, in corpus) | yes |
 | sqlGenerator | `tableSelectionPassed` + `sqlShapePassed` + judge correctness | yes |
 | supervisor | end-to-end judge as proxy (no direct label yet) | proxy-only |
-| followUpClassifier, slackIntake, dbtStatus, metaQuestion, chart, discrepancy, teachingCandidate | no corpus labels today | deferred |
+| followUpClassifier, slackIntake, dbtStatus, metaQuestion, chart, discrepancy, teachingCandidate, summaryOverride | no corpus labels today | deferred |
 
-The registry/gateway is wired into **all 10** (all runtime-configurable now), but the
+The registry/gateway is wired into **all 11** (all runtime-configurable now), but the
 **sizing recommendation in v1 covers only labeled nodes** + supervisor via the e2e proxy.
+(`summaryOverride`, the 11th node, sits in the deferred bucket above — see the node-count
+note in "Default registry".)
 The rest are flagged "needs a node metric" — deliberate YAGNI, aligned with the governance
 doc's benchmark-hardening tranche. During the supervisor proxy sweep, all other nodes are
 pinned at baseline, so any e2e movement is attributable to the supervisor.
@@ -284,7 +294,7 @@ deliberate and the call shapes are otherwise unchanged.
 ## Rollout (two PRs)
 
 1. **Runtime layer:** `modelConfig` extension + `nodeProfiles` + `modelGateway` + wire all
-   10 agents + update agent model-string tests to pinned 3.x ids. Behavior change limited to
+   11 agents + update agent model-string tests to pinned 3.x ids. Behavior change limited to
    model identity (→ 3.x); structure preserved.
 2. **Measurement layer:** `node-sweep` script + types + pure decision-rule/ε/combined-pass
    tests. Additive; never imported by `app.ts`.

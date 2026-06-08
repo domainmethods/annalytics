@@ -80,3 +80,10 @@ export function resolveNodeModel(id: NodeId): string {
   const p = getNodeProfile(id);
   return resolveModelId(p.tier, p.version);   // always resolvable — getNodeProfile guarantees it
 }
+
+// The node's *default* tier, independent of any NODE_PROFILE_OVERRIDES in env.
+// Single source of truth for tooling (e.g. the sweep's baseline cost weight) that
+// must not hardcode the node→tier mapping and drift when DEFAULTS change.
+export function defaultTierForNode(id: NodeId): ModelTier {
+  return DEFAULTS[id].tier;
+}
