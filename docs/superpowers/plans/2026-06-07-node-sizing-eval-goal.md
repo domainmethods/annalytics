@@ -166,16 +166,17 @@ nodes; clarification itself is already sized clean (ε≈0.01). Validated end-to
 2-entry bypass run took both previously-skipped questions through the loop
 (`sqlGenerator` 0 → 17.5K tokens, `supervisor` 0 → 2.2K tokens).
 
-**⚠️ The 47-question live corpus was LOST (2026-06-08).** `benchmarks/corpus.live.json`
-was gitignored and never committed; it lived only in the `silly-mcnulty-73ba04` worktree,
-which has since been removed. It is not recoverable from git (no blob/commit/dangling
-object) or disk. **The deferred sweep below cannot run until the corpus is rebuilt** — 47
-template-safe GA4 questions (15 easy / 18 medium / 10 hard / 4 ambiguous), generic, no
-client/project IDs. Regenerate it somewhere durable (outside the template, per the
-`benchmarks/results/*` gitignore rationale) before attempting the sweep.
+**Corpus history (2026-06-08).** The original 47-question `benchmarks/corpus.live.json` was
+gitignored, never committed, and lived only in the since-removed `silly-mcnulty-73ba04`
+worktree — so it was lost and unrecoverable from git or disk. It has since been **rebuilt**
+(same 15 easy / 18 medium / 10 hard / 4 ambiguous distribution) targeting the real Velir
+dbt-ga4 package schema (dataset `analytics`), with no GCP project ids, client names, or PII.
+Per the `benchmarks/results/*` gitignore rationale the rebuilt copy is kept durable **outside
+the template** (a path on the operator's machine, recorded in the operator's notes — not
+committed here, since the template must stay free of client-derived benchmark evidence).
 
-**Deferred (expensive — not run this session):** once the corpus is rebuilt, the full
-live sweep is (run from the **main repo** — it has `node_modules`, `.env`, dbt artifacts):
+**Deferred (expensive — not run this session):** the full live sweep is (run from the
+**main repo** — it has `node_modules`, `.env`, dbt artifacts):
 `cd <main-repo> && npx tsx scripts/node-sweep.ts --corpus <durable-path>/corpus.live.json --node sqlGenerator --node supervisor --bypass-clarification`
 Cost (the reason it was deferred): the quality loop is ~63s/entry (Pro SQL gen p95 ~50s on
 the 52-table schema). Under two-stage coordinate isolation the pass count is
