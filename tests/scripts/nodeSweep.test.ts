@@ -146,6 +146,30 @@ describe('runSweep — two-stage coordinate isolation', () => {
     expect(new Set(levels)).toEqual(new Set(['minimal', 'low', 'medium', 'high', 'default']));
   });
 
+  it('Stage 2 SKIPS a thinking level the winning model cannot serve (pro/3.1 never walks `minimal`)', async () => {
+    // sqlGenerator is tier-sensitive → pro/3.1 wins Stage 1. pro/3.1 rejects `minimal`,
+    // so Stage 2 must walk only {low, medium, high, default} — 4 points, not 5. Walking
+    // `minimal` here would send thinkingLevel:'minimal' to gemini-3.1-pro-preview live →
+    // a 400 that aborts the whole sweep (the inner catch re-raises, by design).
+    const r = await sweep(['sqlGenerator']);
+    const o = r.outcomes[0];
+    expect(o.stage1Winner.tier).toBe('pro');
+    const levels = o.stage2.map(p => parseLabel(p.label).level);
+    expect(levels).not.toContain('minimal');
+    expect(new Set(levels)).toEqual(new Set(['low', 'medium', 'high', 'default']));
+    expect(o.stage2).toHaveLength(4);
+  });
+
+  it('Stage 2 still walks all five levels when the winner DOES support `minimal` (flash-lite)', async () => {
+    // Regression guard for the filter: a flash-lite winner supports `minimal`, so the
+    // capability filter must NOT trim it — Stage 2 keeps the full five-point walk.
+    const r = await sweep(['clarification']);
+    const o = r.outcomes[0];
+    expect(o.stage1Winner.tier).toBe('flash-lite');
+    expect(o.stage2).toHaveLength(5);
+    expect(o.stage2.map(p => parseLabel(p.label).level)).toContain('minimal');
+  });
+
   it('calibrates a non-floor ε from run-to-run noise on the continuous e2e signal', async () => {
     const r = await sweep(['clarification']);
     expect(r.e2eEps).toBeGreaterThan(0.01); // jitter on overallScore exceeds the floor

@@ -9,7 +9,7 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
-import { getJudgeModel, resolveModelId, listGemini3xModels, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, resolveModelId, listGemini3xModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
 import {
   resolveNodeModel,
   defaultTierForNode,
@@ -472,11 +472,20 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     log(`  → Stage 1 winner (cheapest within ε): ${stage1Winner.tier}/${stage1Winner.version}`);
 
     // Stage 2 — THINKING axis. Hold the winning model fixed, walk every thinking
-    // level incl. `default`. Reuse the Stage-1 measurement at the anchor level
-    // (same model+thinking) rather than paying to re-run it.
-    log(`  Stage 2 (thinking axis on ${stage1Winner.tier}/${stage1Winner.version}):`);
+    // level the WINNING MODEL actually serves, incl. `default`. Reuse the Stage-1
+    // measurement at the anchor level (same model+thinking) rather than re-running it.
+    //
+    // The capability filter is load-bearing, not cosmetic: gemini-3.1-pro-preview
+    // rejects `minimal`, so if Stage 1 picks a pro winner an unfiltered walk would
+    // send thinkingLevel:'minimal' to the live API → a 400 that the inner catch
+    // re-raises (by design), aborting the whole multi-hour sweep. `'default'` (omit
+    // thinkingConfig) is universally safe and always kept.
+    const stage2Levels = THINKING_LEVELS.filter(
+      (l) => l === 'default' || getSupportedThinkingLevels(stage1Winner.tier, stage1Winner.version).includes(l),
+    );
+    log(`  Stage 2 (thinking axis on ${stage1Winner.tier}/${stage1Winner.version}; levels: ${stage2Levels.join(', ')}):`);
     const stage2: PointScore[] = [];
-    for (const level of THINKING_LEVELS) {
+    for (const level of stage2Levels) {
       const profile: SweepProfile = { tier: stage1Winner.tier, version: stage1Winner.version, thinkingLevel: level };
       const label = labelOf(profile);
       profileByLabel.set(label, profile);

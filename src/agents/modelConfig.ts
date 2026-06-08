@@ -15,6 +15,13 @@ export function getJudgeModel(): string {
 
 export type ModelTier = 'flash-lite' | 'flash' | 'pro';
 
+// The Gemini 3.x `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
+// not a real API value: it means "omit thinkingConfig and let the model manage its
+// own budget" (see modelGateway). Lives here — next to the model registry it pairs
+// with — so the per-model capability map below and every sweep/profile can speak one
+// type without importing nodeProfiles (which would invert the dependency direction).
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
+
 /** A model the registry knows about, as a (tier, version) coordinate rather than a
  *  raw id — the form every sizing sweep and nodeProfiles override speaks. */
 export interface ModelCoordinate { tier: ModelTier; version: string; }
@@ -32,6 +39,34 @@ const GEMINI_3X_MODELS: Record<string, string> = {
 // the cheapest models before the expensive ones. Tier is the dominant cost lever
 // (flash-lite ≪ flash ≪ pro); version order within a tier follows the map.
 const TIER_RANK: Record<ModelTier, number> = { 'flash-lite': 0, 'flash': 1, 'pro': 2 };
+
+// Per-model DISCRETE thinking_level support, transcribed verbatim from the Gemini
+// 3.x thinking docs (ai.google.dev/gemini-api/docs/thinking). `'default'` (omit
+// thinkingConfig) is universally accepted and is NOT a discrete API value, so it is
+// deliberately ABSENT here — callers treat it as always-safe separately. The only
+// asymmetry in today's lineup: gemini-3.1-pro-preview rejects `minimal` (every Flash
+// model accepts all four). Keys MUST stay in lock-step with GEMINI_3X_MODELS — the
+// modelConfig test asserts every registry coordinate is annotated here, so a new
+// model can't silently ship without declaring what it supports.
+const MODEL_THINKING_LEVELS: Record<string, ThinkingLevel[]> = {
+  'flash-lite/3.1': ['minimal', 'low', 'medium', 'high'],
+  'flash/3': ['minimal', 'low', 'medium', 'high'],
+  'flash/3.5': ['minimal', 'low', 'medium', 'high'],
+  'pro/3.1': ['low', 'medium', 'high'],   // minimal "Not supported" for Gemini 3.1 Pro
+};
+
+/**
+ * The discrete thinking levels a (tier, version) actually serves. Excludes the
+ * `'default'` sentinel (universally safe — handle it separately). Returns `[]` for a
+ * coordinate not in the registry: fail-CLOSED, so a typo'd model surfaces as "supports
+ * nothing" rather than silently passing an unsupported level to the API. The single
+ * source of truth for "can model X take thinking level Y" — the gateway, the node-profile
+ * boundary guard, and the sizing sweep's Stage-2 walk all consult this rather than
+ * hardcoding the pro-rejects-minimal special case in three places.
+ */
+export function getSupportedThinkingLevels(tier: ModelTier, version: string): ThinkingLevel[] {
+  return [...(MODEL_THINKING_LEVELS[`${tier}/${version}`] ?? [])];
+}
 
 /**
  * Every Gemini 3.x (tier, version) the template knows about — the SINGLE SOURCE OF

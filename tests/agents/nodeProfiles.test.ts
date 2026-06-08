@@ -80,4 +80,49 @@ describe('nodeProfiles', () => {
     const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     expect(resolveNodeModel('clarification')).toBe('gemini-3-flash-preview'); // default, no throw
   });
+
+  it('coerces an unsupported thinking level to `default` but KEEPS the explicitly-overridden model', async () => {
+    // slackIntake's default is flash-lite/3.1@minimal. Override the model to pro/3.1,
+    // which RESOLVES fine but rejects `minimal` (only the Flash family supports it).
+    // isValidPartial passes the override (valid strings) and the resolvability guard
+    // passes too (pro/3.1 is real) — only the NEW capability guard catches it. The fix
+    // must honor the user's pro choice and drop the incompatible level to `default`,
+    // NOT silently revert the whole profile back to the flash-lite default.
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      slackIntake: { tier: 'pro', version: '3.1', thinkingLevel: 'minimal' },
+    }));
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('slackIntake')).toBe('gemini-3.1-pro-preview'); // model PRESERVED, not reverted
+    expect(getNodeProfile('slackIntake').thinkingLevel).toBe('default');     // level coerced off 'minimal'
+  });
+
+  it('coerces an INHERITED unsupported level when a tier-only override lands on an incompatible model', async () => {
+    // The incompatible level is usually an accident of the merge: {tier:'pro',version:'3.1'}
+    // with no thinkingLevel inherits slackIntake's default 'minimal' → pro/3.1@minimal.
+    // The guard coerces to `default` so the bare model override still works end-to-end.
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      slackIntake: { tier: 'pro', version: '3.1' },
+    }));
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('slackIntake')).toBe('gemini-3.1-pro-preview');
+    expect(getNodeProfile('slackIntake').thinkingLevel).toBe('default');
+  });
+
+  it('keeps an override whose thinking level IS supported by the resolved model', async () => {
+    // pro/3.1 supports `low`, so this must pass through untouched (no over-eager rejection).
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      supervisor: { tier: 'pro', version: '3.1', thinkingLevel: 'low' },
+    }));
+    const { getNodeProfile } = await import('../../src/agents/nodeProfiles.js');
+    expect(getNodeProfile('supervisor').thinkingLevel).toBe('low');
+  });
+
+  it('allows `default` thinking on any model — it is the universally-safe omit sentinel', async () => {
+    // pro/3.1@default must never be rejected even though `default` is not a discrete API level.
+    vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
+      supervisor: { tier: 'pro', version: '3.1', thinkingLevel: 'default' },
+    }));
+    const { getNodeProfile } = await import('../../src/agents/nodeProfiles.js');
+    expect(getNodeProfile('supervisor').thinkingLevel).toBe('default');
+  });
 });

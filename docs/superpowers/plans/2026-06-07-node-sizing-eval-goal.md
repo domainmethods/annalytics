@@ -182,7 +182,12 @@ Cost (the reason it was deferred): the quality loop is ~63s/entry (Pro SQL gen p
 the 52-table schema). Under two-stage coordinate isolation the pass count is
 `2 calibration + nodes × (models + thinkingLevels − 1) + 1 verification` =
 `2 + 2 × (4 + 5 − 1) + 1` = **19 passes** with the current 4-model registry (was 5 models
-before `pro/3` was dropped). **Treat `node-sweep-smoke.ts`'s printed estimate as
+before `pro/3` was dropped). **Note the `thinkingLevels` term is model-dependent, not a
+constant 5:** Stage 2 walks only the levels the Stage-1 winner actually serves, and
+`gemini-3.1-pro-preview` rejects `minimal` (it walks `low/medium/high/default` = 4, not 5 —
+see `getSupportedThinkingLevels`). So if a Pro model wins Stage 1 for a node, that node costs
+one fewer pass (`4 + 4 − 1` = 7), making **18 passes** the realistic figure for the two Pro
+reasoning nodes rather than 19. **Treat `node-sweep-smoke.ts`'s printed estimate as
 authoritative** — it derives passes from `listGemini3xModels()` and self-updates; the
 earlier "~13h / 16-pass" figure assumed the deleted 6-rung ladder and is stale. Run the
 2-pass smoke first to confirm ε actually shrank under bypass, then the full sweep, and

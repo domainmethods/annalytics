@@ -1,11 +1,19 @@
-import { resolveModelId, type ModelTier } from './modelConfig.js';
+import {
+  resolveModelId,
+  getSupportedThinkingLevels,
+  type ModelTier,
+  type ThinkingLevel,
+} from './modelConfig.js';
 
 export type NodeId =
   | 'clarification' | 'slackIntake' | 'followUpClassifier' | 'dbtStatus'
   | 'metaQuestion' | 'chart' | 'sqlGenerator' | 'supervisor'
   | 'discrepancy' | 'teachingCandidate' | 'summaryOverride';
 
-export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
+// ThinkingLevel now lives in modelConfig (next to the per-model capability map it
+// pairs with). Re-export so the existing importers — node-sweep-types, universal-sweep,
+// the sweep tests — keep their `from './nodeProfiles.js'` import unchanged.
+export type { ThinkingLevel };
 
 export interface NodeProfile {
   tier: ModelTier;
@@ -105,6 +113,11 @@ function loadOverrides(): Partial<Record<NodeId, Partial<NodeProfile>>> {
 }
 
 const warnedBadProfiles = new Set<string>();
+function warnProfileOnce(key: string, message: string): void {
+  if (warnedBadProfiles.has(key)) return;
+  console.warn(message);
+  warnedBadProfiles.add(key);
+}
 
 export function getNodeProfile(id: NodeId): NodeProfile {
   const merged: NodeProfile = { ...DEFAULTS[id], ...loadOverrides()[id] };
@@ -116,15 +129,33 @@ export function getNodeProfile(id: NodeId): NodeProfile {
   // throwing on every request that hits this node.
   try {
     resolveModelId(merged.tier, merged.version);
-    return merged;
   } catch {
-    const key = `${id}:${merged.tier}/${merged.version}`;
-    if (!warnedBadProfiles.has(key)) {
-      console.warn(`NODE_PROFILE_OVERRIDES[${id}] resolves to no Gemini 3.x model (${merged.tier}/${merged.version}); using default`);
-      warnedBadProfiles.add(key);
-    }
+    warnProfileOnce(
+      `${id}:${merged.tier}/${merged.version}`,
+      `NODE_PROFILE_OVERRIDES[${id}] resolves to no Gemini 3.x model (${merged.tier}/${merged.version}); using default`,
+    );
     return { ...DEFAULTS[id] };   // fresh copy — never a shared DEFAULTS reference
   }
+  // The model resolves, but a resolvable model can still REJECT the requested thinking
+  // level — gemini-3.1-pro-preview does not serve `minimal`. isValidPartial only checks
+  // the level is a valid STRING, not that this model accepts it; the gateway would pass
+  // it straight through as a 400. Guard the (model, level) compatibility here, at the
+  // config boundary. The incompatible level is often INHERITED, not chosen: a tier-only
+  // override like {tier:'pro'} merges the default's leftover `minimal` onto a Pro model.
+  // So COERCE the level to `default` (model-managed, universally safe) and KEEP the
+  // explicitly-chosen model — reverting the whole profile would silently undo the user's
+  // model choice, the most surprising outcome. `'default'` itself always passes the check.
+  if (
+    merged.thinkingLevel !== 'default' &&
+    !getSupportedThinkingLevels(merged.tier, merged.version).includes(merged.thinkingLevel)
+  ) {
+    warnProfileOnce(
+      `${id}:${merged.tier}/${merged.version}@${merged.thinkingLevel}`,
+      `NODE_PROFILE_OVERRIDES[${id}] sets thinkingLevel '${merged.thinkingLevel}', which ${merged.tier}/${merged.version} does not support; using model-managed thinking (default)`,
+    );
+    return { ...merged, thinkingLevel: 'default' };   // keep the chosen model; safe thinking
+  }
+  return merged;
 }
 
 export function resolveNodeModel(id: NodeId): string {
