@@ -11,11 +11,13 @@ export function tableFallbackTag(table: string): string {
   return parts[0] ?? 'unclassified';
 }
 
-/** Strip enclosing/embedded backticks and lowercase. `tablesUsed` comes from
+/** Strip backticks and all whitespace, then lowercase. `tablesUsed` comes from
  *  LLM output (untrusted boundary) and BigQuery is case-insensitive, so a raw
- *  `===` compare would miss `Analytics.FCT_Orders` or `` `analytics.fct_orders` ``. */
+ *  `===` compare would miss `Analytics.FCT_Orders`, `` `analytics.fct_orders` ``,
+ *  or a stray-spaced ` analytics.fct_orders `. Whitespace is never valid inside a
+ *  BigQuery identifier, so collapsing it here is safe. */
 function normalizeTable(table: string): string {
-  return table.replace(/`/g, '').toLowerCase();
+  return table.replace(/[`\s]/g, '').toLowerCase();
 }
 
 /**

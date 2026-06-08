@@ -20,11 +20,25 @@ describe('resolveDomain', () => {
     expect(resolveDomain(['`analytics.fct_orders`'], map)).toBe('revenue');
     expect(resolveDomain(['Analytics.FCT_Orders'], map)).toBe('revenue');
   });
+  it('normalizes stray whitespace around untrusted table names', () => {
+    expect(resolveDomain([' analytics.fct_orders '], map)).toBe('revenue');
+    expect(resolveDomain(['`analytics.fct_orders` '], map)).toBe('revenue');
+  });
+  it('returns the single-segment table itself when it is not a card', () => {
+    expect(resolveDomain(['orders'], map)).toBe('orders');
+  });
 });
 
 describe('tableFallbackTag', () => {
   it('uses the dataset segment of a qualified table', () => {
     expect(tableFallbackTag('analytics.fct_orders')).toBe('analytics');
     expect(tableFallbackTag('proj.analytics.fct_orders')).toBe('analytics');
+  });
+  it('returns the token itself for a single-segment name', () => {
+    expect(tableFallbackTag('orders')).toBe('orders');
+  });
+  it('returns unclassified for an empty or degenerate table string', () => {
+    expect(tableFallbackTag('')).toBe('unclassified');
+    expect(tableFallbackTag('..')).toBe('unclassified');
   });
 });
