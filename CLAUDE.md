@@ -158,6 +158,8 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 - Structured output uses `responseJsonSchema` with **JSON Schema objects**, not Zod schemas
 - `responseMimeType: 'application/json'` required alongside `responseJsonSchema`
 - Thread context maps `assistant` role to `'model'` for Gemini API
+- Thinking is **discrete** in Gemini 3.x: `config.thinkingConfig.thinkingLevel` is `'minimal' | 'low' | 'medium' | 'high'` (not a numeric `thinkingBudget`). Omit `thinkingConfig` entirely for model-default thinking.
+- Agents never hardcode a model. Each generation call goes through `generateForNode('<nodeId>', ai, { contents, config })` (`src/agents/modelGateway.ts`), which resolves the model + thinking level from the `nodeProfiles` registry (`src/agents/nodeProfiles.ts`, defaults pinned to Gemini 3.x) and records per-node token/latency telemetry. Runtime overrides come from `NODE_PROFILE_OVERRIDES` / `MODEL_ID_OVERRIDES` (see `.env.example`).
 
 ### Bolt.js
 
