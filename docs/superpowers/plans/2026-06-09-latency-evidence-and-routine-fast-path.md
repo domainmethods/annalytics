@@ -68,7 +68,7 @@ Per-node epsilon
 Cost / latency
 ```
 
-Record, in the task handoff or implementation notes, the actual values printed for `clarification` p95, `sqlGenerator` p95, `supervisor` p95, and `Wall-clock/pass`.
+Record, in the task handoff or implementation notes, the actual values printed for `clarification` p95, `sqlGenerator` p95, `supervisor` p95, and `Wall-clock/pass`. Also record each `Pass N/M ... done in Xs` line and compute a smoke P50/P95 from the pass-duration list. With two passes, call this a smoke proxy: the lower pass duration is the median proxy and the higher pass duration is the P95 proxy.
 
 - [ ] **Step 3: Run the clarification-override smoke**
 
@@ -92,7 +92,7 @@ Per-node epsilon
 Cost / latency
 ```
 
-Record whether clarification p95 improves and whether the LOW clarification rate changes materially. Do not copy corpus rows or secret values into any tracked file.
+Record whether clarification p95 improves, whether the LOW clarification rate changes materially, and the smoke P50/P95 pass-duration proxy from the `Pass N/M ... done in Xs` lines. Do not copy corpus rows or secret values into any tracked file.
 
 - [ ] **Step 4: Decide whether to run SQL-path bypass smoke**
 
@@ -455,9 +455,13 @@ In `src/types.ts`, add these optional fields to `ResponseContext` after `supervi
   fastPathIneligibleReasons?: string[];
 ```
 
+This maps the design's `mode` field to `pipelineMode`; `eligible` is derived from `pipelineMode === 'routine_fast_path'` and an empty `fastPathIneligibleReasons` list. Do not add `nodeUsage` to `ResponseContext`: the design marks it benchmark-only telemetry, and the smoke/benchmark tooling remains the place to report per-node model usage.
+
 - [ ] **Step 4: Implement `src/routineFastPath.ts`**
 
 Create `src/routineFastPath.ts` with these exported types and functions:
+
+Runtime cannot know the corpus's `expectedReferenceIds`; keep that check in benchmark reporting. The runtime equivalent is fail-closed grounding: fall back when generated SQL lacks a `reference_card:*` citation, cites an unknown reference card, drifts from the cited card's canonical table, or references a table outside the retrieved schema.
 
 ```ts
 import type { ClarificationResult, SupervisorVerdict } from './agents/types.js';
@@ -899,6 +903,10 @@ In `runPipeline`, after `negativeExample` is loaded, introduce these variables b
     let supervisorTriggers: string[] = [];
     let fastPathIneligibleReasons: string[] = [];
     let fastPathPreviousAttempt: { sql: string; error: string } | undefined;
+    let fastPathResultKind: 'complete' | 'fallback' | 'ineligible' | 'not_attempted' = 'not_attempted';
+    let fastPathValidationOutcome: { layer: string; valid: boolean; detail?: string; bytesProcessed?: number } | undefined;
+    let fastPathBytesProcessed: number | undefined;
+    let fastPathElapsedMs: number | undefined;
 ```
 
 Then wrap the existing `qualityLoop` call like this:
@@ -906,6 +914,7 @@ Then wrap the existing `qualityLoop` call like this:
 ```ts
     let qualityResult;
     if (config.fastPath?.enabled) {
+      const fastPathStartedAt = Date.now();
       const fastPath = await runRoutineFastPath({
         enabled: config.fastPath.enabled,
         requireSupervisor: config.fastPath.requireSupervisor,
@@ -931,6 +940,8 @@ Then wrap the existing `qualityLoop` call like this:
           : undefined,
         bqml_hint: clarification.bqml_hint,
       });
+      fastPathElapsedMs = Date.now() - fastPathStartedAt;
+      fastPathResultKind = fastPath.kind;
 
       if (fastPath.kind === 'complete') {
         qualityResult = fastPath.quality;
@@ -938,12 +949,36 @@ Then wrap the existing `qualityLoop` call like this:
         supervisorDecision = fastPath.supervisorDecision;
         supervisorTriggers = fastPath.supervisorTriggers;
         fastPathIneligibleReasons = fastPath.ineligibleReasons;
+        const lastValidationLayer = fastPath.quality.validationHistory?.slice(-1)[0];
+        fastPathValidationOutcome = lastValidationLayer
+          ? {
+              layer: lastValidationLayer.layer,
+              valid: lastValidationLayer.valid,
+              detail: lastValidationLayer.detail,
+              bytesProcessed: lastValidationLayer.bytesProcessed,
+            }
+          : undefined;
+        fastPathBytesProcessed = fastPath.quality.bytesProcessed;
       } else {
         fastPathIneligibleReasons = fastPath.kind === 'ineligible'
           ? fastPath.ineligibleReasons
           : fastPath.reasons;
         fastPathPreviousAttempt = fastPath.kind === 'fallback' ? fastPath.previousAttempt : undefined;
+        fastPathBytesProcessed = fastPath.kind === 'fallback' ? fastPath.bytesProcessed : undefined;
       }
+
+      logger.info({
+        traceId,
+        selectedPath: pipelineMode,
+        fastPathResult: fastPathResultKind,
+        eligible: pipelineMode === 'routine_fast_path',
+        ineligibleReasons: fastPathIneligibleReasons,
+        supervisorDecision,
+        supervisorTriggers,
+        validationOutcome: fastPathValidationOutcome,
+        bytesProcessed: fastPathBytesProcessed,
+        durationMs: fastPathElapsedMs,
+      }, 'pipeline.fast_path_decision');
     }
 
     if (!qualityResult) {
@@ -1039,12 +1074,14 @@ In `tests/scripts/benchmarkAcceptance.test.ts`, add:
         pipelineMode: 'routine_fast_path',
         supervisorDecision: 'skipped',
         supervisorTriggers: [],
+        fastPathIneligibleReasons: [],
       }),
     ]));
 
     const report = formatReferenceCardAcceptanceReport(acceptance);
 
-    expect(report).toContain('| Fast Path | routine_fast_path | skipped |');
+    expect(report).toContain('| routine_fast_path | 1 | skipped |');
+    expect(report).toContain('Ineligible reasons: none');
   });
 ```
 
@@ -1066,6 +1103,7 @@ In `scripts/benchmark-types.ts`, add to `BenchmarkResult` after `qualityVerdict`
   pipelineMode?: 'full_quality_loop' | 'routine_fast_path';
   supervisorDecision?: 'skipped' | 'required';
   supervisorTriggers?: string[];
+  fastPathIneligibleReasons?: string[];
 ```
 
 - [ ] **Step 4: Populate full-loop defaults in `scripts/benchmark.ts`**
@@ -1076,9 +1114,10 @@ In every `BenchmarkResult` object literal in `scripts/benchmark.ts`, add:
           pipelineMode: 'full_quality_loop',
           supervisorDecision: 'required',
           supervisorTriggers: ['benchmark_quality_loop'],
+          fastPathIneligibleReasons: ['benchmark_quality_loop'],
 ```
 
-Use the same three fields for LOW-clarification skipped results and error results so the JSON shape is consistent.
+Use the same four fields for LOW-clarification skipped results and error results so the JSON shape is consistent.
 
 - [ ] **Step 5: Render fields defensively in acceptance report**
 
@@ -1089,8 +1128,10 @@ In `scripts/benchmarkAcceptance.ts`, after the Run Provenance table and before C
     .map(item => ({
       mode: item.pipelineMode ?? 'full_quality_loop',
       decision: item.supervisorDecision ?? 'required',
+      reasons: item.fastPathIneligibleReasons ?? [],
     }));
   const modeSummary = summarizeFastPath(fastPathRows);
+  const reasonSummary = summarizeReasonCounts(fastPathRows.flatMap(row => row.reasons));
   lines.push('## Fast Path');
   lines.push('');
   lines.push('| Mode | Count | Supervisor Decision |');
@@ -1098,6 +1139,8 @@ In `scripts/benchmarkAcceptance.ts`, after the Run Provenance table and before C
   for (const row of modeSummary) {
     lines.push(`| ${row.mode} | ${row.count} | ${row.supervisorDecision} |`);
   }
+  lines.push('');
+  lines.push(`Ineligible reasons: ${formatReasonSummary(reasonSummary)}`);
   lines.push('');
 ```
 
@@ -1107,6 +1150,7 @@ Add fields to `ReferenceCardCaseAcceptance`:
   pipelineMode?: BenchmarkResult['pipelineMode'];
   supervisorDecision?: BenchmarkResult['supervisorDecision'];
   supervisorTriggers?: string[];
+  fastPathIneligibleReasons?: string[];
 ```
 
 Set them in `evaluateCase` from the source `BenchmarkResult`.
@@ -1114,7 +1158,7 @@ Set them in `evaluateCase` from the source `BenchmarkResult`.
 Add helper:
 
 ```ts
-function summarizeFastPath(rows: Array<{ mode: string; decision: string }>): Array<{ mode: string; count: number; supervisorDecision: string }> {
+function summarizeFastPath(rows: Array<{ mode: string; decision: string; reasons: string[] }>): Array<{ mode: string; count: number; supervisorDecision: string }> {
   const counts = new Map<string, { mode: string; count: number; supervisorDecision: string }>();
   for (const row of rows) {
     const key = `${row.mode}:${row.decision}`;
@@ -1123,6 +1167,19 @@ function summarizeFastPath(rows: Array<{ mode: string; decision: string }>): Arr
     counts.set(key, existing);
   }
   return [...counts.values()].sort((a, b) => a.mode.localeCompare(b.mode) || a.supervisorDecision.localeCompare(b.supervisorDecision));
+}
+
+function summarizeReasonCounts(reasons: string[]): Array<{ reason: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+function formatReasonSummary(rows: Array<{ reason: string; count: number }>): string {
+  if (rows.length === 0) return 'none';
+  return rows.map(row => `${row.reason} (${row.count})`).join(', ');
 }
 ```
 
