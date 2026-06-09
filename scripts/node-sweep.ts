@@ -661,12 +661,21 @@ export interface RealCorpusDeps {
    * metric stays measurable — only its skip decision is ignored.
    */
   bypassClarification?: boolean;
+  /** Optional CLI progress hook. Do not use for scoring logic. */
+  onEntryProgress?: (event: {
+    type: 'start' | 'done' | 'error';
+    index: number;
+    total: number;
+    id: string;
+    durationMs?: number;
+    error?: string;
+  }) => void;
 }
 
 export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusRunResult> {
   const {
     ai, apiKey, corpus, tables, knowledgeSummaries,
-    knownBenchmarkTables, judgeModel, fileSearchStoreId,
+    knownBenchmarkTables, judgeModel, fileSearchStoreId, onEntryProgress,
   } = deps;
   const maxBytes = deps.maxBytes ?? MAX_BYTES;
   const bypassClarification = deps.bypassClarification ?? false;
@@ -687,7 +696,9 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
     };
 
     await withUsageSink(sink, async () => {
-      for (const entry of corpus) {
+      for (const [index, entry] of corpus.entries()) {
+        const entryStartedAt = Date.now();
+        onEntryProgress?.({ type: 'start', index: index + 1, total: corpus.length, id: entry.id });
         let result: BenchmarkResult;
         try {
           const clarification = await classifyQuestion(entry.question, [], knowledgeSummaries, apiKey);
@@ -767,7 +778,22 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
             sqlGenMetric,
             overallScore,
           });
+          onEntryProgress?.({
+            type: 'done',
+            index: index + 1,
+            total: corpus.length,
+            id: entry.id,
+            durationMs: Date.now() - entryStartedAt,
+          });
         } catch (err) {
+          onEntryProgress?.({
+            type: 'error',
+            index: index + 1,
+            total: corpus.length,
+            id: entry.id,
+            durationMs: Date.now() - entryStartedAt,
+            error: (err as Error).message,
+          });
           // Do NOT zero-fill. A genuine measurement outcome (wrong table, bad SQL
           // shape, low-confidence clarification) is *scored* above, never thrown —
           // so any exception reaching here is an exceptional failure: a transient

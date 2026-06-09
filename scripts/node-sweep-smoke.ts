@@ -104,6 +104,21 @@ function nodeMetricMean(nodeId: NodeId, perEntry: PerEntry[]): number {
   return mean(perEntry.map(e => perEntryNodeMetric(nodeId, e)));
 }
 
+function normalizeTableRef(value: string | undefined): string {
+  return (value ?? '').replace(/`/g, '').trim().toLowerCase();
+}
+
+function sameTableRef(left: string, right: string): boolean {
+  const l = normalizeTableRef(left);
+  const r = normalizeTableRef(right);
+  return l === r || l.endsWith(`.${r}`) || r.endsWith(`.${l}`);
+}
+
+function formatKnowledgeId(summary: KnowledgeSummary): string {
+  const kind = summary.kind ?? 'knowledge';
+  return summary.id ? `${kind}:${summary.id}` : `${kind}:${summary.term}`;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.envFile) process.loadEnvFile(args.envFile);
@@ -165,6 +180,20 @@ async function main() {
     ...tables.map(t => t.name),
     ...corpus.flatMap(e => e.expectedTables ?? []),
   ])];
+  const knowledgeTableMismatches = knowledgeSummaries
+    .filter(summary => summary.canonical_table)
+    .filter(summary => !knownBenchmarkTables.some(table => sameTableRef(table, summary.canonical_table)));
+  if (knowledgeTableMismatches.length > 0) {
+    const examples = knowledgeTableMismatches
+      .slice(0, 3)
+      .map(summary => `${formatKnowledgeId(summary)} -> ${summary.canonical_table}`)
+      .join('; ');
+    console.warn(
+      `Warning: ${knowledgeTableMismatches.length} local knowledge summaries reference tables absent from the loaded dbt/corpus table set. `
+      + 'This can steer SQL generation toward dry-run failures and long retry loops. '
+      + `Examples: ${examples}`,
+    );
+  }
 
   if (args.bypassClarification) {
     console.log('⚠ Clarification gate BYPASSED: every entry runs the quality loop (SQL-path node sizing mode).');
@@ -174,6 +203,18 @@ async function main() {
     ai, apiKey, corpus, tables, knowledgeSummaries, knownBenchmarkTables,
     judgeModel, fileSearchStoreId, maxBytes: MAX_BYTES,
     bypassClarification: args.bypassClarification,
+    onEntryProgress: (event) => {
+      if (event.type === 'start') {
+        process.stdout.write(`\n  [${event.index}/${event.total}] ${event.id}... `);
+        return;
+      }
+      const seconds = ((event.durationMs ?? 0) / 1000).toFixed(1);
+      if (event.type === 'done') {
+        console.log(`done in ${seconds}s`);
+      } else {
+        console.log(`failed in ${seconds}s: ${event.error ?? 'unknown error'}`);
+      }
+    },
   });
 
   // ── Run N baseline passes ────────────────────────────────────────────────────

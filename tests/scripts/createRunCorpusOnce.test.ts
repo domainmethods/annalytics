@@ -141,3 +141,33 @@ describe('createRunCorpusOnce sqlGenMetric null-handling', () => {
     expect(res.perEntry[0].sqlGenMetric).toBeCloseTo(0.8, 6);
   });
 });
+
+describe('createRunCorpusOnce progress hook', () => {
+  it('emits start and done events for each corpus entry without affecting scoring', async () => {
+    vi.mocked(classifyQuestion).mockResolvedValue(clar('high'));
+    vi.mocked(qualityLoop).mockResolvedValue(goodQuality as never);
+    vi.mocked(judgeSingleResult).mockResolvedValue(goodJudge as never);
+    const events: Array<{ type: string; index: number; total: number; id: string; durationMs?: number }> = [];
+
+    const res = await createRunCorpusOnce({
+      ...baseDeps(),
+      onEntryProgress: event => events.push(event),
+    })();
+
+    expect(res.perEntry[0].overallScore).toBe(5);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual(expect.objectContaining({
+      type: 'start',
+      index: 1,
+      total: 1,
+      id: 'e1',
+    }));
+    expect(events[1]).toEqual(expect.objectContaining({
+      type: 'done',
+      index: 1,
+      total: 1,
+      id: 'e1',
+    }));
+    expect(events[1].durationMs).toEqual(expect.any(Number));
+  });
+});
