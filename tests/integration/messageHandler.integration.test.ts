@@ -122,6 +122,7 @@ const config = {
 
 const tables: TableContext[] = [];
 const getTables = () => tables;
+const STATUS_TEXT = 'Got it. Let me get things ready...';
 
 function intakeResponse(route: 'immediate_response' | 'analytics_pipeline', responseText: string | null) {
   return { text: JSON.stringify({ route, responseText, reasoning: 'test' }) };
@@ -190,10 +191,10 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       getTables,
     });
 
-    // Exactly one post — the deterministic intake reply — and never "Interpreting…"
+    // Exactly one post — the deterministic intake reply — and never the status placeholder.
     expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(statusPosts()[0]).toMatch(/data/i);
-    expect(statusPosts()).not.toContain('Interpreting your question...');
+    expect(statusPosts()).not.toContain(STATUS_TEXT);
     expect(mockGenerateContent).not.toHaveBeenCalled();
     expect(mockRunPipeline).not.toHaveBeenCalled();
 
@@ -213,7 +214,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       getTables,
     });
 
-    expect(statusPosts()).toContain('Interpreting your question...');
+    expect(statusPosts()).toContain(STATUS_TEXT);
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
     expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
       question: 'show leads last month by channel',
@@ -236,7 +237,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       getTables,
     });
 
-    expect(statusPosts()).toContain('Interpreting your question...');
+    expect(statusPosts()).toContain(STATUS_TEXT);
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
   });
 
@@ -257,7 +258,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     await deliver(); // Slack retry of the identical event
 
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-    expect(statusPosts().filter(t => t === 'Interpreting your question...')).toHaveLength(1);
+    expect(statusPosts().filter(t => t === STATUS_TEXT)).toHaveLength(1);
   });
 
   // ── Slack retries can arrive concurrently before the first acks ──
@@ -276,7 +277,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     await Promise.all([deliver(), deliver()]); // both in flight at once
 
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-    expect(statusPosts().filter(t => t === 'Interpreting your question...')).toHaveLength(1);
+    expect(statusPosts().filter(t => t === STATUS_TEXT)).toHaveLength(1);
   });
 
   // ── Rate limit blocks the pipeline with a user-visible message ──
@@ -334,7 +335,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       statusMsgTs: '1700000000.000800',
     });
     // No new status message — it resumes on the existing clarifying message.
-    expect(statusPosts()).not.toContain('Interpreting your question...');
+    expect(statusPosts()).not.toContain(STATUS_TEXT);
   });
 
   // ── Bug #4 (RED→GREEN): a pending clarification must never silently drop ──

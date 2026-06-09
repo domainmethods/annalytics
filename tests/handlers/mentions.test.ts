@@ -50,7 +50,7 @@ vi.mock('../../src/handlers/preflightChecks.js', () => ({
 
 import { registerMentions } from '../../src/handlers/mentions.js';
 
-const STATUS_TEXT = 'Interpreting your question...';
+const STATUS_TEXT = 'Got it. Let me get things ready...';
 
 function captureMentionHandler() {
   let handler: any;

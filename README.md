@@ -37,11 +37,13 @@ The bot has two knowledge sources:
 
 This repository is a template. The included ReferenceCards and benchmark corpus are starter examples, not a prescription for every implementation. Replace them with one narrow implementation-specific domain before syncing File Search or recording an acceptance decision.
 
-Run validation before syncing or deploying:
+Run strict validation before syncing File Search, recording acceptance evidence, or treating an implementation schema as aligned:
 
 ```bash
 npm run knowledge:validate
 ```
+
+`npm run setup:check` is a local preflight and may warn, rather than fail, when starter/template ReferenceCards or teachings do not match the current local dbt artifacts. Those warnings are acceptable for template setup, but not for implementation knowledge sync.
 
 Manual File Search sync uses the full knowledge pipeline:
 
@@ -204,7 +206,7 @@ dbt compile && dbt docs generate
 cp target/manifest.json target/catalog.json /path/to/annalytics/dbt/
 ```
 
-The implementation dbt artifacts must align with `references/` and `benchmarks/corpus.json`. If ReferenceCards mention tables absent from the copied dbt artifacts, `npm run knowledge:validate` fails. The template gitignores `dbt/manifest.json` and `dbt/catalog.json` so client schema is not accidentally committed here; implementation repositories can choose their own artifact delivery model.
+The implementation dbt artifacts must align with `references/`, optional `teachings/`, and `benchmarks/corpus.json` before File Search sync or acceptance runs. If knowledge YAML mentions tables absent from the copied dbt artifacts, `npm run knowledge:validate` fails. `npm run setup:check` reports the same mismatch as a warning so template users can still verify local wiring when starter examples and local artifacts are intentionally out of sync. The template gitignores `dbt/manifest.json` and `dbt/catalog.json` so client schema is not accidentally committed here; implementation repositories can choose their own artifact delivery model.
 
 Run the local setup preflight without printing secret values:
 
@@ -402,7 +404,7 @@ The bot reads dbt metadata from files baked into the container image. To update 
 1. Regenerate dbt artifacts with `dbt compile && dbt docs generate`.
 2. Copy `target/manifest.json` and `target/catalog.json` to `dbt/`.
 3. Run `npm run knowledge:validate`.
-4. Run `npm run setup:check`.
+4. Run `npm run setup:check`; treat table-reference warnings as acceptable only for template/example setup, not for implementation readiness.
 5. Commit and push the implementation-specific changes only in the implementation repo or branch where committing those artifacts is intentional.
 
 The `/refresh-metadata` endpoint exists as a placeholder for future live reload support.

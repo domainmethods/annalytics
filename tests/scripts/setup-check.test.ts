@@ -20,6 +20,7 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
   await mkdir(join(root, 'docs'), { recursive: true });
   await mkdir(join(root, 'infra'), { recursive: true });
   await mkdir(join(root, 'references'), { recursive: true });
+  await mkdir(join(root, 'teachings'), { recursive: true });
   await mkdir(join(root, 'dbt'), { recursive: true });
 
   const files: Record<string, string> = {
@@ -167,7 +168,7 @@ describe('runSetupCheck', () => {
     ).toBe(false);
   });
 
-  it('reports ReferenceCard table mismatches when dbt artifacts are present', async () => {
+  it('warns about ReferenceCard table mismatches when dbt artifacts are present', async () => {
     const root = await createRepoFixture({
       'references/revenue.yml': [
         'reference_cards:',
@@ -208,9 +209,117 @@ describe('runSetupCheck', () => {
 
     const result = await runSetupCheck({ rootDir: root, env: {} });
 
+    expect(result.errors).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(result.findings).toContainEqual({
+      status: 'warn',
+      message: 'Knowledge validation warning: Reference card revenue-canonical-definition references unknown canonical table: analytics.fct_orders (strict knowledge:validate will still fail before sync)',
+    });
+  });
+
+  it('warns about teaching table mismatches when dbt artifacts are present', async () => {
+    const root = await createRepoFixture({
+      'teachings/revenue.yml': [
+        'teachings:',
+        '  - id: revenue-monthly',
+        '    question_patterns: [monthly revenue]',
+        '    sanctioned_sql: null',
+        '    reasoning: Use completed orders.',
+        '    models_referenced: [analytics.fct_orders]',
+        '    tags: [revenue]',
+        '    author: finance',
+        '    updated: "2026-06-04"',
+      ].join('\n'),
+      'dbt/manifest.json': JSON.stringify({
+        nodes: {
+          'model.analytics.fct_revenue': {
+            resource_type: 'model',
+            name: 'fct_revenue',
+            schema: 'analytics',
+            columns: {
+              revenue: { name: 'revenue' },
+            },
+          },
+        },
+      }),
+      'dbt/catalog.json': JSON.stringify({
+        nodes: {
+          'model.analytics.fct_revenue': {
+            columns: {
+              REVENUE: { type: 'FLOAT64', index: 0 },
+            },
+          },
+        },
+      }),
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(result.findings).toContainEqual({
+      status: 'warn',
+      message: 'Knowledge validation warning: Teaching revenue-monthly references unknown model/table: analytics.fct_orders (strict knowledge:validate will still fail before sync)',
+    });
+  });
+
+  it('keeps non-table knowledge validation failures as errors', async () => {
+    const root = await createRepoFixture({
+      'teachings/revenue.yml': [
+        'teachings:',
+        '  - id: revenue-monthly',
+        '    question_patterns: [monthly revenue]',
+        '    sanctioned_sql: null',
+        '    reasoning: Use completed orders.',
+        '    models_referenced: [analytics.fct_orders]',
+        '    tags: [revenue]',
+        '    author: finance',
+        '    updated: "2026-06-04"',
+      ].join('\n'),
+      'references/revenue.yml': [
+        'reference_cards:',
+        '  - id: revenue-canonical-definition',
+        '    title: Canonical Revenue Definition',
+        '    domain: revenue',
+        '    grain: order',
+        '    canonical_table: analytics.fct_orders',
+        '    canonical_metric: total_amount',
+        '    aliases: [revenue]',
+        '    routing_triggers: [total revenue]',
+        '    owner: finance-analytics',
+        '    freshness_sla: daily',
+        '    related_teachings: [missing-teaching]',
+        '    updated: "2026-06-04"',
+      ].join('\n'),
+      'dbt/manifest.json': JSON.stringify({
+        nodes: {
+          'model.analytics.fct_orders': {
+            resource_type: 'model',
+            name: 'fct_orders',
+            schema: 'analytics',
+            columns: {
+              total_amount: { name: 'total_amount' },
+            },
+          },
+        },
+      }),
+      'dbt/catalog.json': JSON.stringify({
+        nodes: {
+          'model.analytics.fct_orders': {
+            columns: {
+              TOTAL_AMOUNT: { type: 'FLOAT64', index: 0 },
+            },
+          },
+        },
+      }),
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.ok).toBe(false);
     expect(result.findings).toContainEqual({
       status: 'error',
-      message: 'Knowledge validation failed: Reference card revenue-canonical-definition references unknown canonical table: analytics.fct_orders',
+      message: 'Knowledge validation failed: Reference card revenue-canonical-definition references unknown related teaching: missing-teaching',
     });
   });
 

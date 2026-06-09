@@ -133,8 +133,26 @@ async function checkKnowledgeValidation(
   }
 
   for (const error of errors) {
-    add('error', `Knowledge validation failed: ${error}`);
+    add(setupStatusForKnowledgeError(error), setupMessageForKnowledgeError(error));
   }
+}
+
+function setupStatusForKnowledgeError(error: string): SetupCheckStatus {
+  return isDbtKnowledgeReferenceMismatch(error) ? 'warn' : 'error';
+}
+
+function setupMessageForKnowledgeError(error: string): string {
+  if (setupStatusForKnowledgeError(error) === 'warn') {
+    return `Knowledge validation warning: ${error} (strict knowledge:validate will still fail before sync)`;
+  }
+  return `Knowledge validation failed: ${error}`;
+}
+
+function isDbtKnowledgeReferenceMismatch(error: string): boolean {
+  return (
+    /^Reference card .+ references unknown (canonical|avoid) table: /.test(error) ||
+    /^Teaching .+ references unknown model\/table: /.test(error)
+  );
 }
 
 async function checkModelDocs(

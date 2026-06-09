@@ -128,6 +128,93 @@ reference_cards:
     await expect(validateKnowledgeForSync(root)).resolves.toEqual([]);
   });
 
+  it('keeps ReferenceCard table mismatches strict for sync validation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-'));
+    await mkdir(join(root, 'references'), { recursive: true });
+    await mkdir(join(root, 'dbt'), { recursive: true });
+    await writeFile(join(root, 'references', 'revenue.yml'), `
+reference_cards:
+  - id: revenue-canonical-definition
+    title: Canonical Revenue Definition
+    domain: revenue
+    grain: order
+    canonical_table: analytics.fct_orders
+    canonical_metric: total_amount
+    aliases: [revenue]
+    routing_triggers: [total revenue]
+    owner: finance-analytics
+    freshness_sla: daily
+    updated: "2026-06-04"
+`);
+    await writeFile(join(root, 'dbt', 'manifest.json'), JSON.stringify({
+      nodes: {
+        'model.analytics.fct_revenue': {
+          resource_type: 'model',
+          name: 'fct_revenue',
+          schema: 'analytics',
+          columns: {
+            revenue: { name: 'revenue' },
+          },
+        },
+      },
+    }));
+    await writeFile(join(root, 'dbt', 'catalog.json'), JSON.stringify({
+      nodes: {
+        'model.analytics.fct_revenue': {
+          columns: {
+            REVENUE: { type: 'FLOAT64', index: 0 },
+          },
+        },
+      },
+    }));
+
+    await expect(validateKnowledgeForSync(root)).resolves.toContain(
+      'Reference card revenue-canonical-definition references unknown canonical table: analytics.fct_orders',
+    );
+  });
+
+  it('keeps teaching table mismatches strict for sync validation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-'));
+    await mkdir(join(root, 'teachings'), { recursive: true });
+    await mkdir(join(root, 'dbt'), { recursive: true });
+    await writeFile(join(root, 'teachings', 'revenue.yml'), `
+teachings:
+  - id: revenue-monthly
+    question_patterns: [monthly revenue]
+    sanctioned_sql: null
+    reasoning: Use completed orders.
+    models_referenced: [analytics.fct_orders]
+    tags: [revenue]
+    author: finance
+    updated: "2026-06-04"
+`);
+    await writeFile(join(root, 'dbt', 'manifest.json'), JSON.stringify({
+      nodes: {
+        'model.analytics.fct_revenue': {
+          resource_type: 'model',
+          name: 'fct_revenue',
+          schema: 'analytics',
+          columns: {
+            revenue: { name: 'revenue' },
+          },
+        },
+      },
+    }));
+    await writeFile(join(root, 'dbt', 'catalog.json'), JSON.stringify({
+      nodes: {
+        'model.analytics.fct_revenue': {
+          columns: {
+            REVENUE: { type: 'FLOAT64', index: 0 },
+          },
+        },
+      },
+    }));
+
+    await expect(validateKnowledgeForSync(root)).resolves.toContain(
+      'Teaching revenue-monthly references unknown model/table: analytics.fct_orders',
+    );
+  });
+
   it('does not hard-code the allowed reference-card domain for template implementations', async () => {
     const root = await mkdtemp(join(tmpdir(), 'annalytics-knowledge-'));
     await mkdir(join(root, 'references'), { recursive: true });

@@ -102,7 +102,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
   try {
     // Stage 1: Clarification
-    await updateStatus('Interpreting your question...');
+    await updateStatus('Thinking about if I need clarification...');
     let teachingSummaries: Awaited<ReturnType<typeof getTeachingSummaries>> = [];
     try {
       teachingSummaries = await getTeachingSummaries();

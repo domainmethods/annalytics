@@ -260,9 +260,9 @@ describe('runPipeline', () => {
     await runPipeline(baseInput);
 
     const updateCalls = mockClient.chat.update.mock.calls.map(c => c[0].text);
-    // Opens on the interpretation phase and progresses to data retrieval —
+    // Opens on the clarification decision phase and progresses to data retrieval —
     // proving status advances across stages, not just the first one.
-    expect(updateCalls.some((t: string) => t?.includes('Interpreting your question'))).toBe(true);
+    expect(updateCalls.some((t: string) => t?.includes('Thinking about if I need clarification'))).toBe(true);
     expect(updateCalls.some((t: string) => t?.includes('Retrieving the data'))).toBe(true);
   });
 

@@ -36,7 +36,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
     const statusMsg = await client.chat.postMessage({
       channel: command.channel_id,
-      text: 'Interpreting your question...',
+      text: 'Got it. Let me get things ready...',
     });
 
     const threadTs = statusMsg.ts!;
@@ -45,7 +45,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
     try {
       // Preflight: lock + clarification + escalation guards. preflightChecks
       // posts its own threaded note explaining the block; update the placeholder
-      // so it isn't left frozen on "Interpreting your question...".
+      // so it isn't left frozen on the placeholder.
       const passed = await preflightChecks(command.channel_id, threadTs, client);
       if (!passed) {
         await client.chat.update({
