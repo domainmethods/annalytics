@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock all domain modules
 vi.mock('../src/agents/clarificationAgent.js');
+vi.mock('../src/agents/ambiguityClassifier.js');
 vi.mock('../src/qualityLoop.js');
 vi.mock('../src/agents/confidence.js');
 vi.mock('../src/execution/runner.js');
@@ -25,6 +26,7 @@ vi.mock('../src/logging.js', () => ({
 
 import { runPipeline, buildResponseBlocks } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
+import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
 import { reconcileConfidence } from '../src/agents/confidence.js';
 import { executeQuery } from '../src/execution/runner.js';
@@ -43,6 +45,7 @@ import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlo
 import type { QualityResult } from '../src/qualityLoop.js';
 
 const mockClassify = vi.mocked(classifyQuestion);
+const mockClassifyAmbiguity = vi.mocked(classifyAmbiguity);
 const mockQualityLoop = vi.mocked(qualityLoop);
 const mockReconcile = vi.mocked(reconcileConfidence);
 const mockExecute = vi.mocked(executeQuery);
@@ -120,6 +123,12 @@ function setupHappyPath() {
   mockGetSampleRows.mockResolvedValue(null);
   mockGetNegative.mockResolvedValue(null);
   mockClassify.mockResolvedValue(highClarification);
+  mockClassifyAmbiguity.mockResolvedValue({
+    type: 'user_intent',
+    question: 'Which time period?',
+    domain: 'revenue',
+    reasoning: 'User must choose the request scope.',
+  });
   mockQualityLoop.mockResolvedValue(baseQualityResult);
   mockReconcile.mockReturnValue('high');
   mockExecute.mockResolvedValue({
@@ -179,13 +188,26 @@ describe('runPipeline', () => {
       ...highClarification,
       confidence: 'low',
       clarifying_questions: ['Which time period?', 'Which product line?'],
+      ambiguities: ['time period unclear', 'product scope unclear'],
     });
 
     await runPipeline(baseInput);
 
+    expect(mockClassifyAmbiguity).toHaveBeenCalledWith(
+      {
+        question: 'What is total revenue?',
+        ambiguities: ['time period unclear', 'product scope unclear'],
+        clarifyingQuestions: ['Which time period?', 'Which product line?'],
+        threadContext: [],
+      },
+      'key',
+    );
     expect(mockQualityLoop).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
-    expect(mockSaveClarification).toHaveBeenCalledTimes(1);
+    expect(mockSaveClarification).toHaveBeenCalledWith(expect.objectContaining({
+      ambiguityType: 'user_intent',
+      ambiguityDomain: 'revenue',
+    }));
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 

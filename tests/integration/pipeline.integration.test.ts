@@ -381,18 +381,28 @@ describe('Pipeline — Integration', () => {
   });
 
   it('LOW confidence: suspends pipeline, posts clarification questions', async () => {
-    mockGenerateContent.mockResolvedValueOnce(
-      clarificationResponse({
-        confidence: 'low',
-        clarifying_questions: ['Which time period?', 'Which product line?'],
-        ambiguities: ['Time period unclear', 'Product scope unclear'],
-      }),
-    );
+    mockGenerateContent
+      .mockResolvedValueOnce(
+        clarificationResponse({
+          confidence: 'low',
+          clarifying_questions: ['Which time period?', 'Which product line?'],
+          ambiguities: ['Time period unclear', 'Product scope unclear'],
+        }),
+      )
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          type: 'user_intent',
+          question: 'Which time period?',
+          domain: 'revenue',
+          reasoning: 'The requester must choose the scope.',
+        }),
+      });
 
     await runPipeline(makeInput());
 
-    // Only 1 Gemini call (clarification — no SQL gen or supervisor)
-    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+    // Two Gemini calls: clarification, then label-only ambiguity classification.
+    // No SQL generation or supervisor call runs while the pipeline is suspended.
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
     // No BigQuery calls
     expect(mockCreateQueryJob).not.toHaveBeenCalled();
 
@@ -408,6 +418,9 @@ describe('Pipeline — Integration', () => {
       'Time period unclear',
       'Product scope unclear',
     ]);
+    expect(savedState.ambiguityType).toBe('user_intent');
+    expect(savedState.ambiguityDomain).toBe('revenue');
+    expect(savedState.ambiguityQuestion).toBe('Which time period?');
 
     // Slack was updated with clarification blocks
     const updateCalls = mockClient.chat.update.mock.calls;

@@ -5,6 +5,7 @@ const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachin
 // MEASURED classifier nodes — the judge-free floor-up sweep found them perfect at
 // every rung, so the cheapest model (flash-lite/3.1) is the right-sized default.
 const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier'] as const;
+const PROVISIONAL_CLASSIFIER_LITE_NODES = ['ambiguityClassifier'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
@@ -20,6 +21,14 @@ describe('nodeProfiles', () => {
     for (const n of CLASSIFIER_LITE_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-flash-lite');
   });
 
+  it('defaults the un-sized ambiguity classifier to gemini-3.1-flash-lite provisionally', async () => {
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    for (const n of PROVISIONAL_CLASSIFIER_LITE_NODES) {
+      expect(resolveNodeModel(n)).toBe('gemini-3.1-flash-lite');
+      expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
+    }
+  });
+
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
     const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     for (const n of PRO_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-pro-preview');
@@ -28,7 +37,7 @@ describe('nodeProfiles', () => {
   it('assigns provisional role-based thinking levels (minimal/low for flash, default for pro)', async () => {
     const { getNodeProfile } = await import('../../src/agents/nodeProfiles.js');
     // minimal — closed-set routing / structured selection / reformatting
-    for (const n of ['slackIntake', 'followUpClassifier', 'dbtStatus', 'chart', 'summaryOverride'] as const) {
+    for (const n of ['slackIntake', 'followUpClassifier', 'ambiguityClassifier', 'dbtStatus', 'chart', 'summaryOverride'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
     // low — light open judgment over provided context

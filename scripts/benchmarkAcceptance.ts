@@ -1,4 +1,8 @@
 import type { BenchmarkMetadata, BenchmarkResult, BenchmarkRun } from './benchmark-types.js';
+import {
+  evaluateBenchmarkCalibration,
+  type BenchmarkCalibrationResult,
+} from './benchmark-calibration.js';
 import { formatValidationTrace } from './benchmarkSupport.js';
 
 const FAILED_VALIDATION_RESULTS: BenchmarkResult['validationResults'] = {
@@ -55,6 +59,7 @@ export interface ReferenceCardAcceptanceResult {
   runDate: string;
   decision: ReferenceCardDecision;
   metadata: BenchmarkMetadata | null;
+  calibration: BenchmarkCalibrationResult;
   metadataFailures: string[];
   cases: ReferenceCardCaseAcceptance[];
   failures: ReferenceCardAcceptanceFailure[];
@@ -95,6 +100,7 @@ export function evaluateReferenceCardAcceptance(
     runDate: run.runDate,
     decision: failures.length === 0 ? 'ACCEPTED' : 'NEEDS_REVISION',
     metadata,
+    calibration: evaluateBenchmarkCalibration(run),
     metadataFailures,
     cases,
     failures,
@@ -155,6 +161,28 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
   lines.push(`| Judge Model | ${escapeMarkdown(result.metadata?.judgeModel ?? '(missing)')} |`);
   lines.push(`| GCP Project | ${escapeMarkdown(result.metadata?.gcpProjectId ?? '(missing)')} |`);
   lines.push('');
+
+  lines.push('## Calibration');
+  lines.push('');
+  lines.push(`**Verdict:** \`${result.calibration.verdict.passed ? 'PASS' : 'FAIL'}\``);
+  lines.push('');
+  lines.push(`Reason: ${escapeMarkdown(result.calibration.verdict.detail)}`);
+  lines.push('');
+  lines.push(`Wrong rule: \`flaggedForReview || correctness < ${result.calibration.verdict.correctnessWrongThreshold}\``);
+  lines.push('');
+  lines.push(`Monotonic rule: \`low >= medium >= high\`, min sample \`${result.calibration.verdict.minSample}\`, low-high delta \`${result.calibration.verdict.minLowHighWrongRateDelta}\`.`);
+  lines.push('');
+  if (result.calibration.buckets.length === 0) {
+    lines.push('No judge-backed confidence buckets available.');
+    lines.push('');
+  } else {
+    lines.push('| Confidence | Total | Wrong | Wrong Rate | Below Sample |');
+    lines.push('|------------|-------|-------|------------|--------------|');
+    for (const bucket of result.calibration.buckets) {
+      lines.push(`| ${bucket.confidence} | ${bucket.total} | ${bucket.wrong} | ${formatPercent(bucket.wrongRate)} | ${bucket.belowSample ? 'yes' : 'no'} |`);
+    }
+    lines.push('');
+  }
 
   lines.push('## ReferenceCard Scorecard');
   lines.push('');
@@ -390,4 +418,8 @@ function blockingValidationLabel(validation: BenchmarkResult['validationResults'
 
 function escapeMarkdown(value: string): string {
   return value.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
 }

@@ -5,7 +5,12 @@ import {
   formatReferenceCardAcceptanceReport,
   isReferenceCardAcceptanceCase,
 } from '../../scripts/benchmarkAcceptance.js';
-import type { BenchmarkMetadata, BenchmarkResult, BenchmarkRun } from '../../scripts/benchmark-types.js';
+import type {
+  BenchmarkMetadata,
+  BenchmarkResult,
+  BenchmarkRun,
+  JudgeResult,
+} from '../../scripts/benchmark-types.js';
 
 const metadata: BenchmarkMetadata = {
   runId: 'benchmark_2026-06-04T10-00-00-000Z',
@@ -70,6 +75,26 @@ function run(results: BenchmarkResult[], runMetadata: BenchmarkMetadata | undefi
     corpusSize: results.length,
     results,
     judgeResults: [],
+  };
+}
+
+function judge(
+  corpusId: string,
+  correctness: number,
+  flaggedForReview = false,
+): JudgeResult {
+  return {
+    corpusId,
+    scores: {
+      correctness,
+      efficiency: 4,
+      readability: 4,
+      teachingCompliance: 4,
+      safety: 4,
+    },
+    overallScore: correctness,
+    rationale: 'test',
+    flaggedForReview,
   };
 }
 
@@ -426,6 +451,31 @@ describe('formatReferenceCardAcceptanceReport', () => {
     expect(report).toContain('Teaching');
     expect(report).toContain('| revenue-ref-001 | pass | true | n/a | explicit_probe | true | true | true | pass |');
     expect(report).toContain('Expand to one next high-confusion domain.');
+  });
+
+  it('renders a calibration verdict and bucket table from judge results', () => {
+    const results = [
+      ...Array.from({ length: 5 }, (_, i) => result({ corpusId: `low-${i}`, confidence: 'low' })),
+      ...Array.from({ length: 5 }, (_, i) => result({ corpusId: `medium-${i}`, confidence: 'medium' })),
+      ...Array.from({ length: 5 }, (_, i) => result({ corpusId: `high-${i}`, confidence: 'high' })),
+    ];
+    const judges = [
+      ...results.slice(0, 4).map(r => judge(r.corpusId, 2)),
+      judge(results[4].corpusId, 4),
+      judge(results[5].corpusId, 2),
+      ...results.slice(6, 10).map(r => judge(r.corpusId, 4)),
+      ...results.slice(10, 15).map(r => judge(r.corpusId, 5)),
+    ];
+    const acceptance = evaluateReferenceCardAcceptance({
+      ...run(results),
+      judgeResults: judges,
+    });
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('## Calibration');
+    expect(report).toContain('**Verdict:** `PASS`');
+    expect(report).toContain('| low | 5 | 4 | 80.0% | no |');
+    expect(report).toContain('| high | 5 | 0 | 0.0% | no |');
   });
 
   it('renders the judge model and GCP project in run provenance', () => {

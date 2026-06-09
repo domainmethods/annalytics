@@ -4,6 +4,7 @@ import type { TableContext } from './dbt/types.js';
 import type { AppConfig } from './config.js';
 import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
+import { classifyAmbiguity } from './agents/ambiguityClassifier.js';
 import { qualityLoop } from './qualityLoop.js';
 import { reconcileConfidence } from './agents/confidence.js';
 import { classifyFollowUp } from './agents/followUpClassifier.js';
@@ -136,6 +137,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // LOW → suspend pipeline
     if (clarification.confidence === 'low') {
+      const ambiguity = await classifyAmbiguity({
+        question,
+        ambiguities: clarification.ambiguities,
+        clarifyingQuestions: clarification.clarifying_questions,
+        threadContext,
+      }, config.geminiApiKey);
+      logger.info({
+        ambiguityType: ambiguity.type,
+        ambiguityDomain: ambiguity.domain,
+        reasoning: ambiguity.reasoning,
+      }, 'ambiguity.classified');
+
       const blocks = buildClarificationBlocks({
         clarificationId: `clarify_${threadTs}`,
         clarifyingQuestions: clarification.clarifying_questions,
@@ -153,6 +166,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel,
         originalQuestion: question,
         ambiguities: clarification.ambiguities,
+        ambiguityType: ambiguity.type,
+        ambiguityDomain: ambiguity.domain,
+        ambiguityQuestion: ambiguity.question,
         clarifyingMessageTs: statusMsgTs,
       });
       return;

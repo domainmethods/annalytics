@@ -8,6 +8,9 @@ export interface ClarificationState {
   channel: string;
   originalQuestion: string;
   ambiguities: string[];
+  ambiguityType?: 'user_intent' | 'org_knowledge';
+  ambiguityDomain?: string;
+  ambiguityQuestion?: string;
   clarifyingMessageTs: string;
   state: 'awaiting_reply';
   createdAt: Date;

@@ -6,7 +6,7 @@ import {
 } from './modelConfig.js';
 
 export type NodeId =
-  | 'clarification' | 'slackIntake' | 'followUpClassifier' | 'dbtStatus'
+  | 'clarification' | 'ambiguityClassifier' | 'slackIntake' | 'followUpClassifier' | 'dbtStatus'
   | 'metaQuestion' | 'chart' | 'sqlGenerator' | 'supervisor'
   | 'discrepancy' | 'teachingCandidate' | 'summaryOverride';
 
@@ -50,6 +50,8 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 const DEFAULTS: Record<NodeId, NodeProfile> = {
   // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
   slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
+  // PROVISIONAL — closed-set ambiguity typing, not yet sized.
+  ambiguityClassifier: CLASSIFIER_LITE,
   // minimal — closed-set routing / structured selection / reformatting (un-measured)
   dbtStatus: FLASH_MINIMAL, chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
   // low — light open judgment over provided context
