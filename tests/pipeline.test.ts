@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../src/agents/clarificationAgent.js');
 vi.mock('../src/agents/ambiguityClassifier.js');
 vi.mock('../src/qualityLoop.js');
+vi.mock('../src/routineFastPath.js');
 vi.mock('../src/agents/confidence.js');
 vi.mock('../src/execution/runner.js');
 vi.mock('../src/execution/formatter.js');
@@ -28,6 +29,7 @@ import { runPipeline, buildResponseBlocks } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
+import { runRoutineFastPath } from '../src/routineFastPath.js';
 import { reconcileConfidence } from '../src/agents/confidence.js';
 import { executeQuery } from '../src/execution/runner.js';
 import { chooseFormat } from '../src/execution/formatter.js';
@@ -47,6 +49,7 @@ import type { QualityResult } from '../src/qualityLoop.js';
 const mockClassify = vi.mocked(classifyQuestion);
 const mockClassifyAmbiguity = vi.mocked(classifyAmbiguity);
 const mockQualityLoop = vi.mocked(qualityLoop);
+const mockRunRoutineFastPath = vi.mocked(runRoutineFastPath);
 const mockReconcile = vi.mocked(reconcileConfidence);
 const mockExecute = vi.mocked(executeQuery);
 const mockFormat = vi.mocked(chooseFormat);
@@ -122,6 +125,10 @@ function setupHappyPath() {
   mockGetSummaries.mockResolvedValue([]);
   mockGetSampleRows.mockResolvedValue(null);
   mockGetNegative.mockResolvedValue(null);
+  mockRunRoutineFastPath.mockResolvedValue({
+    kind: 'ineligible',
+    ineligibleReasons: ['fast_path_disabled'],
+  });
   mockClassify.mockResolvedValue(highClarification);
   mockClassifyAmbiguity.mockResolvedValue({
     type: 'user_intent',
@@ -450,6 +457,81 @@ describe('runPipeline', () => {
     expect(callbacksArg!.onValidate).toBeDefined();
     expect(callbacksArg!.onReview).toBeDefined();
     expect(callbacksArg!.onRetry).toBeDefined();
+  });
+
+  it('does not call routine fast path when disabled', async () => {
+    await runPipeline(baseInput);
+
+    expect(mockRunRoutineFastPath).not.toHaveBeenCalled();
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses routine fast path when enabled and complete', async () => {
+    mockRunRoutineFastPath.mockResolvedValue({
+      kind: 'complete',
+      quality: baseQualityResult,
+      supervisorDecision: 'skipped',
+      supervisorTriggers: [],
+      ineligibleReasons: [],
+    });
+
+    await runPipeline({
+      ...baseInput,
+      config: {
+        ...baseInput.config,
+        fastPath: {
+          enabled: true,
+          maxBytesProcessed: 1_073_741_824,
+          requireSupervisor: false,
+        },
+      },
+    });
+
+    expect(mockRunRoutineFastPath).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop).not.toHaveBeenCalled();
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
+      pipelineMode: 'routine_fast_path',
+      supervisorDecision: 'skipped',
+      supervisorTriggers: [],
+    }));
+  });
+
+  it('falls back to qualityLoop when routine fast path requests fallback', async () => {
+    mockRunRoutineFastPath.mockResolvedValue({
+      kind: 'fallback',
+      reasons: ['missing_grounding_citation'],
+      previousAttempt: {
+        sql: 'SELECT bad FROM `analytics.fct_orders`',
+        error: 'missing grounding',
+      },
+      failureHistory: [],
+      validationHistory: [],
+      sqlResult: baseQualityResult.sqlResult,
+      bytesProcessed: 100,
+    });
+
+    await runPipeline({
+      ...baseInput,
+      config: {
+        ...baseInput.config,
+        fastPath: {
+          enabled: true,
+          maxBytesProcessed: 1_073_741_824,
+          requireSupervisor: false,
+        },
+      },
+    });
+
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop.mock.calls[0][0].previousAttempt).toEqual({
+      sql: 'SELECT bad FROM `analytics.fct_orders`',
+      error: 'missing grounding',
+    });
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
+      pipelineMode: 'full_quality_loop',
+      fastPathIneligibleReasons: ['missing_grounding_citation'],
+    }));
   });
 });
 

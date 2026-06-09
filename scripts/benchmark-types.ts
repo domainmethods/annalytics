@@ -35,6 +35,10 @@ export interface BenchmarkResult {
   generatedSql: string | null;
   confidence: 'high' | 'medium' | 'low';
   qualityVerdict: 'pass' | 'fail_then_pass' | 'exhausted' | 'cost_exceeded';
+  pipelineMode?: 'full_quality_loop' | 'routine_fast_path';
+  supervisorDecision?: 'skipped' | 'required';
+  supervisorTriggers?: string[];
+  fastPathIneligibleReasons?: string[];
   retryCount: number;
   validationResults: { l1: boolean; l2: boolean; l3: boolean; l4: boolean };
   validationHistory?: ValidationLayerRecord[];   // NEW: full per-attempt trace

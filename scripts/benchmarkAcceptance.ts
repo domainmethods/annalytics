@@ -45,6 +45,10 @@ export interface ReferenceCardCaseAcceptance {
   sqlShapePassed: boolean | null;
   clarificationPassed: boolean | null;
   qualityVerdict: BenchmarkResult['qualityVerdict'];
+  pipelineMode?: BenchmarkResult['pipelineMode'];
+  supervisorDecision?: BenchmarkResult['supervisorDecision'];
+  supervisorTriggers?: string[];
+  fastPathIneligibleReasons?: string[];
   validationResults: BenchmarkResult['validationResults'];
   advisoryL2Passed: boolean;
   failures: ReferenceCardAcceptanceFailure[];
@@ -160,6 +164,24 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
   lines.push(`| File Search Store | ${escapeMarkdown(result.metadata?.fileSearchStoreId ?? '(missing)')} |`);
   lines.push(`| Judge Model | ${escapeMarkdown(result.metadata?.judgeModel ?? '(missing)')} |`);
   lines.push(`| GCP Project | ${escapeMarkdown(result.metadata?.gcpProjectId ?? '(missing)')} |`);
+  lines.push('');
+
+  const fastPathRows = result.cases.map(item => ({
+    mode: item.pipelineMode ?? 'full_quality_loop',
+    decision: item.supervisorDecision ?? 'required',
+    reasons: item.fastPathIneligibleReasons ?? [],
+  }));
+  const modeSummary = summarizeFastPath(fastPathRows);
+  const reasonSummary = summarizeReasonCounts(fastPathRows.flatMap(row => row.reasons));
+  lines.push('## Fast Path');
+  lines.push('');
+  lines.push('| Mode | Count | Supervisor Decision |');
+  lines.push('|------|-------|---------------------|');
+  for (const row of modeSummary) {
+    lines.push(`| ${escapeMarkdown(row.mode)} | ${row.count} | ${escapeMarkdown(row.supervisorDecision)} |`);
+  }
+  lines.push('');
+  lines.push(`Ineligible reasons: ${formatReasonSummary(reasonSummary)}`);
   lines.push('');
 
   lines.push('## Calibration');
@@ -331,10 +353,48 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     sqlShapePassed: result.sqlShapePassed,
     clarificationPassed: result.clarificationPassed,
     qualityVerdict: result.qualityVerdict,
+    pipelineMode: result.pipelineMode,
+    supervisorDecision: result.supervisorDecision,
+    supervisorTriggers: result.supervisorTriggers,
+    fastPathIneligibleReasons: result.fastPathIneligibleReasons,
     validationResults: validationResults ?? FAILED_VALIDATION_RESULTS,
     advisoryL2Passed: validationResults?.l2 ?? false,
     failures,
   };
+}
+
+function summarizeFastPath(
+  rows: Array<{ mode: string; decision: string; reasons: string[] }>,
+): Array<{ mode: string; count: number; supervisorDecision: string }> {
+  const counts = new Map<string, { mode: string; count: number; supervisorDecision: string }>();
+  for (const row of rows) {
+    const key = `${row.mode}:${row.decision}`;
+    const existing = counts.get(key) ?? {
+      mode: row.mode,
+      count: 0,
+      supervisorDecision: row.decision,
+    };
+    existing.count++;
+    counts.set(key, existing);
+  }
+  return [...counts.values()].sort(
+    (a, b) => a.mode.localeCompare(b.mode) || a.supervisorDecision.localeCompare(b.supervisorDecision),
+  );
+}
+
+function summarizeReasonCounts(reasons: string[]): Array<{ reason: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+function formatReasonSummary(rows: Array<{ reason: string; count: number }>): string {
+  if (rows.length === 0) return 'none';
+  return rows.map(row => `${escapeMarkdown(row.reason)} (${row.count})`).join(', ');
 }
 
 function validateMetadata(metadata: BenchmarkMetadata | null): string[] {

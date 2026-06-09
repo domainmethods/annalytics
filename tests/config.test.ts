@@ -34,3 +34,38 @@ describe('loadConfig escalation.onNegativeFeedback', () => {
     expect(() => loadConfig()).toThrow(/must be "true" or "false"/);
   });
 });
+
+describe('loadConfig fastPath', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    baseEnv();
+  });
+
+  it('defaults the routine fast path off with a 1GB fast-path limit and forced supervisor review', () => {
+    const config = loadConfig();
+    expect(config.fastPath).toEqual({
+      enabled: false,
+      maxBytesProcessed: 1_073_741_824,
+      requireSupervisor: true,
+    });
+  });
+
+  it('parses routine fast-path flags from env', () => {
+    vi.stubEnv('FAST_PATH_ENABLED', 'true');
+    vi.stubEnv('FAST_PATH_MAX_BYTES', '524288000');
+    vi.stubEnv('FAST_PATH_REQUIRE_SUPERVISOR', 'false');
+
+    const config = loadConfig();
+
+    expect(config.fastPath).toEqual({
+      enabled: true,
+      maxBytesProcessed: 524_288_000,
+      requireSupervisor: false,
+    });
+  });
+
+  it('throws on invalid routine fast-path booleans', () => {
+    vi.stubEnv('FAST_PATH_ENABLED', 'yes');
+    expect(() => loadConfig()).toThrow(/FAST_PATH_ENABLED must be "true" or "false"/);
+  });
+});

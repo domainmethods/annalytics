@@ -6,6 +6,7 @@ import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
 import { classifyAmbiguity } from './agents/ambiguityClassifier.js';
 import { qualityLoop } from './qualityLoop.js';
+import { runRoutineFastPath } from './routineFastPath.js';
 import { reconcileConfidence } from './agents/confidence.js';
 import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { executeQuery } from './execution/runner.js';
@@ -45,6 +46,11 @@ export interface PipelineConfig {
   queryTimeoutMs: number;
   maxResultRows: number;
   gcpProjectId?: string;
+  fastPath?: {
+    enabled: boolean;
+    maxBytesProcessed: number;
+    requireSupervisor: boolean;
+  };
   escalation?: {
     mode: 'channel' | 'dm';
     channelId?: string;
@@ -74,6 +80,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
     queryTimeoutMs: config.limits.queryTimeoutMs,
     maxResultRows: config.limits.maxResultRows,
     gcpProjectId: config.gcp.projectId,
+    fastPath: config.fastPath,
     escalation: {
       mode: config.escalation.mode,
       channelId: config.escalation.channelId,
@@ -214,6 +221,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         teachingsUsed: [],
         supervisorVerdict: 'pass',
         supervisorNotes: 'dbt_status route — no supervisor',
+        pipelineMode: 'full_quality_loop',
+        supervisorDecision: 'required',
+        supervisorTriggers: ['dbt_status_route'],
+        fastPathIneligibleReasons: ['not_data_query'],
       });
 
       logStage(logger, { traceId, stage: 'format', durationMs: Date.now() - startTime });
@@ -261,13 +272,29 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     // Stage 3: Unified Quality Loop (generate + validate + supervise)
     const negativeExample = await getLatestNegativeFeedback(threadTs);
 
-    const qualityResult = await qualityLoop(
-      {
-        question: resolvedQuestion,
+    let pipelineMode: 'full_quality_loop' | 'routine_fast_path' = 'full_quality_loop';
+    let supervisorDecision: 'skipped' | 'required' = 'required';
+    let supervisorTriggers: string[] = [];
+    let fastPathIneligibleReasons: string[] = [];
+    let fastPathPreviousAttempt: { sql: string; error: string } | undefined;
+
+    let qualityResult;
+    if (config.fastPath?.enabled) {
+      const fastPathStartedAt = Date.now();
+      const fastPath = await runRoutineFastPath({
+        enabled: config.fastPath.enabled,
+        requireSupervisor: config.fastPath.requireSupervisor,
+        question,
+        clarifiedQuestion: resolvedQuestion,
+        clarificationConfidence: clarification.confidence,
+        route: clarification.route,
         tables: pipelineTables,
         threadContext,
         apiKey: config.geminiApiKey,
         fileSearchStoreId: config.fileSearchStoreId,
+        knowledgeSummaries: teachingSummaries,
+        maxBytesProcessed: config.maxBytesProcessed,
+        fastPathMaxBytes: config.fastPath.maxBytesProcessed,
         sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
         negativeExample: negativeExample ? {
           sql: negativeExample.sql,
@@ -278,17 +305,80 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
           : undefined,
         bqml_hint: clarification.bqml_hint,
-      },
-      config.geminiApiKey,
-      resolvedQuestion,
-      config.maxBytesProcessed,
-      {
-        onGenerate: () => updateStatus('Researching the best approach...'),
-        onValidate: () => updateStatus('Verifying the approach...'),
-        onReview: () => updateStatus('Reviewing for accuracy...'),
-        onRetry: () => updateStatus('Refining the approach...'),
-      },
-    );
+      });
+      const fastPathElapsedMs = Date.now() - fastPathStartedAt;
+      let fastPathValidationOutcome: { layer: string; valid: boolean; detail?: string; bytesProcessed?: number } | undefined;
+      let fastPathBytesProcessed: number | undefined;
+
+      if (fastPath.kind === 'complete') {
+        qualityResult = fastPath.quality;
+        pipelineMode = 'routine_fast_path';
+        supervisorDecision = fastPath.supervisorDecision;
+        supervisorTriggers = fastPath.supervisorTriggers;
+        fastPathIneligibleReasons = fastPath.ineligibleReasons;
+        const lastValidationLayer = fastPath.quality.validationHistory?.slice(-1)[0];
+        fastPathValidationOutcome = lastValidationLayer
+          ? {
+              layer: lastValidationLayer.layer,
+              valid: lastValidationLayer.valid,
+              detail: lastValidationLayer.detail,
+              bytesProcessed: lastValidationLayer.bytesProcessed,
+            }
+          : undefined;
+        fastPathBytesProcessed = fastPath.quality.bytesProcessed;
+      } else {
+        fastPathIneligibleReasons = fastPath.kind === 'ineligible'
+          ? fastPath.ineligibleReasons
+          : fastPath.reasons;
+        fastPathPreviousAttempt = fastPath.kind === 'fallback' ? fastPath.previousAttempt : undefined;
+        fastPathBytesProcessed = fastPath.kind === 'fallback' ? fastPath.bytesProcessed : undefined;
+      }
+
+      logger.info({
+        traceId,
+        selectedPath: pipelineMode,
+        fastPathResult: fastPath.kind,
+        eligible: pipelineMode === 'routine_fast_path',
+        ineligibleReasons: fastPathIneligibleReasons,
+        supervisorDecision,
+        supervisorTriggers,
+        validationOutcome: fastPathValidationOutcome,
+        bytesProcessed: fastPathBytesProcessed,
+        durationMs: fastPathElapsedMs,
+      }, 'pipeline.fast_path_decision');
+    }
+
+    if (!qualityResult) {
+      qualityResult = await qualityLoop(
+        {
+          question: resolvedQuestion,
+          tables: pipelineTables,
+          threadContext,
+          apiKey: config.geminiApiKey,
+          fileSearchStoreId: config.fileSearchStoreId,
+          sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
+          negativeExample: negativeExample ? {
+            sql: negativeExample.sql,
+            explanation: negativeExample.explanation,
+            userFeedback: threadContext[threadContext.length - 1]?.content || '',
+          } : undefined,
+          previousAttempt: fastPathPreviousAttempt
+            ?? (input.refinementHint
+              ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
+              : undefined),
+          bqml_hint: clarification.bqml_hint,
+        },
+        config.geminiApiKey,
+        resolvedQuestion,
+        config.maxBytesProcessed,
+        {
+          onGenerate: () => updateStatus('Researching the best approach...'),
+          onValidate: () => updateStatus('Verifying the approach...'),
+          onReview: () => updateStatus('Reviewing for accuracy...'),
+          onRetry: () => updateStatus('Refining the approach...'),
+        },
+      );
+    }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
     logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: qualityResult.bytesProcessed });
 
@@ -435,6 +525,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       teachingsUsed: qualityResult.sqlResult.groundingCitations.map(c => c.sourceFile),
       supervisorVerdict: qualityResult.verdict as 'pass' | 'fail_then_pass' | 'exhausted',
       supervisorNotes: qualityResult.supervisorNotes,
+      pipelineMode,
+      supervisorDecision,
+      supervisorTriggers,
+      fastPathIneligibleReasons,
       failureHistory: qualityResult.failureHistory,
       retrievedSchema: pipelineTables.map(table => ({
         name: table.name,

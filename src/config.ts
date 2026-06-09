@@ -32,6 +32,11 @@ export interface AppConfig {
     timeoutHours: number;
     onNegativeFeedback: boolean;
   };
+  fastPath: {
+    enabled: boolean;
+    maxBytesProcessed: number;
+    requireSupervisor: boolean;
+  };
   port: number;
 }
 
@@ -98,6 +103,11 @@ export function loadConfig(): AppConfig {
       reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30),
       timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4),
       onNegativeFeedback: parseEnvBool('ESCALATION_ON_NEGATIVE_FEEDBACK', true),
+    },
+    fastPath: {
+      enabled: parseEnvBool('FAST_PATH_ENABLED', false),
+      maxBytesProcessed: parseEnvInt('FAST_PATH_MAX_BYTES', 1_073_741_824),
+      requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
     },
     port: parseEnvInt('PORT', 3000),
   };

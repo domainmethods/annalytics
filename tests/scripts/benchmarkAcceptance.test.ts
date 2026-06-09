@@ -453,6 +453,46 @@ describe('formatReferenceCardAcceptanceReport', () => {
     expect(report).toContain('Expand to one next high-confusion domain.');
   });
 
+  it('renders fast-path observability when present', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        pipelineMode: 'routine_fast_path',
+        supervisorDecision: 'skipped',
+        supervisorTriggers: [],
+        fastPathIneligibleReasons: [],
+      }),
+    ]));
+
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('| routine_fast_path | 1 | skipped |');
+    expect(report).toContain('Ineligible reasons: none');
+  });
+
+  it('summarizes fast-path ineligible reasons when present', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        corpusId: 'revenue-ref-001',
+        pipelineMode: 'full_quality_loop',
+        supervisorDecision: 'required',
+        supervisorTriggers: ['benchmark_quality_loop'],
+        fastPathIneligibleReasons: ['benchmark_quality_loop'],
+      }),
+      result({
+        corpusId: 'revenue-ref-002',
+        pipelineMode: 'full_quality_loop',
+        supervisorDecision: 'required',
+        supervisorTriggers: ['benchmark_quality_loop'],
+        fastPathIneligibleReasons: ['benchmark_quality_loop'],
+      }),
+    ]));
+
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+
+    expect(report).toContain('| full_quality_loop | 2 | required |');
+    expect(report).toContain('Ineligible reasons: benchmark_quality_loop (2)');
+  });
+
   it('renders a calibration verdict and bucket table from judge results', () => {
     const results = [
       ...Array.from({ length: 5 }, (_, i) => result({ corpusId: `low-${i}`, confidence: 'low' })),

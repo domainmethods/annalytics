@@ -54,6 +54,10 @@ export interface ResponseContext {
   teachingsUsed: string[];
   supervisorVerdict: 'pass' | 'fail_then_pass' | 'exhausted';
   supervisorNotes: string;
+  pipelineMode?: 'full_quality_loop' | 'routine_fast_path';
+  supervisorDecision?: 'skipped' | 'required';
+  supervisorTriggers?: string[];
+  fastPathIneligibleReasons?: string[];
   failureHistory?: FailureRecord[];
   negativeFeedback?: boolean;
   retrievedSchema?: {
