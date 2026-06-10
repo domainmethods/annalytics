@@ -101,6 +101,23 @@ describe('registerDbtRunIngestion', () => {
       expect(mockSave).not.toHaveBeenCalled();
     });
 
+    it('returns 401 (no throw) for a header with equal string length but different byte length', async () => {
+      // 'ÿ' (U+00FF) is 1 UTF-16 code unit but 2 UTF-8 bytes: string lengths match
+      // `Bearer ${WEBHOOK_SECRET}`, byte lengths do not. A string-length pre-check would
+      // let this reach timingSafeEqual with unequal buffers → RangeError → process crash.
+      const sameStringLength = `Bearer ${WEBHOOK_SECRET.slice(0, -1)}ÿ`;
+      expect(sameStringLength).toHaveLength(`Bearer ${WEBHOOK_SECRET}`.length);
+      expect(Buffer.from(sameStringLength).length).not.toBe(Buffer.from(`Bearer ${WEBHOOK_SECRET}`).length);
+      const req = buildReq({ headers: { authorization: sameStringLength } });
+      const { res, status, json } = buildRes();
+
+      await expect(routeHandler(req, res)).resolves.not.toThrow();
+
+      expect(status).toHaveBeenCalledWith(401);
+      expect(json).toHaveBeenCalledWith({ error: 'Unauthorized' });
+      expect(mockSave).not.toHaveBeenCalled();
+    });
+
     it('returns 401 when Authorization header uses wrong scheme', async () => {
       const req = buildReq({ headers: { authorization: `Basic ${WEBHOOK_SECRET}` } });
       const { res, status, json } = buildRes();

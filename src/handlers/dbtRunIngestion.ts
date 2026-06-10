@@ -11,11 +11,12 @@ function mapStatus(status: string): DbtRunHistoryEntry['status'] {
 
 export function registerDbtRunIngestion(router: Router, webhookSecret: string): void {
   router.post('/api/dbt-run-results', async (req: Request, res: Response) => {
-    // 1. Auth check (timing-safe comparison)
-    const authHeader = req.headers.authorization;
-    const expected = `Bearer ${webhookSecret}`;
-    if (!authHeader || authHeader.length !== expected.length ||
-        !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
+    // 1. Auth check (timing-safe comparison). Compare byte lengths, not string lengths:
+    // a multi-byte char (e.g. 'ÿ') can match the string length while Buffer.from()
+    // yields a different byte length, and timingSafeEqual throws on unequal buffers.
+    const provided = Buffer.from(req.headers.authorization ?? '');
+    const expected = Buffer.from(`Bearer ${webhookSecret}`);
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

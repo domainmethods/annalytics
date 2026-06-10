@@ -85,6 +85,23 @@ describe('registerLifecycleSweep', () => {
       expect(mockSweep).not.toHaveBeenCalled();
     });
 
+    it('returns 401 (no throw) for a header with equal string length but different byte length', async () => {
+      // 'ÿ' (U+00FF) is 1 UTF-16 code unit but 2 UTF-8 bytes: string lengths match
+      // `Bearer ${SWEEP_SECRET}`, byte lengths do not. A string-length pre-check would
+      // let this reach timingSafeEqual with unequal buffers → RangeError → process crash.
+      const sameStringLength = `Bearer ${SWEEP_SECRET.slice(0, -1)}ÿ`;
+      expect(sameStringLength).toHaveLength(`Bearer ${SWEEP_SECRET}`.length);
+      expect(Buffer.from(sameStringLength).length).not.toBe(Buffer.from(`Bearer ${SWEEP_SECRET}`).length);
+      const req = buildReq({ headers: { authorization: sameStringLength } });
+      const { res, status, json } = buildRes();
+
+      await expect(routeHandler(req, res)).resolves.not.toThrow();
+
+      expect(status).toHaveBeenCalledWith(401);
+      expect(json).toHaveBeenCalledWith({ error: 'Unauthorized' });
+      expect(mockSweep).not.toHaveBeenCalled();
+    });
+
     it('returns 401 for a wrong secret of a different length', async () => {
       const req = buildReq({ headers: { authorization: 'Bearer short' } });
       const { res, status, json } = buildRes();

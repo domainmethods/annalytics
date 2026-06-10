@@ -20,11 +20,12 @@ export function registerLifecycleSweep(
   deps: { getClient: () => WebClient; getEscalationConfig: () => EscalationConfig },
 ): void {
   router.post('/api/lifecycle-sweep', async (req: Request, res: Response) => {
-    // Auth check (timing-safe comparison)
-    const authHeader = req.headers.authorization;
-    const expected = `Bearer ${sweepSecret}`;
-    if (!authHeader || authHeader.length !== expected.length ||
-        !timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
+    // Auth check (timing-safe comparison). Compare byte lengths, not string lengths:
+    // a multi-byte char (e.g. 'ÿ') can match the string length while Buffer.from()
+    // yields a different byte length, and timingSafeEqual throws on unequal buffers.
+    const provided = Buffer.from(req.headers.authorization ?? '');
+    const expected = Buffer.from(`Bearer ${sweepSecret}`);
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
