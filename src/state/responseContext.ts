@@ -1,11 +1,24 @@
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
 
+/** Retention window for response_context docs. The Firestore TTL policy on
+ *  `expiresAt` deletes expired docs. Feedback aggregation windows
+ *  (getResponseContextsSince) must not exceed this retention. */
+const RETENTION_DAYS = (() => {
+  const v = Number(process.env.RESPONSE_CONTEXT_RETENTION_DAYS);
+  return Number.isFinite(v) && v > 0 ? v : 90;
+})();
+
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
+  const now = new Date();
   await getDb()
     .collection('response_context')
     .doc(`${ctx.threadTs}_${ctx.statusMsgTs}`)
-    .set({ ...ctx, createdAt: new Date() });
+    .set({
+      ...ctx,
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + RETENTION_DAYS * 86_400_000),
+    });
 }
 
 export async function botHasRepliedInThread(threadTs: string): Promise<boolean> {

@@ -30,6 +30,22 @@ import {
   getResponseContextsSince,
 } from '../../src/state/responseContext.js';
 
+const sampleContext = () => ({
+  responseId: 'r1',
+  threadTs: 'thread-1',
+  statusMsgTs: 'msg-1',
+  clarifiedQuestion: 'test',
+  assumptions: [],
+  reasoningChain: '',
+  generatedSql: 'SELECT 1',
+  tablesUsed: [],
+  confidence: 'high' as const,
+  queryResults: { rowCount: 0, columnNames: [], bytesProcessed: 0 },
+  pipelineDurationMs: 100,
+  traceId: 'trace-1',
+  createdAt: new Date(),
+});
+
 describe('saveResponseContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -41,23 +57,60 @@ describe('saveResponseContext', () => {
 
   it('saves with composite key threadTs_statusMsgTs', async () => {
     mockSet.mockResolvedValue(undefined);
-    await saveResponseContext({
-      responseId: 'r1',
-      threadTs: 'thread-1',
-      statusMsgTs: 'msg-1',
-      clarifiedQuestion: 'test',
-      assumptions: [],
-      reasoningChain: '',
-      generatedSql: 'SELECT 1',
-      tablesUsed: [],
-      confidence: 'high',
-      queryResults: { rowCount: 0, columnNames: [], bytesProcessed: 0 },
-      pipelineDurationMs: 100,
-      traceId: 'trace-1',
-      createdAt: new Date(),
-    });
+    await saveResponseContext(sampleContext());
     expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
     expect(mockSet).toHaveBeenCalled();
+  });
+
+  it('writes expiresAt as a Date 90 days after createdAt by default', async () => {
+    mockSet.mockResolvedValue(undefined);
+    await saveResponseContext(sampleContext());
+
+    const written = mockSet.mock.calls[0][0];
+    // Firestore rejects undefined properties — expiresAt must always be a Date.
+    expect(written.expiresAt).toBeInstanceOf(Date);
+    expect(written.expiresAt).not.toBeUndefined();
+    expect(written.createdAt).toBeInstanceOf(Date);
+
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+    // expiresAt and createdAt must derive from the same captured instant.
+    expect(written.expiresAt.getTime() - written.createdAt.getTime()).toBe(ninetyDaysMs);
+  });
+
+  it('honors RESPONSE_CONTEXT_RETENTION_DAYS env override', async () => {
+    vi.stubEnv('RESPONSE_CONTEXT_RETENTION_DAYS', '30');
+    vi.resetModules();
+    try {
+      // Retention is parsed at module load — re-import to pick up the stub.
+      const fresh = await import('../../src/state/responseContext.js');
+      mockSet.mockResolvedValue(undefined);
+      await fresh.saveResponseContext(sampleContext());
+
+      const written = mockSet.mock.calls[0][0];
+      expect(written.expiresAt).toBeInstanceOf(Date);
+      const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+      expect(written.expiresAt.getTime() - written.createdAt.getTime()).toBe(thirtyDaysMs);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+
+  it('falls back to 90 days when the env override is not a positive number', async () => {
+    vi.stubEnv('RESPONSE_CONTEXT_RETENTION_DAYS', 'not-a-number');
+    vi.resetModules();
+    try {
+      const fresh = await import('../../src/state/responseContext.js');
+      mockSet.mockResolvedValue(undefined);
+      await fresh.saveResponseContext(sampleContext());
+
+      const written = mockSet.mock.calls[0][0];
+      const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+      expect(written.expiresAt.getTime() - written.createdAt.getTime()).toBe(ninetyDaysMs);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });
 
