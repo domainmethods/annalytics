@@ -3,6 +3,7 @@ import type { Router, Request, Response } from 'express';
 import type { WebClient } from '@slack/web-api';
 import type { EscalationConfig } from './escalationLifecycle.js';
 import { checkOverdueEscalations } from './escalationLifecycle.js';
+import { deliverPendingNotifications } from './notificationDelivery.js';
 
 /**
  * Registers POST /api/lifecycle-sweep — lets Cloud Scheduler drive escalation
@@ -32,8 +33,14 @@ export function registerLifecycleSweep(
     }
 
     try {
-      const result = await checkOverdueEscalations(deps.getClient(), deps.getEscalationConfig());
-      res.status(200).json(result);
+      const client = deps.getClient();
+      const result = await checkOverdueEscalations(client, deps.getEscalationConfig());
+      const notificationResult = await deliverPendingNotifications(client);
+      res.status(200).json({
+        ...result,
+        notificationsDelivered: notificationResult.delivered,
+        notificationsFailed: notificationResult.failed,
+      });
     } catch (err) {
       console.error('Lifecycle sweep failed:', (err as Error).message);
       res.status(500).json({ error: 'Sweep failed' });

@@ -6,10 +6,16 @@ vi.mock('../../src/handlers/escalationLifecycle.js', () => ({
   checkOverdueEscalations: vi.fn(),
 }));
 
+vi.mock('../../src/handlers/notificationDelivery.js', () => ({
+  deliverPendingNotifications: vi.fn(),
+}));
+
 import { checkOverdueEscalations, type EscalationConfig } from '../../src/handlers/escalationLifecycle.js';
+import { deliverPendingNotifications } from '../../src/handlers/notificationDelivery.js';
 import { registerLifecycleSweep } from '../../src/handlers/lifecycleSweep.js';
 
 const mockSweep = vi.mocked(checkOverdueEscalations);
+const mockDeliverPendingNotifications = vi.mocked(deliverPendingNotifications);
 
 const SWEEP_SECRET = 'test-sweep-secret-xyz';
 
@@ -50,6 +56,7 @@ describe('registerLifecycleSweep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSweep.mockResolvedValue({ throttled: false, pending: 2, reminded: 1, timedOut: 0 });
+    mockDeliverPendingNotifications.mockResolvedValue({ delivered: 0, failed: 0 });
     registerLifecycleSweep(mockRouter, SWEEP_SECRET, {
       getClient: () => mockClient,
       getEscalationConfig: () => escalationConfig,
@@ -120,9 +127,55 @@ describe('registerLifecycleSweep', () => {
       await routeHandler(req, res);
 
       expect(status).toHaveBeenCalledWith(200);
-      expect(json).toHaveBeenCalledWith({ throttled: false, pending: 2, reminded: 1, timedOut: 0 });
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          throttled: false,
+          pending: 2,
+          reminded: 1,
+          timedOut: 0,
+          notificationsDelivered: 0,
+          notificationsFailed: 0,
+        }),
+      );
       expect(mockSweep).toHaveBeenCalledTimes(1);
       expect(mockSweep).toHaveBeenCalledWith(mockClient, escalationConfig);
+    });
+
+    it('delivers pending notifications and merges counts into the response', async () => {
+      mockSweep.mockResolvedValueOnce({ throttled: false, pending: 0, reminded: 0, timedOut: 0 });
+      mockDeliverPendingNotifications.mockResolvedValueOnce({ delivered: 2, failed: 1 });
+      const req = buildReq();
+      const { res, status, json } = buildRes();
+
+      await routeHandler(req, res);
+
+      expect(status).toHaveBeenCalledWith(200);
+      expect(mockDeliverPendingNotifications).toHaveBeenCalledWith(mockClient);
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notificationsDelivered: 2,
+          notificationsFailed: 1,
+        }),
+      );
+    });
+
+    it('delivers notifications even when sweep is throttled', async () => {
+      mockSweep.mockResolvedValueOnce({ throttled: true });
+      mockDeliverPendingNotifications.mockResolvedValueOnce({ delivered: 1, failed: 0 });
+      const req = buildReq();
+      const { res, status, json } = buildRes();
+
+      await routeHandler(req, res);
+
+      expect(status).toHaveBeenCalledWith(200);
+      expect(mockDeliverPendingNotifications).toHaveBeenCalledWith(mockClient);
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          throttled: true,
+          notificationsDelivered: 1,
+          notificationsFailed: 0,
+        }),
+      );
     });
 
     it('returns 500 with a generic error when the sweep throws, leaking no internals', async () => {

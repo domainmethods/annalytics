@@ -38,7 +38,8 @@ export async function deliverPendingNotifications(
 
       await markNotificationDelivered(notification.id);
       result.delivered += 1;
-    } catch {
+    } catch (err) {
+      console.error(`Notification delivery failed for ${notification.id}:`, (err as Error).message);
       result.failed += 1;
     }
   }

@@ -111,7 +111,7 @@ When the supervisor loop returns `exhausted`, `decideEscalation()` chooses a beh
 
 Escalation supports `channel` mode (shared channel) and `dm` mode (direct message to analyst). State is persisted to `escalation_state` collection for cross-request resume. `resolveEscalationTarget()` in pipeline.ts resolves the target based on mode.
 
-Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. A ✅ reaction on an escalation card that shows proposed SQL confirms it (`handleEscalationReaction()` in `handlers/escalationReaction.ts`; skips teaching-candidate harvesting since the reaction carries no new guidance). Reminders and timeouts run via `checkOverdueEscalations()`, driven both by incoming event traffic and by the `POST /api/lifecycle-sweep` endpoint (Cloud Scheduler).
+Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. A ✅ reaction on an escalation card that shows proposed SQL confirms it (`handleEscalationReaction()` in `handlers/escalationReaction.ts`; skips teaching-candidate harvesting since the reaction carries no new guidance). Reminders and timeouts run via `checkOverdueEscalations()`, driven both by incoming event traffic and by the `POST /api/lifecycle-sweep` endpoint (Cloud Scheduler). Teaching promotions enqueue pending_notifications docs that the sweep delivers to the originating thread (closing the feedback loop to the user).
 
 ### Response Buttons
 
@@ -152,7 +152,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | GET | `/health` | None | Liveness ping — returns `200 OK`. Dependency-free; Cloud Run's liveness probe. |
 | GET | `/health/doctor` | None | Diagnostic readiness check — probes Firestore/BigQuery/Gemini/Slack in parallel + reports configured features. Info-safe JSON (no IDs/secrets/raw errors). `200` ok/degraded, `503` when a critical dep is down. |
 | POST | `/api/dbt-run-results` | Bearer `DBT_WEBHOOK_SECRET` | Ingest dbt `run_results.json` from CI |
-| POST | `/api/lifecycle-sweep` | Bearer `LIFECYCLE_SWEEP_SECRET` | Trigger escalation reminder/timeout sweep (Cloud Scheduler) |
+| POST | `/api/lifecycle-sweep` | Bearer `LIFECYCLE_SWEEP_SECRET` | Trigger escalation reminder/timeout sweep + deliver queued user notifications (Cloud Scheduler) |
 
 ## Key SDK Patterns
 
