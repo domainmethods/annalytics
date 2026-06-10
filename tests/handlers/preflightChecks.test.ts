@@ -82,8 +82,11 @@ describe('preflightChecks', () => {
 
   it('returns false and posts message when pending escalation', async () => {
     mockGetEscalationByThread.mockResolvedValue({
-      escalationId: 'esc-123',
-      pipelineState: 'awaiting_human',
+      status: 'pending',
+      state: {
+        escalationId: 'esc-123',
+        pipelineState: 'awaiting_human',
+      },
     });
 
     const result = await preflightChecks('C123', '1234.5678', mockClient);
@@ -118,12 +121,27 @@ describe('preflightChecks', () => {
     expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
   });
 
-  it('returns true when escalation is expired (null returned)', async () => {
-    // getEscalationByThread returns null for expired escalations
-    mockGetEscalationByThread.mockResolvedValue(null);
+  it('returns true and notifies when escalation expires during preflight', async () => {
+    mockGetEscalationByThread.mockResolvedValue({
+      status: 'expired_now',
+      state: {
+        escalationId: 'esc-123',
+        behavior: 'park_wait',
+        originalChannel: 'C123',
+        originalThreadTs: '1234.5678',
+      },
+    });
 
     const result = await preflightChecks('C123', '1234.5678', mockClient);
 
     expect(result).toBe(true);
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123',
+        thread_ts: '1234.5678',
+        text: expect.stringContaining("wasn't able to get an answer"),
+      }),
+    );
+    expect(mockReleaseThreadLock).not.toHaveBeenCalled();
   });
 });

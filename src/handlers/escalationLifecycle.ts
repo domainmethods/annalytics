@@ -5,6 +5,7 @@ import {
   timeoutEscalation,
 } from '../state/escalationState.js';
 import { buildEscalationReminderBlocks } from '../slack/escalationBlocks.js';
+import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 export interface EscalationConfig {
   mode: 'channel' | 'dm';
@@ -62,16 +63,7 @@ export async function checkOverdueEscalations(
     // Expired: mark timed_out and notify the user
     if (esc.expiresAt < now) {
       await timeoutEscalation(esc.escalationId);
-
-      const text = esc.behavior === 'park_wait'
-        ? "I wasn't able to get an answer from the data team in time. Try asking again or reach out directly."
-        : "The data team hasn't weighed in yet, but the answer I showed earlier is my best estimate.";
-
-      await client.chat.postMessage({
-        channel: esc.originalChannel,
-        thread_ts: esc.originalThreadTs,
-        text,
-      });
+      await notifyEscalationTimeout(esc, client);
       result.timedOut += 1;
       continue;
     }

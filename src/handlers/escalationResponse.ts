@@ -21,28 +21,39 @@ export interface EscalationResumeContext {
   traceId: string;
 }
 
+export type EscalationResponseLookup =
+  | { status: 'pending'; context: EscalationResumeContext }
+  | { status: 'expired_now'; state: EscalationState }
+  | null;
+
 /**
  * Check if a message in a thread is a reply to a pending escalation.
  * Returns the escalation resume context if so, null otherwise.
  */
 export async function checkEscalationResponse(
   event: { thread_ts?: string; text?: string; channel: string },
-): Promise<EscalationResumeContext | null> {
+): Promise<EscalationResponseLookup> {
   const threadTs = event.thread_ts;
   if (!threadTs) return null;
 
-  const state = await getEscalationByEscalationThread(threadTs);
-  if (!state) return null;
+  const lookup = await getEscalationByEscalationThread(threadTs);
+  if (!lookup) return null;
+  if (lookup.status === 'expired_now') return lookup;
+
+  const { state } = lookup;
 
   return {
-    escalationId: state.escalationId,
-    originalChannel: state.originalChannel,
-    originalThreadTs: state.originalThreadTs,
-    statusMsgTs: state.statusMsgTs,
-    humanGuidance: event.text || '',
-    behavior: state.behavior,
-    context: state.context,
-    traceId: state.traceId,
+    status: 'pending',
+    context: {
+      escalationId: state.escalationId,
+      originalChannel: state.originalChannel,
+      originalThreadTs: state.originalThreadTs,
+      statusMsgTs: state.statusMsgTs,
+      humanGuidance: event.text || '',
+      behavior: state.behavior,
+      context: state.context,
+      traceId: state.traceId,
+    },
   };
 }
 

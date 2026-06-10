@@ -14,6 +14,7 @@ import { getEscalationByEscalationThread, resolveEscalation } from '../../src/st
 import { buildEscalationResolvedBlocks } from '../../src/slack/escalationBlocks.js';
 import { runPipeline } from '../../src/pipeline.js';
 import { checkEscalationResponse, resumeFromEscalation } from '../../src/handlers/escalationResponse.js';
+import type { EscalationResponseLookup, EscalationResumeContext } from '../../src/handlers/escalationResponse.js';
 import { generateTeachingCandidate } from '../../src/teachings/candidateGenerator.js';
 import { saveTeachingCandidate } from '../../src/state/teachingCandidates.js';
 
@@ -52,6 +53,12 @@ const baseEscalation = {
   traceId: 'trace-1',
 };
 
+function pendingContext(lookup: EscalationResponseLookup): EscalationResumeContext {
+  expect(lookup?.status).toBe('pending');
+  if (!lookup || lookup.status !== 'pending') throw new Error('expected pending escalation');
+  return lookup.context;
+}
+
 describe('checkEscalationResponse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -86,14 +93,15 @@ describe('resumeFromEscalation', () => {
   });
 
   it('park_wait: resumes pipeline with human guidance, resolves escalation', async () => {
-    mockGetEscalation.mockResolvedValue(baseEscalation);
-    const ctx = await checkEscalationResponse({
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'Use LEFT JOIN on user_id',
     });
+    const ctx = pendingContext(lookup);
 
-    await resumeFromEscalation(ctx!, mockClient, [], {
+    await resumeFromEscalation(ctx, mockClient, [], {
       geminiApiKey: 'key',
       maxBytesProcessed: 10e9,
       queryTimeoutMs: 30000,
@@ -123,15 +131,16 @@ describe('resumeFromEscalation', () => {
   });
 
   it('park_wait with refinementHint option: passes the confirmed SQL through to runPipeline', async () => {
-    mockGetEscalation.mockResolvedValue(baseEscalation);
-    const ctx = await checkEscalationResponse({
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'The data team confirmed the proposed SQL is correct.',
     });
+    const ctx = pendingContext(lookup);
 
     await resumeFromEscalation(
-      ctx!,
+      ctx,
       mockClient,
       [],
       {
@@ -156,15 +165,16 @@ describe('resumeFromEscalation', () => {
   });
 
   it('skipTeachingCandidate: resolves escalation without generating a teaching candidate', async () => {
-    mockGetEscalation.mockResolvedValue(baseEscalation);
-    const ctx = await checkEscalationResponse({
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'Use LEFT JOIN on user_id',
     });
+    const ctx = pendingContext(lookup);
 
     await resumeFromEscalation(
-      ctx!,
+      ctx,
       mockClient,
       [],
       {
@@ -191,14 +201,15 @@ describe('resumeFromEscalation', () => {
       ...baseEscalation,
       behavior: 'best_effort_verify' as const,
     };
-    mockGetEscalation.mockResolvedValue(bestEffortEscalation);
-    const ctx = await checkEscalationResponse({
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: bestEffortEscalation });
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'Confirmed, the join logic is correct',
     });
+    const ctx = pendingContext(lookup);
 
-    await resumeFromEscalation(ctx!, mockClient, [], {
+    await resumeFromEscalation(ctx, mockClient, [], {
       geminiApiKey: 'key',
       maxBytesProcessed: 10e9,
       queryTimeoutMs: 30000,
@@ -227,15 +238,16 @@ describe('resumeFromEscalation', () => {
     const mockCandidate = { candidateId: 'teach_esc_trace-1' } as any;
     mockGenerateTeachingCandidate.mockResolvedValue(mockCandidate);
     mockSaveTeachingCandidate.mockResolvedValue(undefined);
-    mockGetEscalation.mockResolvedValue(baseEscalation);
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
 
-    const ctx = await checkEscalationResponse({
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'Use LEFT JOIN on user_id',
     });
+    const ctx = pendingContext(lookup);
 
-    await resumeFromEscalation(ctx!, mockClient, [], {
+    await resumeFromEscalation(ctx, mockClient, [], {
       geminiApiKey: 'test-key',
       maxBytesProcessed: 10e9,
       queryTimeoutMs: 30000,
@@ -259,17 +271,18 @@ describe('resumeFromEscalation', () => {
 
   it('teaching candidate generation failure does not block resolution', async () => {
     mockGenerateTeachingCandidate.mockRejectedValue(new Error('LLM timeout'));
-    mockGetEscalation.mockResolvedValue(baseEscalation);
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
 
-    const ctx = await checkEscalationResponse({
+    const lookup = await checkEscalationResponse({
       channel: 'C-ESCALATION',
       thread_ts: 'esc-ts-1',
       text: 'Use LEFT JOIN on user_id',
     });
+    const ctx = pendingContext(lookup);
 
     // Should not throw even though teaching candidate generation fails
     await expect(
-      resumeFromEscalation(ctx!, mockClient, [], {
+      resumeFromEscalation(ctx, mockClient, [], {
         geminiApiKey: 'key',
         maxBytesProcessed: 10e9,
         queryTimeoutMs: 30000,

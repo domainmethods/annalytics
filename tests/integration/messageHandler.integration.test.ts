@@ -120,6 +120,15 @@ const config = {
   escalation: { mode: 'channel', channelId: undefined, analystUserId: undefined, timeoutHours: 4 },
 } as unknown as AppConfig;
 
+const escalationConfig = {
+  ...config,
+  escalation: {
+    ...config.escalation,
+    mode: 'channel',
+    channelId: 'C-ESCALATION',
+  },
+} as unknown as AppConfig;
+
 const tables: TableContext[] = [];
 const getTables = () => tables;
 const STATUS_TEXT = 'Got it. Let me get things ready...';
@@ -377,6 +386,67 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       loggerWarn.mock.calls.some(c => String(c[1] ?? '').includes('clarification'));
     expect(surfaced).toBe(true);
     // And it must not have leaked into the pipeline while a clarification is open.
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('notifies both threads and skips the pipeline when an analyst reply arrives after timeout', async () => {
+    firestoreQueryResults.set('escalation_state', {
+      empty: false,
+      docs: [{
+        data: () => ({
+          escalationId: 'esc-late',
+          originalThreadTs: '1700000000.000100',
+          originalChannel: 'D123',
+          pipelineState: 'awaiting_human',
+          trigger: 'supervisor_exhausted',
+          behavior: 'park_wait',
+          stageToResume: 'sql_generation',
+          context: {
+            clarifiedQuestion: 'Show revenue',
+            userQuestion: 'Show revenue',
+            groundingCitations: [],
+          },
+          escalationChannel: 'C-ESCALATION',
+          escalationTs: '1700000000.000900',
+          statusMsgTs: '1700000000.000200',
+          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+          expiresAt: new Date(Date.now() - 1000),
+          traceId: 'trace-late',
+        }),
+        ref: { update: vi.fn(async () => {}) },
+      }],
+    });
+
+    await handleMessageEvent({
+      event: {
+        ...dmEvent('late guidance', {
+          channel_type: 'channel',
+          channel: 'C-ESCALATION',
+          thread_ts: '1700000000.000900',
+          ts: '1700000000.000950',
+        }),
+      },
+      body: bodyWithEventId('EvLateEscalation'),
+      client: mockClient,
+      config: escalationConfig,
+      getTables,
+    });
+
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C-ESCALATION',
+        thread_ts: '1700000000.000900',
+        text: expect.stringContaining('timed out before your reply'),
+      }),
+    );
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'D123',
+        thread_ts: '1700000000.000100',
+        text: expect.stringContaining("wasn't able to get an answer"),
+      }),
+    );
+    expect(statusPosts()).not.toContain(STATUS_TEXT);
     expect(mockRunPipeline).not.toHaveBeenCalled();
   });
 });

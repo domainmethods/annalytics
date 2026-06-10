@@ -3,6 +3,7 @@ import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
 import { hasPendingClarification } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
 import { rootLogger } from '../logging.js';
+import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 /**
  * Shared preflight guard: runs lock + clarification + escalation checks in order.
@@ -52,8 +53,11 @@ export async function preflightChecks(
     }
 
     // Guard 3: Pending escalation
-    const pendingEscalation = await getEscalationByThread(threadTs);
-    if (pendingEscalation) {
+    const escalationLookup = await getEscalationByThread(threadTs);
+    if (escalationLookup?.status === 'expired_now') {
+      await notifyEscalationTimeout(escalationLookup.state, client);
+    }
+    if (escalationLookup?.status === 'pending') {
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,

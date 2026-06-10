@@ -26,6 +26,7 @@ import { classifyFollowUp } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
 import { buildThreadContext } from '../slack/threadContext.js';
 import { rootLogger } from '../logging.js';
+import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 /**
  * Wire the `message` event (DMs + channel thread follow-ups) to {@link handleMessageEvent}.
@@ -101,7 +102,16 @@ export async function handleMessageEvent({
       if (escalationCtx) {
         visibleResponse = true;
         await markSlackEventVisible(eventId).catch(() => {});
-        await resumeFromEscalation(escalationCtx, client, getTables(), toPipelineConfig(config));
+        if (escalationCtx.status === 'expired_now') {
+          await client.chat.postMessage({
+            channel: escalationCtx.state.escalationChannel,
+            thread_ts: escalationCtx.state.escalationTs,
+            text: "This escalation timed out before your reply, so it wasn't applied. The requester was notified.",
+          });
+          await notifyEscalationTimeout(escalationCtx.state, client);
+        } else {
+          await resumeFromEscalation(escalationCtx.context, client, getTables(), toPipelineConfig(config));
+        }
         return;
       }
     }

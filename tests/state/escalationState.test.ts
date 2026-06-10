@@ -101,10 +101,11 @@ describe('getEscalationByThread', () => {
     const result = await getEscalationByThread('1234.5678');
 
     expect(result).not.toBeNull();
-    expect(result!.escalationId).toBe('esc-123');
-    expect(result!.createdAt).toBeInstanceOf(Date);
-    expect(result!.expiresAt).toBeInstanceOf(Date);
-    expect(result!.createdAt.getTime()).toBe(createdDate.getTime());
+    expect(result!.status).toBe('pending');
+    expect(result!.state.escalationId).toBe('esc-123');
+    expect(result!.state.createdAt).toBeInstanceOf(Date);
+    expect(result!.state.expiresAt).toBeInstanceOf(Date);
+    expect(result!.state.createdAt.getTime()).toBe(createdDate.getTime());
     expect(mockWhere).toHaveBeenCalledWith('originalThreadTs', '==', '1234.5678');
   });
 
@@ -118,7 +119,7 @@ describe('getEscalationByThread', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null and marks expired escalation as timed_out', async () => {
+  it('returns expired_now and marks expired escalation as timed_out', async () => {
     const pastDate = new Date(Date.now() - 1000);
     const mockUpdateRef = vi.fn().mockResolvedValue(undefined);
     mockLimit.mockReturnValue({
@@ -137,8 +138,40 @@ describe('getEscalationByThread', () => {
 
     const result = await getEscalationByThread('1234.5678');
 
-    expect(result).toBeNull();
+    expect(result).toMatchObject({
+      status: 'expired_now',
+      state: { escalationId: 'esc-expired' },
+    });
     expect(mockUpdateRef).toHaveBeenCalledWith({ pipelineState: 'timed_out' });
+  });
+
+  it('returns null on a subsequent lookup after the lazy timeout flip', async () => {
+    const pastDate = new Date(Date.now() - 1000);
+    const mockUpdateRef = vi.fn().mockResolvedValue(undefined);
+    mockLimit
+      .mockReturnValueOnce({
+        get: vi.fn().mockResolvedValue({
+          empty: false,
+          docs: [{
+            data: () => ({
+              escalationId: 'esc-expired',
+              pipelineState: 'awaiting_human',
+              expiresAt: { toDate: () => pastDate },
+            }),
+            ref: { update: mockUpdateRef },
+          }],
+        }),
+      })
+      .mockReturnValueOnce({
+        get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
+      });
+
+    const first = await getEscalationByThread('1234.5678');
+    const second = await getEscalationByThread('1234.5678');
+
+    expect(first?.status).toBe('expired_now');
+    expect(second).toBeNull();
+    expect(mockUpdateRef).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -170,9 +203,10 @@ describe('getEscalationByEscalationThread', () => {
     const result = await getEscalationByEscalationThread('9999.0001');
 
     expect(result).not.toBeNull();
-    expect(result!.escalationId).toBe('esc-456');
-    expect(result!.createdAt).toBeInstanceOf(Date);
-    expect(result!.expiresAt).toBeInstanceOf(Date);
+    expect(result!.status).toBe('pending');
+    expect(result!.state.escalationId).toBe('esc-456');
+    expect(result!.state.createdAt).toBeInstanceOf(Date);
+    expect(result!.state.expiresAt).toBeInstanceOf(Date);
     expect(mockWhere).toHaveBeenCalledWith('escalationTs', '==', '9999.0001');
   });
 });

@@ -152,8 +152,11 @@ describe('handleEscalationReaction', () => {
 
   it('ignores a lookup hit whose escalation channel does not match the reacted message', async () => {
     mockGetEscalation.mockResolvedValue({
+      status: 'pending',
+      state: {
       ...baseEscalation,
       escalationChannel: 'C-OTHER-CHANNEL',
+      },
     });
 
     await callHandler({
@@ -167,8 +170,11 @@ describe('handleEscalationReaction', () => {
 
   it('replies in the escalation thread (and does not resolve) when there is no proposed SQL', async () => {
     mockGetEscalation.mockResolvedValue({
+      status: 'pending',
+      state: {
       ...baseEscalation,
       context: { ...baseEscalation.context, previousSql: undefined },
+      },
     });
 
     await callHandler(baseEvent);
@@ -184,7 +190,7 @@ describe('handleEscalationReaction', () => {
   });
 
   it('best_effort_verify: resumes with ✅ confirmation guidance and skips teaching candidate', async () => {
-    mockGetEscalation.mockResolvedValue(baseEscalation);
+    mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
 
     await callHandler(baseEvent);
 
@@ -211,8 +217,11 @@ describe('handleEscalationReaction', () => {
 
   it('park_wait: resumes with data-team confirmation guidance, the confirmed SQL as refinement hint, and skips teaching candidate', async () => {
     mockGetEscalation.mockResolvedValue({
+      status: 'pending',
+      state: {
       ...baseEscalation,
       behavior: 'park_wait',
+      },
     });
 
     await callHandler(baseEvent);
@@ -243,8 +252,11 @@ describe('handleEscalationReaction', () => {
       },
     };
     mockGetEscalation.mockResolvedValue({
+      status: 'pending',
+      state: {
       ...baseEscalation,
       escalationChannel: 'D-ANALYST-DM',
+      },
     });
 
     await callHandler(
@@ -266,5 +278,27 @@ describe('handleEscalationReaction', () => {
       toPipelineConfig(dmConfig),
       expect.objectContaining({ skipTeachingCandidate: true }),
     );
+  });
+
+  it('notifies both threads when a ✅ arrives after timeout and skips confirmation', async () => {
+    mockGetEscalation.mockResolvedValue({ status: 'expired_now', state: baseEscalation });
+
+    await callHandler(baseEvent);
+
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C-ESCALATION',
+        thread_ts: 'esc-ts-1',
+        text: expect.stringContaining('timed out before your reply'),
+      }),
+    );
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C-ORIGINAL',
+        thread_ts: 'thread-1',
+        text: expect.stringContaining("hasn't weighed in yet"),
+      }),
+    );
+    expect(mockResume).not.toHaveBeenCalled();
   });
 });

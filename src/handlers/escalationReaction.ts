@@ -6,6 +6,7 @@ import type { TableContext } from '../dbt/types.js';
 import { getEscalationByEscalationThread } from '../state/escalationState.js';
 import { resumeFromEscalation } from './escalationResponse.js';
 import { toPipelineConfig } from '../pipeline.js';
+import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 const CONFIRM_REACTION = 'white_check_mark'; // ✅ U+2705
 
@@ -57,9 +58,21 @@ export async function handleEscalationReaction({
     && event.item.channel !== config.escalation.channelId
   ) return;
 
-  const state = await getEscalationByEscalationThread(event.item.ts);
-  if (!state) return; // not an escalation card, or already resolved/timed out
+  const lookup = await getEscalationByEscalationThread(event.item.ts);
+  if (!lookup) return; // not an escalation card, or already resolved/timed out
+
+  const { state } = lookup;
   if (state.escalationChannel !== event.item.channel) return;
+
+  if (lookup.status === 'expired_now') {
+    await client.chat.postMessage({
+      channel: state.escalationChannel,
+      thread_ts: state.escalationTs,
+      text: "This escalation timed out before your reply, so it wasn't applied. The requester was notified.",
+    });
+    await notifyEscalationTimeout(state, client);
+    return;
+  }
 
   if (!state.context.previousSql) {
     await client.chat.postMessage({

@@ -4,6 +4,11 @@ import type { EscalationState } from '../types.js';
 const COLLECTION = 'escalation_state';
 const RETAIN_DAYS = 90;
 
+export type EscalationLookup =
+  | { status: 'pending'; state: EscalationState }
+  | { status: 'expired_now'; state: EscalationState }
+  | null;
+
 export async function saveEscalationState(
   state: Omit<EscalationState, 'createdAt' | 'expiresAt' | 'pipelineState' | 'lastReminderAt'>,
   timeoutHours: number,
@@ -41,7 +46,7 @@ function toEscalationState(data: Record<string, unknown>): EscalationState {
 async function queryPendingEscalation(
   field: string,
   value: string,
-): Promise<EscalationState | null> {
+): Promise<EscalationLookup> {
   const db = getDb();
   const snapshot = await db.collection(COLLECTION)
     .where(field, '==', value)
@@ -56,21 +61,21 @@ async function queryPendingEscalation(
 
   if (state.expiresAt < new Date()) {
     await doc.ref.update({ pipelineState: 'timed_out' });
-    return null;
+    return { status: 'expired_now', state };
   }
 
-  return state;
+  return { status: 'pending', state };
 }
 
 export async function getEscalationByThread(
   threadTs: string,
-): Promise<EscalationState | null> {
+): Promise<EscalationLookup> {
   return queryPendingEscalation('originalThreadTs', threadTs);
 }
 
 export async function getEscalationByEscalationThread(
   escalationTs: string,
-): Promise<EscalationState | null> {
+): Promise<EscalationLookup> {
   return queryPendingEscalation('escalationTs', escalationTs);
 }
 
@@ -114,6 +119,6 @@ export async function timeoutEscalation(
 export async function hasPendingEscalation(
   threadTs: string,
 ): Promise<boolean> {
-  const state = await getEscalationByThread(threadTs);
-  return state !== null;
+  const lookup = await getEscalationByThread(threadTs);
+  return lookup?.status === 'pending';
 }
