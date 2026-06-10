@@ -11,6 +11,9 @@
  * `__name__` order (300/page) and filters locally. Dry-run is the DEFAULT —
  * nothing is written without `--apply`.
  *
+ * Set RESPONSE_CONTEXT_RETENTION_DAYS in your shell to match the deployed
+ * service's value, or backfilled deadlines will diverge from new writes.
+ *
  * Usage:
  *   npx tsx scripts/backfill-retention-fields.ts --project <id> [--apply]
  */

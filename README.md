@@ -379,17 +379,45 @@ The standard region is `us-west1`.
 
 ### Firestore TTL Policy
 
-The runtime stores short-lived locks, clarification state, escalation state, and
-Slack event dedupe records in Firestore with `expiresAt` timestamps. Enable TTL
-for the Slack event dedupe collection so old retry markers are pruned
-automatically:
+The runtime writes a retention timestamp on every document it stores. Most
+collections (locks, clarification state, caches, Slack event dedupe, dbt run
+history, `response_context`) use `expiresAt`; for `response_context` the window
+is `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90 days). `escalation_state`
+retention uses `retainUntil` (fixed 90 days) because its `expiresAt` is the
+escalation timeout, not a retention deadline. The manifest
+`infra/firestore.ttls.json` is the source of truth for which field each
+collection group's TTL policy targets. This one-liner emits a
+`gcloud firestore fields ttls update` command for every entry, so it stays in
+sync with the manifest:
 
 ```bash
-gcloud firestore fields ttls update expiresAt \
-  --collection-group=slack_event_dedupe \
-  --database="(default)" \
-  --enable-ttl \
-  --project "$PROJECT_ID"
+node -e 'JSON.parse(require("fs").readFileSync("infra/firestore.ttls.json")).ttls.forEach(t=>console.log("gcloud firestore fields ttls update "+t.field+" --collection-group="+t.collectionGroup+" --database=\"(default)\" --enable-ttl --project=\"$PROJECT_ID\""))'
+```
+
+Review the printed commands, then pipe them to a shell to apply (enabling a TTL
+that is already enabled is a safe no-op):
+
+```bash
+node -e '...' | sh   # same one-liner as above, piped to sh
+```
+
+Verify what is live at any time:
+
+```bash
+gcloud firestore fields ttls list --database="(default)" --project "$PROJECT_ID"
+```
+
+TTL deletion is best-effort: Firestore typically removes expired documents
+within ~72 hours of expiry, not at the deadline. That is why the runtime keeps
+its check-on-read guards (lock expiry, clarification/escalation staleness,
+cache freshness) — TTL is cleanup, not correctness.
+
+Documents written before retention fields existed lack the targeted field and
+will never be TTL-deleted. For pre-existing deployments, run the optional
+backfill (dry-run by default; add `--apply` to write):
+
+```bash
+npx tsx scripts/backfill-retention-fields.ts --project "$PROJECT_ID"
 ```
 
 ### Automatic

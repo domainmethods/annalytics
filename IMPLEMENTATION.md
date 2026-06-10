@@ -12,7 +12,7 @@ This document sequences the work and points to the authoritative source for each
 ## 1. GCP infrastructure (once per project)
 
 - [ ] Follow README **"Infrastructure Setup"** steps 1–6: enable APIs, create the Firestore database, apply the composite indexes from the `infra/firestore.indexes.json` manifest (the README has a one-liner that generates the `gcloud` commands), create the Artifact Registry repo, the service account + IAM, and the Secret Manager containers.
-- [ ] Apply the Firestore TTL policy per README **"Firestore TTL Policy"**. Known gap: that section currently covers only `slack_event_dedupe`. Until the Operational Trust tranche closes it (trajectory-governance, Active Tranche B), decide retention manually for the other `expiresAt` collections and especially for `response_context`, which has no expiry at all and grows one document per query.
+- [ ] Apply the Firestore TTL policies per README **"Firestore TTL Policy"**. The `infra/firestore.ttls.json` manifest is the source of truth for every retained collection (including `response_context`); the README has a one-liner that generates the `gcloud` commands from it.
 
 ## 2. Slack app
 
@@ -62,9 +62,4 @@ This is the governing tranche — do it before adding a second domain or any new
 
 ## 8. Known template gaps you inherit
 
-Open items from the template's Operational Trust tranche (trajectory-governance, Active Tranche B). Until they land upstream, an implementation must mitigate them itself:
-
-- Firestore TTL coverage beyond `slack_event_dedupe`, and a retention window for `response_context`.
-- A production sink for per-node token/latency telemetry (`src/agents/modelGateway.ts` records it; nothing persists it).
-- Time-driven escalation timeouts — reminders/timeouts currently fire only when new Slack events arrive, so quiet workspaces never time out.
-- The escalation card's "React with ✅" quick-path has no handler yet; tell analysts to reply in-thread instead.
+None currently — the template's Operational Trust tranche closed the previously listed gaps; check `docs/trajectory-governance.md` for any newer ones.

@@ -69,6 +69,7 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       'resource "google_secret_manager_secret" "runtime" {}',
     ].join('\n'),
     'infra/firestore.indexes.json': '{ "indexes": [], "fieldOverrides": [] }',
+    'infra/firestore.ttls.json': '{ "ttls": [] }',
     'references/README.md': 'Add implementation-specific ReferenceCards here before syncing File Search.',
   };
 

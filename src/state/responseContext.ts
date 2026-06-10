@@ -4,7 +4,8 @@ import type { ResponseContext } from '../types.js';
 /** Retention window for response_context docs. The Firestore TTL policy (see
  *  `infra/firestore.ttls.json`) targets `expiresAt` to delete expired docs.
  *  Feedback aggregation windows (getResponseContextsSince) must not exceed
- *  this retention. */
+ *  this retention. `scripts/backfill-retention-fields.ts` replicates this
+ *  logic and must be updated in lockstep. */
 const RETENTION_DAYS = (() => {
   const v = Number(process.env.RESPONSE_CONTEXT_RETENTION_DAYS);
   return Number.isFinite(v) && v > 0 ? v : 90;

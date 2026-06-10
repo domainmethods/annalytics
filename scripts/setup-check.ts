@@ -29,6 +29,7 @@ const requiredFiles = [
   '.github/workflows/sync-teachings.yml',
   'infra/main.tf',
   'infra/firestore.indexes.json',
+  'infra/firestore.ttls.json',
   'references/README.md',
 ];
 
