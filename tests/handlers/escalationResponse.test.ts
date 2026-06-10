@@ -111,6 +111,41 @@ describe('resumeFromEscalation', () => {
     );
     // Should resolve escalation
     expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
+
+    // Default (no options): teaching candidate generation still fires
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(mockGenerateTeachingCandidate).toHaveBeenCalled();
+  });
+
+  it('skipTeachingCandidate: resolves escalation without generating a teaching candidate', async () => {
+    mockGetEscalation.mockResolvedValue(baseEscalation);
+    const ctx = await checkEscalationResponse({
+      channel: 'C-ESCALATION',
+      thread_ts: 'esc-ts-1',
+      text: 'Use LEFT JOIN on user_id',
+    });
+
+    await resumeFromEscalation(
+      ctx!,
+      mockClient,
+      [],
+      {
+        geminiApiKey: 'key',
+        maxBytesProcessed: 10e9,
+        queryTimeoutMs: 30000,
+        maxResultRows: 1000,
+      },
+      { skipTeachingCandidate: true },
+    );
+
+    // Escalation is still resolved as normal
+    expect(mockRunPipeline).toHaveBeenCalled();
+    expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
+
+    // Flush microtask queue — even after settling, no teaching candidate work happened
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(mockGenerateTeachingCandidate).not.toHaveBeenCalled();
+    expect(mockSaveTeachingCandidate).not.toHaveBeenCalled();
   });
 
   it('best_effort_verify: posts human response to original thread, resolves escalation', async () => {

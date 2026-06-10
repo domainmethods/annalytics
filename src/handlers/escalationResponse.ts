@@ -56,6 +56,7 @@ export async function resumeFromEscalation(
   client: WebClient,
   tables: TableContext[],
   config: PipelineConfig,
+  options?: { skipTeachingCandidate?: boolean },
 ): Promise<void> {
   if (ctx.behavior === 'park_wait') {
     await runPipeline({
@@ -79,21 +80,25 @@ export async function resumeFromEscalation(
 
   await resolveEscalation(ctx.escalationId);
 
-  // Fire-and-forget: generate teaching candidate from escalation
-  const teachingCtx: EscalationTeachingContext = {
-    escalationId: ctx.escalationId,
-    originalQuestion: ctx.context.userQuestion,
-    clarifiedQuestion: ctx.context.clarifiedQuestion,
-    humanResponse: ctx.humanGuidance,
-    failedSql: ctx.context.previousSql,
-    supervisorNotes: ctx.context.supervisorNotes,
-    apiKey: config.geminiApiKey,
-  };
+  // Fire-and-forget: generate teaching candidate from escalation.
+  // Skipped when the resolution carries no new human-authored guidance
+  // (e.g. a ✅ reaction confirming the bot's own proposed SQL).
+  if (!options?.skipTeachingCandidate) {
+    const teachingCtx: EscalationTeachingContext = {
+      escalationId: ctx.escalationId,
+      originalQuestion: ctx.context.userQuestion,
+      clarifiedQuestion: ctx.context.clarifiedQuestion,
+      humanResponse: ctx.humanGuidance,
+      failedSql: ctx.context.previousSql,
+      supervisorNotes: ctx.context.supervisorNotes,
+      apiKey: config.geminiApiKey,
+    };
 
-  generateTeachingCandidate(teachingCtx)
-    .then(candidate => saveTeachingCandidate(candidate))
-    .catch(err => {
-      // Log and swallow — never block escalation resolution
-      console.error(`Teaching candidate generation failed for ${ctx.escalationId}:`, err);
-    });
+    generateTeachingCandidate(teachingCtx)
+      .then(candidate => saveTeachingCandidate(candidate))
+      .catch(err => {
+        // Log and swallow — never block escalation resolution
+        console.error(`Teaching candidate generation failed for ${ctx.escalationId}:`, err);
+      });
+  }
 }
