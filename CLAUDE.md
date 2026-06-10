@@ -10,7 +10,7 @@ Anna Lytics is a Slack bot that translates natural-language questions into BigQu
 
 Before proposing or implementing Phase 3+ product work, read `docs/trajectory-governance.md`. That document is the governing roadmap checkpoint for current tranche selection, deferred features, and maintenance rules.
 
-Current guidance: prioritize trust infrastructure over feature expansion. The active tranches are (A) the implementation-specific `ReferenceCard v1` acceptance run for one high-confusion domain, and (B) operational trust maintenance (Firestore TTL/retention, production telemetry sink, time-driven escalation timeouts, honoring or removing the escalation ✅-reaction promise). An evaluation-scaffolding freeze is in force: do not build new benchmark/calibration/sizing/sweep machinery until the first real acceptance decision is recorded. Do not commit client-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, or benchmark evidence to this template unless the repository has intentionally become an implementation repo. Do not revive broad charts, BQML expansion, domain agents, or automatic correction harvesting as the active next tranche unless `docs/trajectory-governance.md` is updated first with the new rationale and evidence.
+Current guidance: prioritize trust infrastructure over feature expansion. The active tranche is the implementation-specific `ReferenceCard v1` acceptance run for one high-confusion domain (Tranche B — operational trust maintenance: Firestore TTL/retention, production telemetry sink, time-driven escalation timeouts, the escalation ✅-reaction handler — completed 2026-06-09). An evaluation-scaffolding freeze is in force: do not build new benchmark/calibration/sizing/sweep machinery until the first real acceptance decision is recorded. Do not commit client-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, or benchmark evidence to this template unless the repository has intentionally become an implementation repo. Do not revive broad charts, BQML expansion, domain agents, or automatic correction harvesting as the active next tranche unless `docs/trajectory-governance.md` is updated first with the new rationale and evidence.
 
 When adversarial audits, benchmark results, production incidents, or analyst review change the development trajectory, update `docs/trajectory-governance.md` in the same change set.
 
@@ -111,7 +111,7 @@ When the supervisor loop returns `exhausted`, `decideEscalation()` chooses a beh
 
 Escalation supports `channel` mode (shared channel) and `dm` mode (direct message to analyst). State is persisted to `escalation_state` collection for cross-request resume. `resolveEscalationTarget()` in pipeline.ts resolves the target based on mode.
 
-Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. Reminders and timeouts piggyback on incoming event traffic (`checkOverdueEscalations()`).
+Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. A ✅ reaction on an escalation card that shows proposed SQL confirms it (`handleEscalationReaction()` in `handlers/escalationReaction.ts`; skips teaching-candidate harvesting since the reaction carries no new guidance). Reminders and timeouts run via `checkOverdueEscalations()`, driven both by incoming event traffic and by the `POST /api/lifecycle-sweep` endpoint (Cloud Scheduler).
 
 ### Response Buttons
 
@@ -123,9 +123,9 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 |---|---|---|
 | `processing_threads` | `threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
 | `rate_limits` | `userId` | Per-user rate limiting (1-hour sliding window) |
-| `response_context` | `threadTs_statusMsgTs` | Pipeline result persistence + thread participation detection |
+| `response_context` | `threadTs_statusMsgTs` | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
-| `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume) |
+| `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
 | `config` | `metadata_state` | dbt metadata freshness |
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
@@ -133,6 +133,8 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `feedback_notes` | `traceId` or `threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
 
 **Composite indexes are manual.** Any Firestore query combining a `where()` with an `orderBy()` on a different field (or multiple `where()` clauses) needs a composite index. These are created manually via `gcloud firestore indexes composite create` — Terraform in `infra/` is not applied in this environment. When you add such a query, also add the index to the `infra/firestore.indexes.json` manifest and create it in the live project, or the query throws `FAILED_PRECONDITION` at runtime (mocked tests will not catch this). See README "Infrastructure Setup".
+
+**TTL policies are also manual.** `infra/firestore.ttls.json` is the manifest of per-collection TTL fields (parity-tested by `tests/infra/firestoreTtls.test.ts`); apply via `gcloud firestore fields ttls update` — see README "Firestore TTL Policy".
 
 ### Config Conversion
 
@@ -149,6 +151,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | GET | `/health` | None | Liveness ping — returns `200 OK`. Dependency-free; Cloud Run's liveness probe. |
 | GET | `/health/doctor` | None | Diagnostic readiness check — probes Firestore/BigQuery/Gemini/Slack in parallel + reports configured features. Info-safe JSON (no IDs/secrets/raw errors). `200` ok/degraded, `503` when a critical dep is down. |
 | POST | `/api/dbt-run-results` | Bearer `DBT_WEBHOOK_SECRET` | Ingest dbt `run_results.json` from CI |
+| POST | `/api/lifecycle-sweep` | Bearer `LIFECYCLE_SWEEP_SECRET` | Trigger escalation reminder/timeout sweep (Cloud Scheduler) |
 
 ## Key SDK Patterns
 
