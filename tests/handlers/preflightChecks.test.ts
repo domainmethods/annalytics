@@ -106,6 +106,7 @@ describe('preflightChecks', () => {
             elements: expect.arrayContaining([
               expect.objectContaining({
                 action_id: 'clarification_cancel',
+                value: 'clar-123',
               }),
             ]),
           }),

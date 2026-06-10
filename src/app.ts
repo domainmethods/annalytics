@@ -16,6 +16,7 @@ import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
+import { handleClarificationCancel } from './handlers/clarificationCancel.js';
 import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
 import { FEEDBACK_REASON_PREFIX } from './slack/feedbackBlocks.js';
 import { OTHER_NOTE_CALLBACK_ID, OTHER_NOTE_BLOCK_ID, OTHER_NOTE_ACTION_ID } from './slack/feedbackModals.js';
@@ -267,6 +268,16 @@ app.action('refine_assumptions', async ({ ack, body, client }) => {
       text: 'What should I change about my assumptions? Reply with your corrections and I\'ll re-run the query.',
     });
   }
+});
+
+// "Never mind — cancel" on a pending clarification
+app.action('clarification_cancel', async ({ action, ack, body, client }) => {
+  await ack();
+  const clarificationId = (action as { value?: string }).value;
+  const channel = (body as any).channel?.id;
+  const messageTs = (body as any).message?.ts;
+  if (!clarificationId || !channel || !messageTs) return;
+  await handleClarificationCancel({ clarificationId, channel, messageTs, client });
 });
 
 // "Show reasoning" toggle — appends reasoning blocks to the message
