@@ -78,9 +78,10 @@ export async function getLatestResponseContext(
 }
 
 /** All response contexts created within the trailing window (for the feedback
- *  sensor). Unordered, bounded by `limit` — intended for low-frequency
- *  CLI/offline use, not a request hot path. Warns when the limit is hit so
- *  consumers can surface the truncation (no silent caps). */
+ *  sensor). Newest-first, bounded by `limit` so truncation drops the oldest
+ *  docs — intended for low-frequency CLI/offline use, not a request hot path.
+ *  Warns when the limit is hit so consumers can surface the truncation (no
+ *  silent caps). */
 export async function getResponseContextsSince(
   windowDays: number,
   limit = 5000,
@@ -89,6 +90,7 @@ export async function getResponseContextsSince(
   const snapshot = await getDb()
     .collection('response_context')
     .where('createdAt', '>=', since)
+    .orderBy('createdAt', 'desc')
     .limit(limit)
     .get();
   if (snapshot.size === limit) {

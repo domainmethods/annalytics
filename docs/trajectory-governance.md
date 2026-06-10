@@ -128,7 +128,6 @@ Verified 2026-06-09. Maintenance items — address opportunistically when touchi
 | `pipeline.ts` responsibility sprawl | `src/pipeline.ts` (720 lines, ~13 concerns) | Every feature lands here, so it compounds. Decompose opportunistically (escalation orchestration, formatting, persistence). |
 | BQML plumbing for a deferred feature | `src/agents/sqlGenerator.ts` (bqml_hint branches), `src/routineFastPath.ts` | BQML expansion is deferred, but forecast/anomaly/generate prompt branches and fast-path triggers ship today. Decide keep-or-remove at the next tranche boundary (see Deferred Work). |
 | Untyped Slack payloads | `src/app.ts` (32 `as any` casts) | Define typed Slack action/interactivity payload interfaces to centralize the assertions. |
-| Truncated window scans keep the oldest docs | `src/state/responseContext.ts` (`getResponseContextsSince`) | At the 5000-doc cap, Firestore's default ascending order on the inequality field keeps the *oldest* in-window docs; the feedback report then reflects the stalest slice. Add `orderBy('createdAt', 'desc')` (same field as the where — no composite index needed) when touching the module. Non-silent today: a truncation warning fires. |
 
 ## Completed Foundations
 

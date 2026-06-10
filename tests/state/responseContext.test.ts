@@ -203,7 +203,8 @@ describe('getLatestResponseContext', () => {
 describe('getResponseContextsSince', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWhere.mockReturnValue({ limit: mockLimit });
+    mockWhere.mockReturnValue({ orderBy: mockOrderBy });
+    mockOrderBy.mockReturnValue({ limit: mockLimit });
     mockLimit.mockReturnValue({ get: mockGet });
   });
 
@@ -236,6 +237,7 @@ describe('getResponseContextsSince', () => {
 
     await getResponseContextsSince(30);
 
+    expect(mockOrderBy).toHaveBeenCalledWith('createdAt', 'desc');
     expect(mockLimit).toHaveBeenCalledWith(5000);
   });
 
