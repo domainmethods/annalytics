@@ -5,7 +5,7 @@
 **Status:** Governing roadmap checkpoint
 **Applies to:** Product design, implementation plans, code review, benchmark work, teaching updates, and future Phase 3+ feature proposals.
 
-This document records the current development trajectory for Anna Lytics. Read **Current State**, **Current Decision**, and the **Active Tranches** before proposing or implementing a new tranche. The **Deferred Work** table states the blocking condition for every deferred item. The **Evidence Log** at the end preserves the dated decision history verbatim; do not read it for current direction.
+This document records the current development trajectory for Anna Lytics. Read **Current State**, **Current Decision**, the **Tranche Horizon**, and the **Active Tranches** before proposing or implementing a new tranche. The **Deferred Work** table states the blocking condition for every deferred item; the **Tranche Horizon** states the order in which eligible items activate. The **Evidence Log** at the end preserves the dated decision history verbatim; do not read it for current direction.
 
 Update this document whenever a major product direction, feature deferral, benchmark result, or adversarial audit changes the trajectory — and when you do, update the head sections (Current State, Current Decision, Deferred Work) rather than only appending a dated entry. Dated entries go in the Evidence Log.
 
@@ -33,7 +33,22 @@ The codebase is healthy: ~8.8K source lines, 813 tests passing, typecheck clean,
 3. **Operational trust maintenance is sanctioned to run in parallel** (Active Tranche B). It is maintenance under guardrail #1, not feature expansion, and does not gate on the acceptance run. A system that silently accumulates state forever, collects telemetry nobody can read, or freezes on user-facing promises erodes trust as surely as a wrong answer does.
 4. **The item-(3) contradiction is resolved.** Teaching impact measurement was listed as a "sanctioned investment" (2026-06-07 entry) and simultaneously as deferred (2026-06-08 entry) with no explanation. Resolution: it is **deferred**, with an explicit blocking condition — it cannot be built meaningfully before a real implementation has promoted teachings and benchmark slices to measure them against, i.e. it is blocked on the acceptance run. The 2026-06-07 "sanctioned" framing is withdrawn.
 
-## Strategic Rationale
+## Tranche Horizon
+
+The Deferred Work table states *eligibility* (what unblocks when). This section states *order* — which eligible item is next, so that when several unblock at once the trajectory does not drift to whichever is easiest. It is a queue, not a backlog: each entry is gated by the one before it, and detailed task breakdowns belong in plan docs, not here.
+
+**T1 (active now).** Tranche A (acceptance run) and Tranche B (operational trust) in parallel. UX-trust items and Code Debt Register items land opportunistically, with one hard sequencing rule: **feedback-loop closure to the user must ship before the second ReferenceCard domain is selected**, because domain selection from then on is supposed to come from the feedback sensor, and the sensor only keeps receiving data if users see their feedback matter. Note the bootstrap asymmetry this implies: the *first* pilot domain is chosen by analyst judgment (there is no production feedback before a deployment exists); only subsequent domains are chosen from aggregated pain signal.
+
+**T2 (on the acceptance outcome).** The existing branch: `ACCEPTED` → exactly one additional high-confusion domain; `NEEDS_REVISION` → scoped repair of the failing evidence category, then re-run. Standing cadence rule, now explicit: **every new ReferenceCard domain and every runtime-behavior promotion requires its own benchmark slice** before it ships (guardrail #5 applied as a recurring gate, not a one-time hurdle).
+
+**T3 (post-acceptance priority order).** Completing the acceptance run unblocks most of the Deferred Work table simultaneously. When that happens, the order is:
+
+1. **Side bar calibration check.** Run the calibration verdict against the real benchmark/judge data the acceptance run produced. If it passes, the side bar pilot (admin suspend/consult/resume behind a config flag) becomes the next product tranche; if it fails, the side bar stays deferred and the failure is recorded here.
+2. **Teaching impact measurement**, once at least one implementation teaching has been promoted — it needs a before/after to measure.
+3. **Node sizing completion**, as the implementation corpus grows enough to bound ε for the reasoning nodes.
+4. **Scaffolding unfreeze, last.** The freeze (Current Decision #2) lifts only after evidence is flowing routinely — at minimum the acceptance decision plus one post-acceptance benchmark slice — not at the first recorded artifact.
+
+**Fast-path graduation gate.** The routine fast path ships in pilot mode (`FAST_PATH_REQUIRE_SUPERVISOR=true`: eligible queries still run supervisor). Flipping to real supervisor-skips is a runtime-behavior promotion and carries its own evidence gate: a recorded pilot window in which supervisor review of fast-path-eligible queries produced **zero blocking corrections**, observed via the production telemetry sink that Tranche B delivers, with the window length and query counts recorded in this document. Until Tranche B's sink exists, the gate cannot be evaluated — which sequences it naturally after Tranche B.
 
 Anna Lytics already has the core self-serve analytics shape: Slack-native intake, dbt metadata, validated SQL generation, supervisor review, escalation, teachings, and response transparency. The highest-leverage gap is not another answer format. It is making the system more governable, measurable, and semantically grounded.
 
@@ -101,7 +116,7 @@ These are prerequisites for the 2026-06-07 feedback-sensor strategy, not feature
 2. **A help/onboarding surface.** There is no `/anna help`, no App Home content, no first-contact greeting that explains what the bot can answer, example questions, or what clarification/escalation waits mean. Users currently learn by trial and error.
 3. **A bailout for stuck threads.** A pending clarification blocks its thread with no user-visible reminder, expiry notice, or way to abandon. Surface the pending state and let the user cancel or restart.
 
-These may land alongside either active tranche. They do not require new measurement machinery and are exempt from the scaffolding freeze.
+These may land alongside either active tranche. They do not require new measurement machinery and are exempt from the scaffolding freeze. Sequencing note: item 1 (feedback-loop closure) is not merely opportunistic — per the Tranche Horizon it must ship before the second ReferenceCard domain is selected.
 
 ## Code Debt Register
 
@@ -283,3 +298,16 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 - What remains deferred: everything in the Deferred Work table, now with explicit blocking conditions per item.
 - Template boundary held: this update adds no client artifacts, identifiers, or evidence; it records audit findings and governance structure only.
 - Evidence source for this update: 2026-06-09 four-dimension repository audit in this change set's session (agent-assisted exploration with primary-source re-verification of every claim recorded above).
+
+### As of 2026-06-09 (tranche horizon)
+
+- Decision: added the **Tranche Horizon** section — an ordered queue over the Deferred Work table's eligibility conditions. Motivation: a review of the restructured document found it sufficient as a *gate* (it can veto misaligned work) but under-specified as a *queue*: completing the acceptance run unblocks most deferred items simultaneously, and the document gave no ordering rule for that moment — the same ambiguity that previously produced the instruments-over-measurement drift.
+- New commitments recorded:
+  - Feedback-loop closure to the user must ship before the second ReferenceCard domain is selected (the feedback sensor only keeps receiving data if users see their feedback matter).
+  - Bootstrap asymmetry made explicit: the first pilot domain is chosen by analyst judgment; only subsequent domains are chosen from aggregated feedback signal.
+  - Standing cadence rule: every new ReferenceCard domain and every runtime-behavior promotion requires its own benchmark slice (guardrail #5 as a recurring gate).
+  - Post-acceptance priority order: side bar calibration check → teaching impact measurement → node sizing completion → scaffolding unfreeze last.
+  - Fast-path graduation gate defined: supervisor-skip mode requires a recorded pilot window with zero blocking supervisor corrections on fast-path-eligible queries, observed via the Tranche B telemetry sink — which sequences fast-path graduation after Tranche B.
+- What remains deferred: unchanged; this entry adds ordering, not new active work.
+- Template boundary held: no client artifacts, identifiers, or evidence added.
+- Evidence source for this update: review discussion of the restructured governance document in this change set's session.
