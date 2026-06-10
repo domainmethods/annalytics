@@ -116,6 +116,30 @@ describe('handleEscalationReaction', () => {
     expect(mockResume).not.toHaveBeenCalled();
   });
 
+  it('dm mode: attempts the lookup even when the channel matches no configured id', async () => {
+    mockGetEscalation.mockResolvedValue(null);
+
+    await callHandler(
+      {
+        ...baseEvent,
+        item: { type: 'message', channel: 'D-ANALYST-DM', ts: 'esc-ts-1' },
+      },
+      {
+        ...baseConfig,
+        escalation: {
+          ...baseConfig.escalation,
+          mode: 'dm',
+          channelId: undefined,
+          analystUserId: 'U-ANALYST',
+        },
+      },
+    );
+
+    // dm mode skips the channel pre-filter and relies on the precise ts lookup.
+    expect(mockGetEscalation).toHaveBeenCalledWith('esc-ts-1');
+    expect(mockResume).not.toHaveBeenCalled();
+  });
+
   it('no-ops when there is no pending escalation for the message ts (idempotency)', async () => {
     mockGetEscalation.mockResolvedValue(null);
 

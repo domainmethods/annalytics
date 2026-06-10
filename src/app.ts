@@ -9,6 +9,7 @@ import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
 import { registerCommands } from './handlers/commands.js';
 import { registerMentions } from './handlers/mentions.js';
 import { registerMessageHandler } from './handlers/messageHandler.js';
+import { registerEscalationReaction } from './handlers/escalationReaction.js';
 import { recordFeedback, getResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
@@ -152,6 +153,10 @@ registerMentions(app, getConfig, getTables);
 // handlers/messageHandler.ts so the orchestration is unit/integration-testable
 // instead of living in this coverage-excluded entry point.
 registerMessageHandler(app, getConfig, getTables);
+// Escalation card ✅ quick-path — requires the `reactions:read` scope and the
+// `reaction_added` event subscription (see README); without them Slack never
+// delivers the event and this handler is silently inert.
+registerEscalationReaction(app, getConfig, getTables);
 
 // Feedback button handlers — record to Firestore
 app.action(/thumbs_(up|down)_.*/, async ({ action, ack, body, client }) => {

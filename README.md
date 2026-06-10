@@ -85,6 +85,7 @@ Subscribe to these bot events:
 - `message.groups`
 - `message.im`
 - `message.mpim`
+- `reaction_added`
 
 Plain 1:1 DMs are delivered through `message.im`. Group DMs are delivered
 through `message.mpim`. Channel messages require `app_mention` unless the bot
@@ -134,11 +135,18 @@ groups:history
 im:history
 im:write
 mpim:history
+reactions:read
 ```
 
 `im:write` is required for `ESCALATION_MODE=dm` — the bot opens a direct message
 with the analyst to deliver escalation cards. Channel-mode escalation does not
 need it.
+
+`reactions:read` is required for the escalation card's ✅ quick-path — an analyst
+reacting ✅ to a pending escalation card confirms the proposed SQL and resolves
+the escalation. Harmless to omit: the bot simply never receives the
+`reaction_added` event, and analysts can still resolve escalations by replying in
+the thread.
 
 After changing scopes, event subscriptions, slash commands, App Home settings,
 or interactivity settings, reinstall the app to the workspace from
@@ -174,6 +182,10 @@ After deployment and app reinstall:
    turned off, recheck **Features -> App Home -> Messages**.
 4. Mention the bot in a private test channel with `@Anna Lytics <question>`.
 5. Run `/anna <question>` in the same test channel.
+6. Trigger a test escalation (👎 -> "Wrong number" on an answer), react ✅ on the
+   escalation card, and confirm the original thread receives the resolution. If
+   nothing happens, recheck the `reactions:read` scope and the `reaction_added`
+   event subscription, then reinstall the app.
 
 ## Local Development
 
