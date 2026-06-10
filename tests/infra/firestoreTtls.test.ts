@@ -34,6 +34,7 @@ describe('infra/firestore.ttls.json', () => {
       { collectionGroup: 'dbt_run_history', field: 'expiresAt' },
       { collectionGroup: 'escalation_state', field: 'retainUntil' },
       { collectionGroup: 'response_context', field: 'expiresAt' },
+      { collectionGroup: 'pending_notifications', field: 'expiresAt' },
     ];
 
     expect(manifest.ttls).toEqual(expected);

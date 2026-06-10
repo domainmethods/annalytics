@@ -419,6 +419,13 @@ that is already enabled is a safe no-op):
 node -e '...' | sh   # same one-liner as above, piped to sh
 ```
 
+For an existing install, applying a newly declared TTL is a manual operator
+step:
+
+```bash
+gcloud firestore fields ttls update expiresAt --collection-group=pending_notifications --database="(default)" --enable-ttl --project "$GCP_PROJECT_ID"
+```
+
 Verify what is live at any time:
 
 ```bash

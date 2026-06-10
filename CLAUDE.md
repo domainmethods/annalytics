@@ -131,6 +131,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
 | `feedback_notes` | `traceId` or `threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
+| `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 
 **Composite indexes are manual.** Any Firestore query combining a `where()` with an `orderBy()` on a different field (or multiple `where()` clauses) needs a composite index. These are created manually via `gcloud firestore indexes composite create` — Terraform in `infra/` is not applied in this environment. When you add such a query, also add the index to the `infra/firestore.indexes.json` manifest and create it in the live project, or the query throws `FAILED_PRECONDITION` at runtime (mocked tests will not catch this). See README "Infrastructure Setup".
 
