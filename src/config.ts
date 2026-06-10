@@ -38,6 +38,7 @@ export interface AppConfig {
     requireSupervisor: boolean;
   };
   port: number;
+  lifecycleSweepSecret?: string;
 }
 
 function requireEnv(name: string): string {
@@ -110,5 +111,6 @@ export function loadConfig(): AppConfig {
       requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
     },
     port: parseEnvInt('PORT', 3000),
+    lifecycleSweepSecret: process.env.LIFECYCLE_SWEEP_SECRET || undefined,
   };
 }

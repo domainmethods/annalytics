@@ -20,6 +20,7 @@ import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
 import { FEEDBACK_REASON_PREFIX } from './slack/feedbackBlocks.js';
 import { OTHER_NOTE_CALLBACK_ID, OTHER_NOTE_BLOCK_ID, OTHER_NOTE_ACTION_ID } from './slack/feedbackModals.js';
 import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
+import { registerLifecycleSweep } from './handlers/lifecycleSweep.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
@@ -90,6 +91,17 @@ const app = new App({
   receiver,
   processBeforeResponse: false,
 });
+
+// Scheduler-driven escalation lifecycle sweep (optional — no secret, no route).
+// Registered after App construction, unlike registerDbtRunIngestion, because
+// the sweep posts to Slack via app.client. Deps are getter-injected to keep
+// them lazy and config-reload-friendly.
+if (config.lifecycleSweepSecret) {
+  registerLifecycleSweep(receiver.router, config.lifecycleSweepSecret, {
+    getClient: () => app.client,
+    getEscalationConfig: () => config.escalation,
+  });
+}
 
 // Diagnostic ("doctor") endpoint — separate from the /health liveness ping so a
 // transient dependency blip can't fail Cloud Run's liveness probe and trigger a

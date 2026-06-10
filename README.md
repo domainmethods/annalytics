@@ -345,6 +345,30 @@ Required Secret Manager names:
 | `slack-signing-secret` | `SLACK_SIGNING_SECRET` |
 | `gemini-api-key` | `GEMINI_API_KEY` |
 
+### 7. Cloud Scheduler lifecycle sweep (optional)
+
+With `LIFECYCLE_SWEEP_SECRET` set on the service, create a Cloud Scheduler job
+that hits `POST /api/lifecycle-sweep` every 10 minutes so escalation reminders
+and timeouts fire on wall-clock time. Replace `<service-url>` with the deployed
+Cloud Run service URL:
+
+```bash
+gcloud services enable cloudscheduler.googleapis.com --project "$GCP_PROJECT_ID"
+
+gcloud scheduler jobs create http anna-lytics-lifecycle-sweep \
+  --schedule="*/10 * * * *" \
+  --uri="<service-url>/api/lifecycle-sweep" \
+  --http-method=POST \
+  --headers="Authorization=Bearer ${LIFECYCLE_SWEEP_SECRET}" \
+  --location="$REGION" \
+  --project "$GCP_PROJECT_ID"
+```
+
+Skipping this step keeps today's event-traffic-only behavior: escalation
+reminders and timeouts only fire when someone messages the bot. With the
+scheduler in place, the worst-case timeout-notification latency equals the
+sweep interval (10 minutes as configured above).
+
 ## Deployment
 
 The standard region is `us-west1`.
@@ -438,6 +462,7 @@ All configuration is via environment variables. See `.env.example` for the local
 | `DBT_MANIFEST_PATH` | No | `./dbt/manifest.json` | Path to dbt manifest |
 | `DBT_CATALOG_PATH` | No | `./dbt/catalog.json` | Path to dbt catalog |
 | `DBT_WEBHOOK_SECRET` | No | | Enables `POST /api/dbt-run-results` when set |
+| `LIFECYCLE_SWEEP_SECRET` | No | | Enables `POST /api/lifecycle-sweep` when set (scheduler-driven escalation reminders/timeouts) |
 | `PORT` | No | `3000` | HTTP port |
 | `COST_GATE_MAX_BYTES` | No | `10737418240` | Max bytes a query can scan |
 | `QUERY_TIMEOUT_MS` | No | `30000` | Query execution timeout |

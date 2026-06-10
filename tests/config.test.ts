@@ -35,6 +35,27 @@ describe('loadConfig escalation.onNegativeFeedback', () => {
   });
 });
 
+describe('loadConfig lifecycleSweepSecret', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    baseEnv();
+  });
+
+  it('is undefined when LIFECYCLE_SWEEP_SECRET is unset', () => {
+    expect(loadConfig().lifecycleSweepSecret).toBeUndefined();
+  });
+
+  it('is undefined when LIFECYCLE_SWEEP_SECRET is empty', () => {
+    vi.stubEnv('LIFECYCLE_SWEEP_SECRET', '');
+    expect(loadConfig().lifecycleSweepSecret).toBeUndefined();
+  });
+
+  it('parses LIFECYCLE_SWEEP_SECRET from env', () => {
+    vi.stubEnv('LIFECYCLE_SWEEP_SECRET', 'sweep-secret');
+    expect(loadConfig().lifecycleSweepSecret).toBe('sweep-secret');
+  });
+});
+
 describe('loadConfig fastPath', () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
