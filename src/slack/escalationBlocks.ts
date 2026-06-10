@@ -57,7 +57,9 @@ export function buildEscalationBlocks(params: EscalationBlocksParams): KnownBloc
     type: 'section',
     text: {
       type: 'mrkdwn',
-      text: 'React with \u2705 if my guess is correct, or reply with guidance.',
+      text: params.bestGuessSql
+        ? 'React with \u2705 if my guess is correct, or reply with guidance.'
+        : 'Reply in this thread with guidance.',
     },
   } as SectionBlock);
 

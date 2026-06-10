@@ -21,7 +21,7 @@ describe('buildEscalationBlocks', () => {
     expect(text).toContain('#analytics');
     expect(text).toContain('https://slack.com/thread/123');
     expect(text).toContain('Two candidate tables');
-    expect(text).toContain('reply with guidance');
+    expect(text).toContain('Reply in this thread with guidance.');
     expect(blocks.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -48,6 +48,33 @@ describe('buildEscalationBlocks', () => {
 
     const text = blocks.map((b) => JSON.stringify(b)).join(' ');
     expect(text).not.toContain('```');
+  });
+
+  it('shows the ✅ quick-path only when a best guess exists', () => {
+    const blocks = buildEscalationBlocks({
+      userQuestion: 'What is total revenue?',
+      channelName: '#analytics',
+      threadLink: 'https://slack.com/thread/123',
+      stuckDescription: 'Uncertain about date filter',
+      bestGuessSql: 'SELECT 1',
+    });
+
+    const text = JSON.stringify(blocks);
+    expect(text).toContain('React with ✅');
+  });
+
+  it('asks for a reply when there is no best guess', () => {
+    const blocks = buildEscalationBlocks({
+      userQuestion: 'What is total revenue?',
+      channelName: '#analytics',
+      threadLink: 'https://slack.com/thread/123',
+      stuckDescription: 'Could not generate a reliable query',
+      bestGuessSql: undefined,
+    });
+
+    const text = JSON.stringify(blocks);
+    expect(text).not.toContain('React with ✅');
+    expect(text).toContain('Reply in this thread with guidance.');
   });
 });
 
