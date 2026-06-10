@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildClarificationBlocks,
+  buildCancelFailedBlocks,
   buildPendingClarificationBlocks,
+  CANCEL_FAILED_TEXT,
 } from '../../src/slack/clarificationBlocks.js';
 
 describe('buildClarificationBlocks', () => {
@@ -79,5 +81,15 @@ describe('buildPendingClarificationBlocks', () => {
     expect(actions).toBeDefined();
     expect((actions as any).elements[0].action_id).toBe('clarification_cancel');
     expect((actions as any).elements[0].value).toBe('clar_1');
+  });
+});
+
+describe('buildCancelFailedBlocks', () => {
+  it('carries the failure copy and a retry button with the clarificationId', () => {
+    const blocks = buildCancelFailedBlocks('clar_9');
+    const json = JSON.stringify(blocks);
+    expect(json).toContain(CANCEL_FAILED_TEXT);
+    expect(json).toContain('"action_id":"clarification_cancel"');
+    expect(json).toContain('"value":"clar_9"');
   });
 });

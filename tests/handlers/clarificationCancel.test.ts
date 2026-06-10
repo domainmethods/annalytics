@@ -9,6 +9,7 @@ vi.mock('../../src/logging.js', () => ({
 }));
 
 import { deleteClarificationState } from '../../src/state/clarificationState.js';
+import { rootLogger } from '../../src/logging.js';
 import { handleClarificationCancel } from '../../src/handlers/clarificationCancel.js';
 
 const mockUpdate = vi.fn();
@@ -36,23 +37,34 @@ describe('handleClarificationCancel', () => {
       expect.objectContaining({
         channel: 'C1',
         ts: '123.456',
-        text: expect.stringContaining('cancelled'),
+        text: 'No problem — cancelled. Ask me something new whenever.',
         blocks: [],
       }),
     );
   });
 
-  it('degrades with a retry message when the delete fails', async () => {
+  it('degrades with retry copy and keeps a retry button when the delete fails', async () => {
     vi.mocked(deleteClarificationState).mockRejectedValue(new Error('firestore down'));
 
     await expect(handleClarificationCancel(params)).resolves.toBeUndefined();
 
-    const text = mockUpdate.mock.calls[0][0].text as string;
-    expect(text).toContain('try again');
+    const call = mockUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.text).toBe("Hmm, I couldn't cancel that just now — try again in a moment.");
+    const blocksJson = JSON.stringify(call.blocks);
+    expect(blocksJson).toContain('"action_id":"clarification_cancel"');
+    expect(blocksJson).toContain('"value":"clar_1"');
+    expect(rootLogger.error).toHaveBeenCalledWith(
+      expect.anything(),
+      'clarification.cancel.delete_failed',
+    );
   });
 
   it('does not throw when the message update fails', async () => {
     mockUpdate.mockRejectedValue(new Error('message_not_found'));
     await expect(handleClarificationCancel(params)).resolves.toBeUndefined();
+    expect(rootLogger.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      'clarification.cancel.update_failed',
+    );
   });
 });

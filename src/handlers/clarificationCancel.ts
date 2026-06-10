@@ -1,5 +1,10 @@
 import type { WebClient } from '@slack/web-api';
+import type { KnownBlock } from '@slack/types';
 import { deleteClarificationState } from '../state/clarificationState.js';
+import {
+  buildCancelFailedBlocks,
+  CANCEL_FAILED_TEXT,
+} from '../slack/clarificationBlocks.js';
 import { rootLogger } from '../logging.js';
 
 export interface ClarificationCancelParams {
@@ -21,6 +26,7 @@ export async function handleClarificationCancel(
   const { clarificationId, channel, messageTs, client } = params;
 
   let text = 'No problem — cancelled. Ask me something new whenever.';
+  let blocks: Record<string, unknown>[] = [];
   try {
     await deleteClarificationState(clarificationId);
   } catch (err) {
@@ -28,11 +34,14 @@ export async function handleClarificationCancel(
       { error: (err as Error).message, clarificationId },
       'clarification.cancel.delete_failed',
     );
-    text = "Hmm, I couldn't cancel that just now — try again in a moment.";
+    // Keep a retry affordance: stripping all blocks here would tell the user
+    // to "try again" while removing the only button that can.
+    text = CANCEL_FAILED_TEXT;
+    blocks = buildCancelFailedBlocks(clarificationId);
   }
 
   await client.chat
-    .update({ channel, ts: messageTs, text, blocks: [] })
+    .update({ channel, ts: messageTs, text, blocks: blocks as unknown as KnownBlock[] })
     .catch((err) =>
       rootLogger.warn(
         { error: (err as Error).message, clarificationId },

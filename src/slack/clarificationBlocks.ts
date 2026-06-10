@@ -101,3 +101,30 @@ export function buildPendingClarificationBlocks(
 
   return blocks;
 }
+
+/** Copy for a failed cancel — also the message fallback text in the handler. */
+export const CANCEL_FAILED_TEXT =
+  "Hmm, I couldn't cancel that just now — try again in a moment.";
+
+/** Shown when the cancel delete fails: the failure copy plus a retry button. */
+export function buildCancelFailedBlocks(
+  clarificationId: string,
+): Record<string, unknown>[] {
+  return [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: CANCEL_FAILED_TEXT },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Try again' },
+          action_id: 'clarification_cancel',
+          value: clarificationId,
+        },
+      ],
+    },
+  ];
+}

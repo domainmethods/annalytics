@@ -960,11 +960,14 @@ git commit -m "feat: preflight clarification block shows context and offers canc
 ---
 
 ### Task 9: cancel action handler + app.ts registration
+> **Amended after code review (2026-06-10):** the original prescription stripped all blocks on the delete-failure path — telling the user to "try again" while removing the only button that can. The failure path now rewrites the message with `buildCancelFailedBlocks` (failure copy + retry button re-entering the same idempotent handler).
 
 **Files:**
 - Create: `src/handlers/clarificationCancel.ts`
+- Modify: src/slack/clarificationBlocks.ts (CANCEL_FAILED_TEXT + buildCancelFailedBlocks)
 - Modify: `src/app.ts` (new `app.action` registration after the `refine_assumptions` block, ~line 271)
 - Test: `tests/handlers/clarificationCancel.test.ts`
+- Test: tests/slack/clarificationBlocks.test.ts (new describe)
 
 **Step 1: Write the failing test**
 
@@ -980,6 +983,7 @@ vi.mock('../../src/logging.js', () => ({
 }));
 
 import { deleteClarificationState } from '../../src/state/clarificationState.js';
+import { rootLogger } from '../../src/logging.js';
 import { handleClarificationCancel } from '../../src/handlers/clarificationCancel.js';
 
 const mockUpdate = vi.fn();
@@ -1007,27 +1011,40 @@ describe('handleClarificationCancel', () => {
       expect.objectContaining({
         channel: 'C1',
         ts: '123.456',
-        text: expect.stringContaining('cancelled'),
+        text: 'No problem — cancelled. Ask me something new whenever.',
         blocks: [],
       }),
     );
   });
 
-  it('degrades with a retry message when the delete fails', async () => {
+  it('degrades with retry copy and keeps a retry button when the delete fails', async () => {
     vi.mocked(deleteClarificationState).mockRejectedValue(new Error('firestore down'));
 
     await expect(handleClarificationCancel(params)).resolves.toBeUndefined();
 
-    const text = mockUpdate.mock.calls[0][0].text as string;
-    expect(text).toContain('try again');
+    const call = mockUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.text).toBe("Hmm, I couldn't cancel that just now — try again in a moment.");
+    const blocksJson = JSON.stringify(call.blocks);
+    expect(blocksJson).toContain('"action_id":"clarification_cancel"');
+    expect(blocksJson).toContain('"value":"clar_1"');
+    expect(rootLogger.error).toHaveBeenCalledWith(
+      expect.anything(),
+      'clarification.cancel.delete_failed',
+    );
   });
 
   it('does not throw when the message update fails', async () => {
     mockUpdate.mockRejectedValue(new Error('message_not_found'));
     await expect(handleClarificationCancel(params)).resolves.toBeUndefined();
+    expect(rootLogger.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      'clarification.cancel.update_failed',
+    );
   });
 });
 ```
+
+The `rootLogger` import was added next to the other imports from mocked modules.
 
 **Step 2: Run test to verify it fails**
 
@@ -1040,7 +1057,12 @@ Expected: FAIL — module does not exist.
 
 ```typescript
 import type { WebClient } from '@slack/web-api';
+import type { KnownBlock } from '@slack/types';
 import { deleteClarificationState } from '../state/clarificationState.js';
+import {
+  buildCancelFailedBlocks,
+  CANCEL_FAILED_TEXT,
+} from '../slack/clarificationBlocks.js';
 import { rootLogger } from '../logging.js';
 
 export interface ClarificationCancelParams {
@@ -1062,6 +1084,7 @@ export async function handleClarificationCancel(
   const { clarificationId, channel, messageTs, client } = params;
 
   let text = 'No problem — cancelled. Ask me something new whenever.';
+  let blocks: Record<string, unknown>[] = [];
   try {
     await deleteClarificationState(clarificationId);
   } catch (err) {
@@ -1069,17 +1092,51 @@ export async function handleClarificationCancel(
       { error: (err as Error).message, clarificationId },
       'clarification.cancel.delete_failed',
     );
-    text = "Hmm, I couldn't cancel that just now — try again in a moment.";
+    // Keep a retry affordance: stripping all blocks here would tell the user
+    // to "try again" while removing the only button that can.
+    text = CANCEL_FAILED_TEXT;
+    blocks = buildCancelFailedBlocks(clarificationId);
   }
 
   await client.chat
-    .update({ channel, ts: messageTs, text, blocks: [] })
+    .update({ channel, ts: messageTs, text, blocks: blocks as unknown as KnownBlock[] })
     .catch((err) =>
       rootLogger.warn(
         { error: (err as Error).message, clarificationId },
         'clarification.cancel.update_failed',
       ),
     );
+}
+```
+
+Append to `src/slack/clarificationBlocks.ts`:
+
+```typescript
+/** Copy for a failed cancel — also the message fallback text in the handler. */
+export const CANCEL_FAILED_TEXT =
+  "Hmm, I couldn't cancel that just now — try again in a moment.";
+
+/** Shown when the cancel delete fails: the failure copy plus a retry button. */
+export function buildCancelFailedBlocks(
+  clarificationId: string,
+): Record<string, unknown>[] {
+  return [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: CANCEL_FAILED_TEXT },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Try again' },
+          action_id: 'clarification_cancel',
+          value: clarificationId,
+        },
+      ],
+    },
+  ];
 }
 ```
 
