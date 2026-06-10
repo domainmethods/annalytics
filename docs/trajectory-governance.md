@@ -11,7 +11,7 @@ Update this document whenever a major product direction, feature deferral, bench
 
 ## Current State (as of 2026-06-09)
 
-The codebase is healthy: ~8.8K source lines, 852 tests passing, typecheck clean, module boundaries respected, no dead exports. The dominant risk is no longer code quality — it is that the project keeps building measurement instruments instead of taking the measurement its own gate requires.
+The codebase is healthy: ~9.0K source lines, 852 tests passing, typecheck clean, module boundaries respected, no dead exports. The dominant risk is no longer code quality — it is that the project keeps building measurement instruments instead of taking the measurement its own gate requires.
 
 | Area | Status |
 |---|---|
@@ -99,7 +99,7 @@ File Search sync remains part of the trust gate. A sync is successful only when 
 
 ## Tranche B — Operational Trust (completed 2026-06-09)
 
-Source: 2026-06-09 repository audit (Evidence Log). These were production-rot risks the epistemic-trust focus had been blind to. Each was template-safe. **All four items shipped 2026-06-09** (commits `8cc4a14..db87783`; see the Evidence Log entry of that date for scope).
+Source: 2026-06-09 repository audit (Evidence Log). These were production-rot risks the epistemic-trust focus had been blind to. Each was template-safe. **All four items shipped 2026-06-09** (commits `8cc4a14` through `db87783` inclusive; see the Evidence Log entry of that date for scope).
 
 1. **Firestore retention is enforced for only one collection.** The README documents a TTL policy solely for `slack_event_dedupe`; the other collections that set `expiresAt` (`clarification_state`, `escalation_state`, `information_schema_cache`, `dbt_run_history`) are check-on-read only, so expired documents accumulate forever. Worse, `response_context` — the largest documents, one per query — has **no** expiry at all, and `getResponseContextsSince()` (`src/state/responseContext.ts`) performs an unbounded full-window scan. Required: declare TTL policies for every expiring collection (a manifest in `infra/` mirroring how `firestore.indexes.json` works for indexes), set a retention window for `response_context`, and extend the README's existing `gcloud firestore fields ttls update` step to cover them. **Closed:** `infra/firestore.ttls.json` manifest (7 collections, parity-tested), `response_context.expiresAt` honoring `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90d), `escalation_state.retainUntil` (90d), bounded window scan, README "Firestore TTL Policy" apply path, backfill script.
 2. **Per-node telemetry has no production sink.** `src/agents/modelGateway.ts` records per-node token and latency usage, but only `scripts/node-sweep.ts` ever sets a sink — a live deployment discards it. An operator is blind to token spend, supervisor-exhaustion rates, and latency trends, which undermines both the latency tranche and guardrail #5. Required: a default production sink that emits usage records as structured logs (Cloud Run → Cloud Logging needs no new infrastructure). **Closed:** `setDefaultUsageSink()` fallback in the gateway; app.ts wires it to the root logger so every `generateForNode` call emits a structured `model.usage` log line by default.
@@ -116,11 +116,11 @@ These are prerequisites for the 2026-06-07 feedback-sensor strategy, not feature
 2. **A help/onboarding surface.** There is no `/anna help`, no App Home content, no first-contact greeting that explains what the bot can answer, example questions, or what clarification/escalation waits mean. Users currently learn by trial and error.
 3. **A bailout for stuck threads.** A pending clarification blocks its thread with no user-visible reminder, expiry notice, or way to abandon. Surface the pending state and let the user cancel or restart.
 
-These may land alongside either active tranche. They do not require new measurement machinery and are exempt from the scaffolding freeze. Sequencing note: item 1 (feedback-loop closure) is not merely opportunistic — per the Tranche Horizon it must ship before the second ReferenceCard domain is selected.
+These may land alongside the active tranche. They do not require new measurement machinery and are exempt from the scaffolding freeze. Sequencing note: item 1 (feedback-loop closure) is not merely opportunistic — per the Tranche Horizon it must ship before the second ReferenceCard domain is selected.
 
 ## Code Debt Register
 
-Verified 2026-06-09. Maintenance items — address opportunistically when touching the affected area, or as a small dedicated slice. None block the active tranches.
+Verified 2026-06-09. Maintenance items — address opportunistically when touching the affected area, or as a small dedicated slice. None block the active tranche.
 
 | Item | Location | Note |
 |---|---|---|
@@ -315,7 +315,7 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 
 ### As of 2026-06-09 (operational trust tranche completed)
 
-- Decision: Tranche B (Operational Trust) is closed. All four items shipped across commits `8cc4a14..db87783` and all four acceptance criteria are satisfied. Tranche A — the implementation ReferenceCard acceptance run — is now the sole active tranche.
+- Decision: Tranche B (Operational Trust) is closed. All four items shipped across commits `8cc4a14` through `db87783` inclusive and all four acceptance criteria are satisfied. Tranche A — the implementation ReferenceCard acceptance run — is now the sole active tranche.
 - What shipped, per item:
   - (1) *Firestore retention.* `infra/firestore.ttls.json` is the manifest of per-collection TTL fields (7 collections, parity-tested by `tests/infra/firestoreTtls.test.ts`); `response_context` documents now carry `expiresAt` honoring `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90d) and `escalation_state` carries a 90d `retainUntil` (its `expiresAt` remains the escalation timeout, not retention); `getResponseContextsSince()` is bounded (limit 5000 with truncation warning); the README "Firestore TTL Policy" section documents the `gcloud firestore fields ttls update` apply one-liner; `scripts/backfill-retention-fields.ts` backfills pre-existing deployments.
   - (2) *Telemetry sink.* `setDefaultUsageSink()` in `src/agents/modelGateway.ts` provides a default-sink fallback (the ALS sink still takes precedence; sink calls are try/caught); app.ts wires it to the root logger, so every `generateForNode` call in a default deployment emits one structured `model.usage` log line with node id, prompt/candidates/thoughts token counts, and latency.
@@ -325,4 +325,4 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 - Consequence for the Tranche Horizon: the fast-path graduation gate's telemetry precondition now exists — supervisor review of fast-path-eligible queries is observable via the production `model.usage` sink. The gate itself remains unevaluated until a pilot window is recorded.
 - What remains deferred: unchanged. The operator halves of the acceptance criteria (creating the Cloud Scheduler job, applying the live TTL policies) are documented README steps, not template code.
 - Template boundary held: no client artifacts, project IDs, store IDs, or evidence added; everything shipped is template-safe infrastructure.
-- Evidence source for this update: commits `8cc4a14..db87783` on the operational-trust branch (852 tests passing, typecheck clean) and the four acceptance criteria walked against that diff in this change set's session.
+- Evidence source for this update: commits `8cc4a14` through `db87783` inclusive on the operational-trust branch (852 tests passing, typecheck clean) and the four acceptance criteria walked against that diff in this change set's session.
