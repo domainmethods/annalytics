@@ -2,6 +2,7 @@ import { getDb } from './firestore.js';
 import type { EscalationState } from '../types.js';
 
 const COLLECTION = 'escalation_state';
+const RETAIN_DAYS = 90;
 
 export async function saveEscalationState(
   state: Omit<EscalationState, 'createdAt' | 'expiresAt' | 'pipelineState' | 'lastReminderAt'>,
@@ -14,6 +15,9 @@ export async function saveEscalationState(
     pipelineState: 'awaiting_human',
     createdAt: now,
     expiresAt: new Date(now.getTime() + timeoutHours * 60 * 60 * 1000),
+    // `expiresAt` here is the escalation timeout, not a retention deadline — the
+    // TTL policy targets `retainUntil` so resolved/timed-out audit history survives.
+    retainUntil: new Date(now.getTime() + RETAIN_DAYS * 86_400_000),
   });
 }
 

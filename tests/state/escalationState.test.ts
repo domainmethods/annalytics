@@ -58,6 +58,7 @@ describe('saveEscalationState', () => {
         behavior: 'park_wait',
         createdAt: expect.any(Date),
         expiresAt: expect.any(Date),
+        retainUntil: expect.any(Date),
       }),
     );
 
@@ -65,6 +66,10 @@ describe('saveEscalationState', () => {
     const expectedTtlMs = 4 * 60 * 60 * 1000;
     const actualDiff = savedData.expiresAt.getTime() - savedData.createdAt.getTime();
     expect(actualDiff).toBe(expectedTtlMs);
+
+    const expectedRetainMs = 90 * 24 * 60 * 60 * 1000;
+    const retainDiff = savedData.retainUntil.getTime() - savedData.createdAt.getTime();
+    expect(retainDiff).toBe(expectedRetainMs);
   });
 });
 
