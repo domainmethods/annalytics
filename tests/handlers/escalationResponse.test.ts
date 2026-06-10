@@ -112,9 +112,47 @@ describe('resumeFromEscalation', () => {
     // Should resolve escalation
     expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
 
+    // Default (no options): no refinement hint is injected for ordinary text replies
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ refinementHint: undefined }),
+    );
+
     // Default (no options): teaching candidate generation still fires
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(mockGenerateTeachingCandidate).toHaveBeenCalled();
+  });
+
+  it('park_wait with refinementHint option: passes the confirmed SQL through to runPipeline', async () => {
+    mockGetEscalation.mockResolvedValue(baseEscalation);
+    const ctx = await checkEscalationResponse({
+      channel: 'C-ESCALATION',
+      thread_ts: 'esc-ts-1',
+      text: 'The data team confirmed the proposed SQL is correct.',
+    });
+
+    await resumeFromEscalation(
+      ctx!,
+      mockClient,
+      [],
+      {
+        geminiApiKey: 'key',
+        maxBytesProcessed: 10e9,
+        queryTimeoutMs: 30000,
+        maxResultRows: 1000,
+      },
+      {
+        skipTeachingCandidate: true,
+        refinementHint: { previousSql: 'SELECT SUM(amount) FROM orders' },
+      },
+    );
+
+    expect(mockRunPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: expect.stringContaining('The data team confirmed the proposed SQL is correct.'),
+        refinementHint: { previousSql: 'SELECT SUM(amount) FROM orders' },
+      }),
+    );
+    expect(mockResolve).toHaveBeenCalledWith('esc_trace-1');
   });
 
   it('skipTeachingCandidate: resolves escalation without generating a teaching candidate', async () => {

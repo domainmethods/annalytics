@@ -52,13 +52,17 @@ export async function checkEscalationResponse(
  * best_effort_verify: post human's verification to the original thread.
  * `options.skipTeachingCandidate` suppresses teaching-candidate harvesting for
  * resolutions that carry no new human-authored guidance (e.g. a ✅ reaction).
+ * `options.refinementHint` puts a previous SQL attempt in front of the SQL
+ * generator on the park_wait re-run — required when the guidance references
+ * "the proposed SQL" (✅ confirmation), which the generator cannot otherwise
+ * see because the proposed SQL only went to the escalation channel.
  */
 export async function resumeFromEscalation(
   ctx: EscalationResumeContext,
   client: WebClient,
   tables: TableContext[],
   config: PipelineConfig,
-  options?: { skipTeachingCandidate?: boolean },
+  options?: { skipTeachingCandidate?: boolean; refinementHint?: { previousSql: string } },
 ): Promise<void> {
   if (ctx.behavior === 'park_wait') {
     await runPipeline({
@@ -69,6 +73,7 @@ export async function resumeFromEscalation(
       client,
       tables,
       config,
+      refinementHint: options?.refinementHint,
     });
   } else {
     const blocks = buildEscalationResolvedBlocks(ctx.humanGuidance, ctx.behavior);

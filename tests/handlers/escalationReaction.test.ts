@@ -202,11 +202,14 @@ describe('handleEscalationReaction', () => {
       mockClient,
       tables,
       toPipelineConfig(baseConfig),
-      { skipTeachingCandidate: true },
+      {
+        skipTeachingCandidate: true,
+        refinementHint: { previousSql: 'SELECT SUM(amount) FROM orders' },
+      },
     );
   });
 
-  it('park_wait: resumes with data-team confirmation guidance and skips teaching candidate', async () => {
+  it('park_wait: resumes with data-team confirmation guidance, the confirmed SQL as refinement hint, and skips teaching candidate', async () => {
     mockGetEscalation.mockResolvedValue({
       ...baseEscalation,
       behavior: 'park_wait',
@@ -222,7 +225,46 @@ describe('handleEscalationReaction', () => {
       mockClient,
       tables,
       toPipelineConfig(baseConfig),
-      { skipTeachingCandidate: true },
+      {
+        skipTeachingCandidate: true,
+        refinementHint: { previousSql: 'SELECT SUM(amount) FROM orders' },
+      },
+    );
+  });
+
+  it('dm mode: resolves a pending escalation when ✅ lands on the analyst DM card', async () => {
+    const dmConfig: AppConfig = {
+      ...baseConfig,
+      escalation: {
+        ...baseConfig.escalation,
+        mode: 'dm',
+        channelId: undefined,
+        analystUserId: 'U-ANALYST',
+      },
+    };
+    mockGetEscalation.mockResolvedValue({
+      ...baseEscalation,
+      escalationChannel: 'D-ANALYST-DM',
+    });
+
+    await callHandler(
+      {
+        ...baseEvent,
+        item: { type: 'message', channel: 'D-ANALYST-DM', ts: 'esc-ts-1' },
+      },
+      dmConfig,
+    );
+
+    expect(mockGetEscalation).toHaveBeenCalledWith('esc-ts-1');
+    expect(mockResume).toHaveBeenCalledWith(
+      expect.objectContaining({
+        escalationId: 'esc_trace-1',
+        humanGuidance: 'Confirmed correct via ✅ reaction.',
+      }),
+      mockClient,
+      tables,
+      toPipelineConfig(dmConfig),
+      expect.objectContaining({ skipTeachingCandidate: true }),
     );
   });
 });

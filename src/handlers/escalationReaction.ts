@@ -88,6 +88,13 @@ export async function handleEscalationReaction({
     client,
     getTables(),
     toPipelineConfig(config),
-    { skipTeachingCandidate: true },
+    {
+      skipTeachingCandidate: true,
+      // The guidance references "the proposed SQL", which only ever went to
+      // the escalation channel — pass it as a refinement hint so the
+      // park_wait re-run generates from the SQL the analyst actually
+      // confirmed (best_effort_verify ignores the hint; it never re-runs).
+      refinementHint: { previousSql: state.context.previousSql },
+    },
   );
 }
