@@ -79,6 +79,19 @@ export async function getEscalationByEscalationThread(
   return queryPendingEscalation('escalationTs', escalationTs);
 }
 
+/**
+ * Direct lookup by escalationId (the doc key) for provenance chains — e.g.
+ * teaching promotion recovering the originating thread. Deliberately ignores
+ * pipelineState and expiry: promoted candidates come from RESOLVED escalations.
+ */
+export async function getEscalationById(
+  escalationId: string,
+): Promise<EscalationState | null> {
+  const doc = await getDb().collection(COLLECTION).doc(escalationId).get();
+  if (!doc.exists) return null;
+  return toEscalationState(doc.data() as Record<string, unknown>);
+}
+
 export async function resolveEscalation(
   escalationId: string,
 ): Promise<void> {

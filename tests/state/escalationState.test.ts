@@ -3,6 +3,7 @@ import {
   saveEscalationState,
   getEscalationByThread,
   getEscalationByEscalationThread,
+  getEscalationById,
   resolveEscalation,
   updateReminderTime,
   hasPendingEscalation,
@@ -268,5 +269,37 @@ describe('hasPendingEscalation', () => {
     const result = await hasPendingEscalation('1234.5678');
 
     expect(result).toBe(true);
+  });
+});
+
+describe('getEscalationById', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the mapped state for an existing doc regardless of pipelineState', async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        escalationId: 'esc_fb_tr1',
+        originalThreadTs: '1718000000.000100',
+        originalChannel: 'C0RIGIN',
+        pipelineState: 'resolved',
+        context: { feedbackUserId: 'U1' },
+        createdAt: { toDate: () => new Date('2026-06-01T00:00:00Z') },
+        expiresAt: { toDate: () => new Date('2026-06-01T04:00:00Z') },
+      }),
+    });
+
+    const state = await getEscalationById('esc_fb_tr1');
+
+    expect(state?.originalChannel).toBe('C0RIGIN');
+    expect(state?.context.feedbackUserId).toBe('U1');
+    expect(state?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('returns null when the doc does not exist', async () => {
+    mockGet.mockResolvedValue({ exists: false });
+    expect(await getEscalationById('esc_gone')).toBeNull();
   });
 });
