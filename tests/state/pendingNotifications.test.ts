@@ -81,6 +81,7 @@ describe('pendingNotifications', () => {
     expect(mockWhere).toHaveBeenCalledWith('status', '==', 'pending');
     expect(result).toHaveLength(1);
     expect(result[0].createdAt).toBeInstanceOf(Date);
+    expect(result[0].expiresAt).toBeInstanceOf(Date);
   });
 
   it('getPendingNotifications returns [] when empty', async () => {

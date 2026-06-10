@@ -160,7 +160,7 @@ describe('registerLifecycleSweep', () => {
     });
 
     it('delivers notifications even when sweep is throttled', async () => {
-      mockSweep.mockResolvedValueOnce({ throttled: true });
+      mockSweep.mockResolvedValueOnce({ throttled: true, pending: 0, reminded: 0, timedOut: 0 });
       mockDeliverPendingNotifications.mockResolvedValueOnce({ delivered: 1, failed: 0 });
       const req = buildReq();
       const { res, status, json } = buildRes();
@@ -176,6 +176,20 @@ describe('registerLifecycleSweep', () => {
           notificationsFailed: 0,
         }),
       );
+    });
+
+    it('returns 500 with a generic error when notification delivery throws', async () => {
+      mockSweep.mockResolvedValueOnce({ throttled: false, pending: 0, reminded: 0, timedOut: 0 });
+      mockDeliverPendingNotifications.mockRejectedValueOnce(new Error('Firestore query failed'));
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const req = buildReq();
+      const { res, status, json } = buildRes();
+
+      await routeHandler(req, res);
+
+      expect(status).toHaveBeenCalledWith(500);
+      expect(json).toHaveBeenCalledWith({ error: 'Sweep failed' });
+      consoleSpy.mockRestore();
     });
 
     it('returns 500 with a generic error when the sweep throws, leaking no internals', async () => {

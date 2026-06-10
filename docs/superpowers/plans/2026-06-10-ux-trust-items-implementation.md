@@ -964,10 +964,10 @@ git commit -m "feat: preflight clarification block shows context and offers canc
 
 **Files:**
 - Create: `src/handlers/clarificationCancel.ts`
-- Modify: src/slack/clarificationBlocks.ts (CANCEL_FAILED_TEXT + buildCancelFailedBlocks)
+- Modify: `src/slack/clarificationBlocks.ts` (CANCEL_FAILED_TEXT + buildCancelFailedBlocks)
 - Modify: `src/app.ts` (new `app.action` registration after the `refine_assumptions` block, ~line 271)
 - Test: `tests/handlers/clarificationCancel.test.ts`
-- Test: tests/slack/clarificationBlocks.test.ts (new describe)
+- Test: `tests/slack/clarificationBlocks.test.ts` (new describe)
 
 **Step 1: Write the failing test**
 

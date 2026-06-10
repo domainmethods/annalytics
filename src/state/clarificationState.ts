@@ -66,10 +66,3 @@ export async function deleteClarificationState(
   const db = getDb();
   await db.collection(COLLECTION).doc(clarificationId).delete();
 }
-
-export async function hasPendingClarification(
-  threadTs: string,
-): Promise<boolean> {
-  const state = await getClarificationState(threadTs);
-  return state !== null;
-}

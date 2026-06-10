@@ -3,7 +3,6 @@ import {
   saveClarificationState,
   getClarificationState,
   deleteClarificationState,
-  hasPendingClarification,
 } from '../../src/state/clarificationState.js';
 
 const mockSet = vi.fn();
@@ -126,33 +125,5 @@ describe('deleteClarificationState', () => {
     expect(mockCollection).toHaveBeenCalledWith('clarification_state');
     expect(mockDoc).toHaveBeenCalledWith('clarify-123');
     expect(mockDelete).toHaveBeenCalled();
-  });
-});
-
-describe('hasPendingClarification', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
-  });
-
-  it('returns true only for non-expired state', async () => {
-    const futureDate = new Date(Date.now() + 60 * 60 * 1000);
-    mockLimit.mockReturnValue({
-      get: vi.fn().mockResolvedValue({
-        empty: false,
-        docs: [{
-          data: () => ({
-            clarificationId: 'clarify-123',
-            state: 'awaiting_reply',
-            expiresAt: { toDate: () => futureDate },
-          }),
-          ref: { delete: vi.fn() },
-        }],
-      }),
-    });
-
-    const result = await hasPendingClarification('1234.5678');
-
-    expect(result).toBe(true);
   });
 });
