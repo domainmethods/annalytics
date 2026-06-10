@@ -25,6 +25,7 @@ import {
   getGitSha,
   referenceRetrievalPassed,
   referenceRetrievalSource,
+  resolveCorpusPath,
   sqlShapePassed,
   tableSelectionPassed,
   teachingComplianceLabel,
@@ -96,7 +97,8 @@ async function main() {
   ]);
 
   const root = join(process.cwd());
-  const corpusPath = join(root, 'benchmarks', 'corpus.json');
+  const corpusPath = await resolveCorpusPath(root, fileExists);
+  console.log(`Corpus file: ${corpusPath}`);
   const corpusRaw = await readFile(corpusPath, 'utf-8');
   const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
   const resolvedManifestPath = join(root, manifestPath);

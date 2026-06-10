@@ -44,6 +44,7 @@ export function getGitDirty(cwd = process.cwd()): boolean {
   return status != null && status.length > 0;
 }
 
+// Implementations drop a gitignored corpus.live.json next to the template corpus; prefer it so acceptance runs use the real schema without dirtying the pinned template corpus.
 export async function resolveCorpusPath(
   root: string,
   fileExists: (path: string) => Promise<boolean>,
