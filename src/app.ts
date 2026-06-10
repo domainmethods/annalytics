@@ -95,7 +95,7 @@ const app = new App({
 // Scheduler-driven escalation lifecycle sweep (optional — no secret, no route).
 // Registered after App construction, unlike registerDbtRunIngestion, because
 // the sweep posts to Slack via app.client. Deps are getter-injected to keep
-// them lazy and config-reload-friendly.
+// them lazy and testable.
 if (config.lifecycleSweepSecret) {
   registerLifecycleSweep(receiver.router, config.lifecycleSweepSecret, {
     getClient: () => app.client,

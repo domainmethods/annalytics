@@ -9,7 +9,8 @@ import { checkOverdueEscalations } from './escalationLifecycle.js';
  * reminders/timeouts on wall-clock time instead of piggybacking on Slack event traffic.
  *
  * Deps are getter-injected because the Slack WebClient doesn't exist until the
- * Bolt App is constructed, which happens after route registration in app.ts.
+ * Bolt App is constructed, so this route is registered after App construction
+ * in app.ts; getter injection keeps the dependency lazy regardless of ordering.
  *
  * Note: `throttled: true` in the response means "no information" (the shared
  * 60s throttle skipped the sweep), not "zero pending".

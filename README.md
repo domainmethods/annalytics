@@ -366,8 +366,12 @@ gcloud scheduler jobs create http anna-lytics-lifecycle-sweep \
 
 Skipping this step keeps today's event-traffic-only behavior: escalation
 reminders and timeouts only fire when someone messages the bot. With the
-scheduler in place, the worst-case timeout-notification latency equals the
-sweep interval (10 minutes as configured above).
+scheduler in place, the worst-case timeout-notification latency roughly equals
+the sweep interval (10 minutes as configured above; the in-module 60s throttle
+can add up to a minute when an event-driven sweep collides with a scheduled
+tick). The endpoint returns the sweep counts as JSON; a `throttled: true`
+response means a recent sweep already ran — try again in a minute — not that
+nothing was pending.
 
 ## Deployment
 
