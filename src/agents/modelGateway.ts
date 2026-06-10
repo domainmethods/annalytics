@@ -35,13 +35,19 @@ function recordUsage(nodeId: NodeId, usage: unknown, latencyMs: number): void {
   const sink = sinkStore.getStore() ?? defaultSink;
   if (!sink) return;
   const u = (usage ?? {}) as Record<string, unknown>;
-  sink({
-    nodeId,
-    promptTokens: num(u.promptTokenCount),
-    candidatesTokens: num(u.candidatesTokenCount),
-    thoughtsTokens: num(u.thoughtsTokenCount),
-    latencyMs,
-  });
+  // Telemetry is best-effort: a throwing sink (logger serialization edge,
+  // transport failure) must never fail the model call that produced the usage.
+  try {
+    sink({
+      nodeId,
+      promptTokens: num(u.promptTokenCount),
+      candidatesTokens: num(u.candidatesTokenCount),
+      thoughtsTokens: num(u.thoughtsTokenCount),
+      latencyMs,
+    });
+  } catch (err) {
+    console.warn(`usage sink threw for node ${nodeId}: ${(err as Error)?.message ?? err}`);
+  }
 }
 
 // `ai.models.generateContent` parameter type, minus the bits the seam owns.

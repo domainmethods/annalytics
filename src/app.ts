@@ -25,6 +25,7 @@ import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
 import { rootLogger } from './logging.js';
+import { setDefaultUsageSink } from './agents/modelGateway.js';
 import { GoogleGenAI } from '@google/genai';
 import { runDiagnostics, httpStatusForReport } from './health/doctor.js';
 
@@ -37,6 +38,11 @@ const startedAtMs = Date.now();
 initFirestore(config.gcp.projectId);
 initBigQuery(config.gcp.projectId);
 initBigQueryClient(config.gcp.projectId);
+
+// Production telemetry sink: one structured log line per model call
+// (nodeId, promptTokens, candidatesTokens, thoughtsTokens, latencyMs).
+// Queryable in Cloud Logging via jsonPayload.nodeId / message "model.usage".
+setDefaultUsageSink((r) => rootLogger.info(r, 'model.usage'));
 
 // In-memory schema cache — loaded at startup from dbt artifacts
 let tables: TableContext[] = [];

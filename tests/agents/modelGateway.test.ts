@@ -103,6 +103,21 @@ describe('default usage sink', () => {
     expect(defaultSpy).not.toHaveBeenCalled();
   });
 
+  it('a throwing sink never fails the model call — generateForNode still resolves', async () => {
+    const { generateForNode, setDefaultUsageSink } = await import('../../src/agents/modelGateway.js');
+    const { ai } = fakeAi({ promptTokenCount: 3 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      setDefaultUsageSink(() => { throw new Error('transport down'); });
+      const res = await generateForNode('supervisor', ai, { contents: [] });
+      expect(res).toBeDefined();
+      expect((res as { text?: string }).text).toBe('{}');
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('setDefaultUsageSink(undefined) clears the fallback; with no sink at all it neither throws nor records', async () => {
     const { generateForNode, setDefaultUsageSink } = await import('../../src/agents/modelGateway.js');
     const { ai } = fakeAi({ promptTokenCount: 1 });
