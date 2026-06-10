@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import type { GroundingCitation } from '../src/agents/types.js';
 import type { FailureRecord, QualityResult, ValidationLayerRecord } from '../src/qualityLoop.js';
 import {
@@ -41,6 +42,15 @@ export function getGitSha(cwd = process.cwd()): string | null {
 export function getGitDirty(cwd = process.cwd()): boolean {
   const status = safeGit(['status', '--porcelain'], cwd);
   return status != null && status.length > 0;
+}
+
+export async function resolveCorpusPath(
+  root: string,
+  fileExists: (path: string) => Promise<boolean>,
+): Promise<string> {
+  const livePath = join(root, 'benchmarks', 'corpus.live.json');
+  if (await fileExists(livePath)) return livePath;
+  return join(root, 'benchmarks', 'corpus.json');
 }
 
 export function buildBenchmarkMetadata(input: BenchmarkMetadataInput) {

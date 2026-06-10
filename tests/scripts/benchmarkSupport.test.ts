@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import {
   buildBenchmarkMetadata,
   clarificationPassed,
@@ -8,6 +9,7 @@ import {
   extractReferenceIdsFromCitations,
   formatValidationTrace,
   referenceRetrievalSource,
+  resolveCorpusPath,
   sqlShapePassed,
   tableSelectionPassed,
   referenceRetrievalPassed,
@@ -298,5 +300,17 @@ describe('deterministic benchmark expectation helpers', () => {
     expect(clarificationPassed('low', 'low')).toBe(true);
     expect(clarificationPassed('low', 'high')).toBe(false);
     expect(clarificationPassed(undefined, 'low')).toBeNull();
+  });
+});
+
+describe('resolveCorpusPath', () => {
+  it('prefers benchmarks/corpus.live.json when it exists', async () => {
+    const path = await resolveCorpusPath('/repo', async p => p.endsWith('corpus.live.json'));
+    expect(path).toBe(join('/repo', 'benchmarks', 'corpus.live.json'));
+  });
+
+  it('falls back to benchmarks/corpus.json when no live corpus exists', async () => {
+    const path = await resolveCorpusPath('/repo', async () => false);
+    expect(path).toBe(join('/repo', 'benchmarks', 'corpus.json'));
   });
 });
