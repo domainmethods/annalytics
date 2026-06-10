@@ -364,6 +364,20 @@ gcloud scheduler jobs create http anna-lytics-lifecycle-sweep \
   --project "$GCP_PROJECT_ID"
 ```
 
+Two operational gotchas, both observed in practice:
+
+- `gcloud scheduler jobs create` (and `describe`) print the job config
+  **including the `Authorization` header**. If that output landed anywhere
+  persistent (terminal log, session transcript, CI log), rotate: add a new
+  secret version, disable the leaked one, update the job's header — and roll a
+  new Cloud Run revision, because secret env vars pinned to `latest` resolve at
+  instance startup, not per request.
+- Binding `LIFECYCLE_SWEEP_SECRET` with `--update-secrets` creates a
+  config-only revision that reuses the **currently deployed image**. If that
+  image predates this endpoint, every sweep returns 404. After creating the
+  job, verify end-to-end: `gcloud scheduler jobs run <job>` and confirm a 200
+  with sweep counts in the service logs.
+
 Skipping this step keeps today's event-traffic-only behavior: escalation
 reminders and timeouts only fire when someone messages the bot. With the
 scheduler in place, the worst-case timeout-notification latency roughly equals
