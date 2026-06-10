@@ -1,4 +1,5 @@
 import type { App } from '@slack/bolt';
+import type { KnownBlock } from '@slack/types';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
@@ -6,12 +7,24 @@ import { releaseThreadLock } from '../state/threadLock.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { createTraceId } from '../logging.js';
+import { buildHelpBlocks } from '../slack/helpBlocks.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
 
 export function registerCommands(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
   app.command('/anna', async ({ command, ack, client }) => {
     await ack();
+
+    const trimmed = command.text.trim().toLowerCase();
+    if (!trimmed || trimmed === 'help') {
+      await client.chat.postEphemeral({
+        channel: command.channel_id,
+        user: command.user_id,
+        text: 'How to use Anna Lytics',
+        blocks: buildHelpBlocks() as unknown as KnownBlock[],
+      });
+      return;
+    }
 
     const config = getConfig();
     const traceId = createTraceId();
