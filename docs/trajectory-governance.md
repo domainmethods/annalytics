@@ -9,9 +9,9 @@ This document records the current development trajectory for Anna Lytics. Read *
 
 Update this document whenever a major product direction, feature deferral, benchmark result, or adversarial audit changes the trajectory — and when you do, update the head sections (Current State, Current Decision, Deferred Work) rather than only appending a dated entry. Dated entries go in the Evidence Log.
 
-## Current State (as of 2026-06-09)
+## Current State (as of 2026-06-10)
 
-The codebase is healthy: ~9.0K source lines, 854 tests passing, typecheck clean, module boundaries respected, no dead exports. The dominant risk is no longer code quality — it is that the project keeps building measurement instruments instead of taking the measurement its own gate requires.
+The codebase is healthy: ~9.5K source lines, 894 tests passing, typecheck clean, module boundaries respected, no dead exports. The dominant risk is no longer code quality — it is that the project keeps building measurement instruments instead of taking the measurement its own gate requires.
 
 | Area | Status |
 |---|---|
@@ -25,6 +25,7 @@ The codebase is healthy: ~9.0K source lines, 854 tests passing, typecheck clean,
 | Routine query fast path | Committed, default-off (`FAST_PATH_ENABLED=false`); inert without File Search store + knowledge summaries, so inert in the template |
 | Latency evidence slice | Not yet run (requires implementation corpus) |
 | Operational trust (Firestore retention, telemetry sink, escalation timers, ✅-reaction promise) | **Completed 2026-06-09** — all four Tranche B items shipped; acceptance criteria satisfied (Evidence Log) |
+| UX-trust surfaces (feedback-loop closure, help/App Home, clarification cancel) | **Completed 2026-06-10** — all three sanctioned items shipped; second-domain-selection precondition satisfied (Evidence Log) |
 
 ## Current Decision
 
@@ -37,7 +38,7 @@ The codebase is healthy: ~9.0K source lines, 854 tests passing, typecheck clean,
 
 The Deferred Work table states *eligibility* (what unblocks when). This section states *order* — which eligible item is next, so that when several unblock at once the trajectory does not drift to whichever is easiest. It is a queue, not a backlog: each entry is gated by the one before it, and detailed task breakdowns belong in plan docs, not here.
 
-**T1 (active now).** Tranche A (acceptance run); Tranche B (operational trust) completed 2026-06-09 (Evidence Log). UX-trust items and Code Debt Register items land opportunistically, with one hard sequencing rule: **feedback-loop closure to the user must ship before the second ReferenceCard domain is selected** (shipped 2026-06-10 — precondition satisfied; Evidence Log), because domain selection from then on is supposed to come from the feedback sensor, and the sensor only keeps receiving data if users see their feedback matter. Note the bootstrap asymmetry this implies: the *first* pilot domain is chosen by analyst judgment (there is no production feedback before a deployment exists); only subsequent domains are chosen from aggregated pain signal.
+**T1 (active now).** Tranche A (acceptance run); Tranche B (operational trust) completed 2026-06-09 (Evidence Log). Code Debt Register items land opportunistically. The UX-trust items shipped 2026-06-10 (Evidence Log), satisfying their one hard sequencing rule: **feedback-loop closure to the user must ship before the second ReferenceCard domain is selected**, because domain selection from then on is supposed to come from the feedback sensor, and the sensor only keeps receiving data if users see their feedback matter. Note the bootstrap asymmetry this implies: the *first* pilot domain is chosen by analyst judgment (there is no production feedback before a deployment exists); only subsequent domains are chosen from aggregated pain signal.
 
 **T2 (on the acceptance outcome).** The existing branch: `ACCEPTED` → exactly one additional high-confusion domain; `NEEDS_REVISION` → scoped repair of the failing evidence category, then re-run. Standing cadence rule, now explicit: **every new ReferenceCard domain and every runtime-behavior promotion requires its own benchmark slice** before it ships (guardrail #5 applied as a recurring gate, not a one-time hurdle).
 
@@ -108,7 +109,7 @@ Source: 2026-06-09 repository audit (Evidence Log). These were production-rot ri
 
 Acceptance criteria: TTL manifest exists and the apply path is documented; usage records visible in logs from a deployed instance; an escalation in a zero-traffic workspace times out and notifies the user; the ✅ promise is either honored or gone. **All four satisfied 2026-06-09** — the in-repo halves are verified by tests; the operator halves (the Cloud Scheduler job, the live TTL policies) are documented README steps.
 
-## Sanctioned UX-Trust Items (shipped 2026-06-10)
+## Sanctioned UX-Trust Items (completed 2026-06-10)
 
 These are prerequisites for the 2026-06-07 feedback-sensor strategy, not feature expansion. That strategy bets on users continuing to supply feedback; users stop feeding a sensor that never responds. **All three items shipped 2026-06-10** (commits `aa173d1` through `2e27734`; see the Evidence Log entry of that date for scope).
 
@@ -120,7 +121,7 @@ These landed alongside the active tranche without touching measurement machinery
 
 ## Code Debt Register
 
-Verified 2026-06-09. Maintenance items — address opportunistically when touching the affected area, or as a small dedicated slice. None block the active tranche.
+Verified 2026-06-09; later additions dated inline. Maintenance items — address opportunistically when touching the affected area, or as a small dedicated slice. None block the active tranche.
 
 | Item | Location | Note |
 |---|---|---|
@@ -140,6 +141,7 @@ Detailed scope and acceptance criteria for these live in the Evidence Log entrie
 - **Feedback reactive arm, items (1) and (2)** — privacy-safe per-domain aggregation (`src/feedback/`) and the `feedback_notes` read path surfaced in `scripts/promote-teachings.ts`. (2026-06-07 entry. Note the `feedback_notes` composite index must be created manually — see that entry.)
 - **Calibration + ambiguity-classifier prerequisites for the side bar** — benchmark-side calibration verdict and the `ambiguityClassifier` node (PROVISIONAL profile, label-only, observability-only). (2026-06-08 entry.)
 - **Operational Trust (Tranche B)** — escalation ✅-reaction handler, scheduler-driven lifecycle sweep endpoint, default `model.usage` telemetry sink, Firestore TTL manifest + `response_context`/`escalation_state` retention. All four acceptance criteria satisfied. (2026-06-09 operational trust entry.)
+- **Sanctioned UX-Trust Items** — feedback-loop closure (`pending_notifications` queue + lifecycle-sweep delivery), `/anna help` + App Home help surface, clarification cancel on both pending surfaces. Second-domain-selection precondition satisfied. (2026-06-10 entry.)
 
 ## Deferred Work
 
@@ -339,7 +341,8 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
   - (3) *Clarification bailout.* A cancel button on both surfaces where a pending clarification is visible — the clarifying question itself and preflight guard 2's block message, which now also quotes the original question for context. `src/handlers/clarificationCancel.ts` deletes the state and updates the message; idempotent when the state already expired or was cancelled from the other surface, and the failure path keeps a retry affordance instead of stripping the only button that can retry.
 - Found and fixed by the per-task two-stage review (spec compliance, then code quality): the help copy initially omitted the *Show SQL* button and overpromised ("in any channel", "every answer has" format buttons); the help intercept's original `chat.postEphemeral` would have thrown `channel_not_found` exactly where a new user first tries `/anna help` (replaced with `respond()`); the cancel handler's failure path stripped all blocks while telling the user to "try again". Each fix amended the plan/design docs in the same change set. One pre-existing defect was registered in the Code Debt Register rather than fixed here: `/anna <question>` in a channel the bot is not a member of still fails silently (the question path posts via `chat.postMessage`).
 - Operator steps (post-merge): apply the new TTL policy (`gcloud firestore fields ttls update expiresAt --collection-group=pending_notifications --enable-ttl`); Slack app config — add `app_home_opened` to Event Subscriptions and enable App Home → Home Tab, then reinstall the app; deploy via the local-docker procedure; verify one end-to-end notification (approve a test candidate, confirm the next sweep returns `notificationsDelivered: 1` and the message lands in the originating thread).
-- Consequence for the Tranche Horizon: item 1 satisfies the hard sequencing precondition on second-ReferenceCard-domain selection. The selection gate itself still requires the recorded acceptance decision — nothing in this tranche advances Tranche A.
+- Consequence for the Tranche Horizon: item 1 satisfies the hard sequencing precondition on second-ReferenceCard-domain selection. The selection gate itself still requires the recorded acceptance decision — nothing in this change set advances Tranche A.
+- What remains deferred: unchanged; nothing in the Deferred Work table was activated.
 - Scaffolding freeze respected: no new benchmark, calibration, sizing, sweep, or acceptance machinery was built.
 - Template boundary held: no client artifacts, identifiers, or evidence; all shipped copy is template-generic.
 - Evidence source for this update: design doc `docs/superpowers/plans/2026-06-10-ux-trust-items-design.md` and implementation plan `docs/superpowers/plans/2026-06-10-ux-trust-items-implementation.md` (both amended in-flight where review found plan-level defects); commits `aa173d1` through `2e27734` (894 tests passing across 116 files, typecheck clean).
