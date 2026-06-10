@@ -76,14 +76,22 @@ export async function getLatestResponseContext(
 }
 
 /** All response contexts created within the trailing window (for the feedback
- *  sensor). Unbounded and unordered: returns every in-window doc with no limit —
- *  intended for low-frequency CLI/offline use, not a request hot path. */
-export async function getResponseContextsSince(windowDays: number): Promise<ResponseContext[]> {
+ *  sensor). Unordered, bounded by `limit` — intended for low-frequency
+ *  CLI/offline use, not a request hot path. Warns when the limit is hit so
+ *  consumers can surface the truncation (no silent caps). */
+export async function getResponseContextsSince(
+  windowDays: number,
+  limit = 5000,
+): Promise<ResponseContext[]> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
   const snapshot = await getDb()
     .collection('response_context')
     .where('createdAt', '>=', since)
+    .limit(limit)
     .get();
+  if (snapshot.size === limit) {
+    console.warn(`response_context window scan hit limit ${limit}; results truncated`);
+  }
   return snapshot.docs.map((d) => d.data() as ResponseContext);
 }
 

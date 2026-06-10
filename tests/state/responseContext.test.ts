@@ -203,11 +203,13 @@ describe('getLatestResponseContext', () => {
 describe('getResponseContextsSince', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWhere.mockReturnValue({ get: mockGet });
+    mockWhere.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
   });
 
   it('queries response_context filtered by a correct createdAt cutoff and maps docs', async () => {
     mockGet.mockResolvedValue({
+      size: 1,
       docs: [{ data: () => ({ traceId: 't1', tablesUsed: ['analytics.fct_orders'] }) }],
     });
 
@@ -227,5 +229,59 @@ describe('getResponseContextsSince', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0].traceId).toBe('t1');
+  });
+
+  it('bounds the scan with a default limit of 5000', async () => {
+    mockGet.mockResolvedValue({ size: 0, docs: [] });
+
+    await getResponseContextsSince(30);
+
+    expect(mockLimit).toHaveBeenCalledWith(5000);
+  });
+
+  it('honors a caller-provided limit override', async () => {
+    mockGet.mockResolvedValue({ size: 0, docs: [] });
+
+    await getResponseContextsSince(30, 250);
+
+    expect(mockLimit).toHaveBeenCalledWith(250);
+  });
+
+  it('warns about truncation when the result size equals the limit', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mockGet.mockResolvedValue({
+        size: 2,
+        docs: [
+          { data: () => ({ traceId: 't1' }) },
+          { data: () => ({ traceId: 't2' }) },
+        ],
+      });
+
+      const rows = await getResponseContextsSince(30, 2);
+
+      expect(rows).toHaveLength(2);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'response_context window scan hit limit 2; results truncated',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn when the result size is under the limit', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      mockGet.mockResolvedValue({
+        size: 1,
+        docs: [{ data: () => ({ traceId: 't1' }) }],
+      });
+
+      await getResponseContextsSince(30, 2);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
