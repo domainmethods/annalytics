@@ -7,6 +7,7 @@ import { initFirestore, getDb } from './state/firestore.js';
 import { initBigQuery } from './validation/dryRun.js';
 import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
 import { registerCommands } from './handlers/commands.js';
+import { registerAppHome } from './handlers/appHome.js';
 import { registerMentions } from './handlers/mentions.js';
 import { registerMessageHandler } from './handlers/messageHandler.js';
 import { registerEscalationReaction } from './handlers/escalationReaction.js';
@@ -169,6 +170,7 @@ receiver.router.get('/health/doctor', async (_req, res) => {
 
 // Register handlers
 registerCommands(app, getConfig, getTables);
+registerAppHome(app);
 registerMentions(app, getConfig, getTables);
 // Message handler (thread follow-ups in channels + DMs) — extracted to
 // handlers/messageHandler.ts so the orchestration is unit/integration-testable

@@ -81,6 +81,7 @@ https://<your-cloud-run-url>/slack/events
 Subscribe to these bot events:
 
 - `app_mention`
+- `app_home_opened`
 - `message.channels`
 - `message.groups`
 - `message.im`
@@ -92,6 +93,10 @@ through `message.mpim`. Channel messages require `app_mention` unless the bot
 has already participated in the thread.
 
 ### App Home Messages
+
+Go to **Features -> App Home** and enable the **Home Tab** toggle. The Home tab
+shows the same static help content as `/anna help`; no new OAuth scope is needed
+for this view.
 
 Go to **Features -> App Home** and enable the **Messages** tab. If users see
 `Sending messages to this app has been turned off`, the Messages tab or message
