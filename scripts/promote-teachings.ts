@@ -19,6 +19,11 @@ interface Rl {
   close: () => void;
 }
 
+/**
+ * Best-effort: closing the feedback loop must never block or fail a promotion.
+ * The escalation doc (keyed by escalationId, 90d retainUntil) recovers the
+ * originating thread; past retention there is simply no one left to notify.
+ */
 async function enqueuePromotionNotification(candidate: TeachingCandidate): Promise<void> {
   try {
     const escalation = await getEscalationById(candidate.escalationId);
