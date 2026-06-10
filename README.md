@@ -379,7 +379,11 @@ The standard region is `us-west1`.
 
 ### Firestore TTL Policy
 
-The runtime writes a retention timestamp on every document it stores. Most
+The runtime writes a retention timestamp on every document in a growth-prone
+collection. A few collections are intentionally unbounded and absent from the
+manifest: `rate_limits` (bounded sliding window, overwritten in place per
+user), `teaching_candidates` and `feedback_notes` (human-drained queues), and
+`config` (singleton metadata docs). Most
 collections (locks, clarification state, caches, Slack event dedupe, dbt run
 history, `response_context`) use `expiresAt`; for `response_context` the window
 is `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90 days). `escalation_state`
@@ -391,7 +395,7 @@ collection group's TTL policy targets. This one-liner emits a
 sync with the manifest:
 
 ```bash
-node -e 'JSON.parse(require("fs").readFileSync("infra/firestore.ttls.json")).ttls.forEach(t=>console.log("gcloud firestore fields ttls update "+t.field+" --collection-group="+t.collectionGroup+" --database=\"(default)\" --enable-ttl --project=\"$PROJECT_ID\""))'
+node -e 'JSON.parse(require("fs").readFileSync("infra/firestore.ttls.json")).ttls.forEach(t=>console.log("gcloud firestore fields ttls update "+t.field+" --collection-group="+t.collectionGroup+" --database=\"(default)\" --enable-ttl --project=\"$GCP_PROJECT_ID\""))'
 ```
 
 Review the printed commands, then pipe them to a shell to apply (enabling a TTL
@@ -404,7 +408,7 @@ node -e '...' | sh   # same one-liner as above, piped to sh
 Verify what is live at any time:
 
 ```bash
-gcloud firestore fields ttls list --database="(default)" --project "$PROJECT_ID"
+gcloud firestore fields ttls list --database="(default)" --project "$GCP_PROJECT_ID"
 ```
 
 TTL deletion is best-effort: Firestore typically removes expired documents
@@ -414,10 +418,12 @@ cache freshness) — TTL is cleanup, not correctness.
 
 Documents written before retention fields existed lack the targeted field and
 will never be TTL-deleted. For pre-existing deployments, run the optional
-backfill (dry-run by default; add `--apply` to write):
+backfill (dry-run by default; add `--apply` to write). If you changed
+`RESPONSE_CONTEXT_RETENTION_DAYS` on the deployed service, set it in your
+shell when running the backfill so backfilled deadlines match new writes:
 
 ```bash
-npx tsx scripts/backfill-retention-fields.ts --project "$PROJECT_ID"
+npx tsx scripts/backfill-retention-fields.ts --project "$GCP_PROJECT_ID"
 ```
 
 ### Automatic
