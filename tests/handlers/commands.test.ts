@@ -10,7 +10,7 @@ const {
   mockCreateTraceId,
   mockMaybeHandleSlackIntake,
   mockPreflightChecks,
-  mockPostEphemeral,
+  mockRespond,
 } = vi.hoisted(() => ({
   mockRunPipeline: vi.fn(),
   mockToPipelineConfig: vi.fn(),
@@ -20,7 +20,7 @@ const {
   mockCreateTraceId: vi.fn(),
   mockMaybeHandleSlackIntake: vi.fn(),
   mockPreflightChecks: vi.fn(),
-  mockPostEphemeral: vi.fn(),
+  mockRespond: vi.fn(),
 }));
 
 vi.mock('../../src/pipeline.js', () => ({
@@ -61,7 +61,6 @@ function makeClient() {
   return {
     chat: {
       postMessage: vi.fn().mockResolvedValue({ ts: 'status-1' }),
-      postEphemeral: mockPostEphemeral,
       update: vi.fn().mockResolvedValue({}),
     },
   } as any;
@@ -73,7 +72,7 @@ const STATUS_TEXT = 'Got it. Let me get things ready...';
 async function invokeCommand(overrides: Partial<typeof command> = {}) {
   const client = makeClient();
   const handler = captureCommandHandler();
-  await handler({ command: { ...command, ...overrides }, ack: vi.fn(), client });
+  await handler({ command: { ...command, ...overrides }, ack: vi.fn(), respond: mockRespond, client });
   return client;
 }
 
@@ -87,15 +86,15 @@ describe('registerCommands /anna seam', () => {
     mockRunPipeline.mockResolvedValue(undefined);
     mockFriendlyErrorMessage.mockReturnValue('friendly error');
     mockCreateTraceId.mockReturnValue('trace-1');
-    mockPostEphemeral.mockResolvedValue({});
+    mockRespond.mockResolvedValue({});
   });
 
-  it('responds to "/anna help" ephemerally without touching rate limit or intake', async () => {
+  it('responds to /anna help ephemerally without touching rate limit or intake', async () => {
     await invokeCommand({ text: '  HELP  ' });
 
-    expect(mockPostEphemeral).toHaveBeenCalledWith(
+    expect(mockRespond).toHaveBeenCalledWith(
       expect.objectContaining({
-        user: expect.any(String),
+        text: 'How to use Anna Lytics',
         blocks: expect.arrayContaining([expect.objectContaining({ type: 'header' })]),
       }),
     );
@@ -106,8 +105,15 @@ describe('registerCommands /anna seam', () => {
 
   it('treats bare "/anna" as a help request', async () => {
     await invokeCommand({ text: '' });
-    expect(mockPostEphemeral).toHaveBeenCalled();
+    expect(mockRespond).toHaveBeenCalled();
     expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not treat questions starting with help as help requests', async () => {
+    await invokeCommand({ text: 'help me count last weeks sessions' });
+
+    expect(mockRespond).not.toHaveBeenCalled();
+    expect(mockCheckRateLimit).toHaveBeenCalled();
   });
 
   it('updates the placeholder (no orphan) when preflight blocks the request', async () => {
@@ -115,7 +121,7 @@ describe('registerCommands /anna seam', () => {
     const client = makeClient();
     const handler = captureCommandHandler();
 
-    await handler({ command, ack: vi.fn(), client });
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
 
     // The pipeline must not run when preflight blocks.
     expect(mockRunPipeline).not.toHaveBeenCalled();
@@ -138,7 +144,7 @@ describe('registerCommands /anna seam', () => {
     const client = makeClient();
     const handler = captureCommandHandler();
 
-    await handler({ command, ack: vi.fn(), client });
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
 
     expect(client.chat.postMessage).toHaveBeenCalledWith({
       channel: 'C123',

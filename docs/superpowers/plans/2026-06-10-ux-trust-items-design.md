@@ -150,7 +150,9 @@ boundary applies to help copy too; implementations override).
    before the rate-limit check and before `maybeHandleSlackIntake`
    (`command.text.trim().toLowerCase() === 'help'` or empty). Help must cost
    nothing: no rate budget, no Flash intake call, no thread, ephemeral
-   response (`postEphemeral` — asking for help should not spam the channel).
+   response via Bolts respond() — response_url-based, so it works in
+   conversations the bot is not a member of, and asking for help should not spam
+   the channel.
 
 3. **App Home** — register `app_home_opened` (event already reaches the bot
    with standard bot scopes; the App Home feature must be toggled on in the

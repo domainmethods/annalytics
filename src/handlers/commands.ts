@@ -12,15 +12,16 @@ import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
 
 export function registerCommands(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
-  app.command('/anna', async ({ command, ack, client }) => {
+  app.command('/anna', async ({ command, ack, respond, client }) => {
     await ack();
 
     const trimmed = command.text.trim().toLowerCase();
     if (!trimmed || trimmed === 'help') {
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: command.user_id,
-        text: 'How to use Anna Lytics',
+      // respond() goes through the payload response_url: ephemeral by default
+      // and unlike chat.postEphemeral works in conversations the bot is not
+      // a member of, which is exactly where a new user will try /anna help.
+      await respond({
+        text: "How to use Anna Lytics",
         blocks: buildHelpBlocks() as unknown as KnownBlock[],
       });
       return;

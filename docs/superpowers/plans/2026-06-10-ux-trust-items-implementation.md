@@ -1310,6 +1310,8 @@ git commit -m "feat: add help block builder"
 
 ### Task 11: `/anna help` and bare `/anna` intercept
 
+> **Amended after code review (2026-06-10):** chat.postEphemeral requires conversation access and throws channel_not_found in private channels/DMs the bot is not in — silent failure exactly where a new user first tries /anna help. The intercept now uses Bolts respond() (response_url-based: ephemeral by default, membership-free). A third test pins that questions starting with help still reach the pipeline.
+
 **Files:**
 - Modify: `src/handlers/commands.ts` (immediately after `await ack();`, before the rate-limit check, ~line 15)
 - Test: `tests/handlers/commands.test.ts` (extend — read its harness first and reuse its mocked client/payload builders)
@@ -1322,9 +1324,9 @@ Match the existing harness in `tests/handlers/commands.test.ts` (it registers th
   it('responds to "/anna help" ephemerally without touching rate limit or intake', async () => {
     await invokeCommand({ text: '  HELP  ' }); // trim + case-insensitive
 
-    expect(mockPostEphemeral).toHaveBeenCalledWith(
+    expect(mockRespond).toHaveBeenCalledWith(
       expect.objectContaining({
-        user: expect.any(String),
+        text: 'How to use Anna Lytics',
         blocks: expect.arrayContaining([expect.objectContaining({ type: 'header' })]),
       }),
     );
@@ -1335,12 +1337,19 @@ Match the existing harness in `tests/handlers/commands.test.ts` (it registers th
 
   it('treats bare "/anna" as a help request', async () => {
     await invokeCommand({ text: '' });
-    expect(mockPostEphemeral).toHaveBeenCalled();
+    expect(mockRespond).toHaveBeenCalled();
     expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not treat questions starting with help as help requests', async () => {
+    await invokeCommand({ text: 'help me count last weeks sessions' });
+
+    expect(mockRespond).not.toHaveBeenCalled();
+    expect(mockCheckRateLimit).toHaveBeenCalled();
   });
 ```
 
-(Adapt `invokeCommand`/mock names to the file's existing helpers; add a `postEphemeral` fn to its mocked client if absent.)
+(Adapt `invokeCommand`/mock names to the file's existing helpers; wire the captured command listener with a hoisted `respond` mock.)
 
 **Step 2: Run test to verify it fails**
 
@@ -1361,10 +1370,11 @@ Immediately after `await ack();` (before `getConfig()`/rate limiting — help mu
 ```typescript
     const trimmed = command.text.trim().toLowerCase();
     if (!trimmed || trimmed === 'help') {
-      await client.chat.postEphemeral({
-        channel: command.channel_id,
-        user: command.user_id,
-        text: 'How to use Anna Lytics',
+      // respond() goes through the payload response_url: ephemeral by default
+      // and unlike chat.postEphemeral works in conversations the bot is not
+      // a member of, which is exactly where a new user will try /anna help.
+      await respond({
+        text: "How to use Anna Lytics",
         blocks: buildHelpBlocks() as unknown as KnownBlock[],
       });
       return;
