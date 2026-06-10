@@ -5,7 +5,7 @@ import { rootLogger } from '../logging.js';
 export interface ClarificationCancelParams {
   clarificationId: string;
   channel: string;
-  /** ts of the message whose button was clicked - the one we rewrite. */
+  /** ts of the message whose button was clicked — the one we rewrite. */
   messageTs: string;
   client: WebClient;
 }
