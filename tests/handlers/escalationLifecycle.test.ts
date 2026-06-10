@@ -169,4 +169,56 @@ describe('checkOverdueEscalations', () => {
     await checkOverdueEscalations(mockClient, escalationConfig);
     expect(mockGetAll).toHaveBeenCalledTimes(1);
   });
+
+  it('returns zeroed counts with throttled=true when throttled', async () => {
+    mockGetAll.mockResolvedValue([]);
+
+    await checkOverdueEscalations(mockClient, escalationConfig);
+
+    // Second call within the same minute — throttled
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+    expect(result).toEqual({ throttled: true, pending: 0, reminded: 0, timedOut: 0 });
+  });
+
+  it('returns zeroed counts with throttled=false when no pending escalations', async () => {
+    mockGetAll.mockResolvedValue([]);
+
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(result).toEqual({ throttled: false, pending: 0, reminded: 0, timedOut: 0 });
+  });
+
+  it('returns sweep counts for one expired and one reminder-due escalation', async () => {
+    mockGetAll.mockResolvedValue([
+      {
+        ...baseEscalation,
+        escalationId: 'esc_expired',
+        expiresAt: new Date(Date.now() - 1000), // expired
+      },
+      {
+        ...baseEscalation,
+        escalationId: 'esc_reminder',
+        lastReminderAt: undefined, // createdAt 1h ago > 30min interval → reminder due
+      },
+    ]);
+
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(result).toEqual({ throttled: false, pending: 2, reminded: 1, timedOut: 1 });
+    expect(mockTimeout).toHaveBeenCalledWith('esc_expired');
+    expect(mockUpdateReminder).toHaveBeenCalledWith('esc_reminder');
+  });
+
+  it('counts not-yet-due escalations toward pending without acting on them', async () => {
+    mockGetAll.mockResolvedValue([{
+      ...baseEscalation,
+      createdAt: new Date(Date.now() - 5 * 60000), // too recent for a reminder
+      lastReminderAt: undefined,
+    }]);
+
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(result).toEqual({ throttled: false, pending: 1, reminded: 0, timedOut: 0 });
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+  });
 });

@@ -30,15 +30,31 @@ export function _resetThrottle(): void {
   lastCheckTime = 0;
 }
 
+/** Outcome of a single lifecycle sweep — returned for observability (e.g. the sweep endpoint). */
+export interface LifecycleSweepResult {
+  throttled: boolean;
+  pending: number;   // awaiting_human escalations examined
+  reminded: number;
+  timedOut: number;
+}
+
 export async function checkOverdueEscalations(
   client: WebClient,
   config: EscalationConfig,
-): Promise<void> {
-  if (Date.now() - lastCheckTime < CHECK_INTERVAL_MS) return;
+): Promise<LifecycleSweepResult> {
+  if (Date.now() - lastCheckTime < CHECK_INTERVAL_MS) {
+    return { throttled: true, pending: 0, reminded: 0, timedOut: 0 };
+  }
   lastCheckTime = Date.now();
 
   const escalations = await getAllPendingEscalations();
-  if (escalations.length === 0) return;
+  const result: LifecycleSweepResult = {
+    throttled: false,
+    pending: escalations.length,
+    reminded: 0,
+    timedOut: 0,
+  };
+  if (escalations.length === 0) return result;
 
   const now = new Date();
 
@@ -56,6 +72,7 @@ export async function checkOverdueEscalations(
         thread_ts: esc.originalThreadTs,
         text,
       });
+      result.timedOut += 1;
       continue;
     }
 
@@ -77,6 +94,9 @@ export async function checkOverdueEscalations(
       });
 
       await updateReminderTime(esc.escalationId);
+      result.reminded += 1;
     }
   }
+
+  return result;
 }
