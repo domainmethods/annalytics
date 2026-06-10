@@ -1,0 +1,11 @@
+{
+  "ttls": [
+    { "collectionGroup": "slack_event_dedupe", "field": "expiresAt" },
+    { "collectionGroup": "processing_threads", "field": "expiresAt" },
+    { "collectionGroup": "clarification_state", "field": "expiresAt" },
+    { "collectionGroup": "information_schema_cache", "field": "expiresAt" },
+    { "collectionGroup": "dbt_run_history", "field": "expiresAt" },
+    { "collectionGroup": "escalation_state", "field": "retainUntil" },
+    { "collectionGroup": "response_context", "field": "expiresAt" }
+  ]
+}

@@ -16,7 +16,8 @@ export async function saveEscalationState(
     createdAt: now,
     expiresAt: new Date(now.getTime() + timeoutHours * 60 * 60 * 1000),
     // `expiresAt` here is the escalation timeout, not a retention deadline — the
-    // TTL policy targets `retainUntil` so resolved/timed-out audit history survives.
+    // TTL policy (see `infra/firestore.ttls.json`) targets `retainUntil` so
+    // resolved/timed-out audit history survives.
     retainUntil: new Date(now.getTime() + RETAIN_DAYS * 86_400_000),
   });
 }
