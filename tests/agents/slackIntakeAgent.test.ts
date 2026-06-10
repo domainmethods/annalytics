@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockGenerateContent, mockWarn } = vi.hoisted(() => ({
+const { mockGenerateContent } = vi.hoisted(() => ({
   mockGenerateContent: vi.fn(),
-  mockWarn: vi.fn(),
 }));
+
+const mockFallbackSink = vi.fn();
 
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
@@ -11,14 +12,7 @@ vi.mock('@google/genai', () => ({
   },
 }));
 
-vi.mock('../../src/logging.js', () => ({
-  rootLogger: { warn: mockWarn, debug: vi.fn(), info: vi.fn(), error: vi.fn() },
-  createLogger: () => ({ warn: mockWarn, debug: vi.fn(), info: vi.fn(), error: vi.fn() }),
-  createTraceId: () => 'test-trace',
-  logStage: vi.fn(),
-}));
-
-import { classifySlackIntake } from '../../src/agents/slackIntakeAgent.js';
+import { classifySlackIntake, setIntakeFallbackSink } from '../../src/agents/slackIntakeAgent.js';
 
 function modelText(text: string) {
   return { text };
@@ -26,18 +20,19 @@ function modelText(text: string) {
 
 // Pull the structured `reason` recorded by the single fallback log call.
 function loggedFallbackReason(): string | undefined {
-  const call = mockWarn.mock.calls.find((c) => c[1] === 'intake.fallback');
-  return call?.[0]?.reason;
+  return mockFallbackSink.mock.calls[0]?.[0]?.reason;
 }
 
 describe('classifySlackIntake', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    setIntakeFallbackSink(mockFallbackSink);
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    setIntakeFallbackSink(undefined);
   });
 
   it('answers an obvious greeting deterministically, without a model call', async () => {
@@ -238,6 +233,18 @@ describe('classifySlackIntake', () => {
     expect(loggedFallbackReason()).toBe('model_error');
   });
 
+  it('does not let a throwing fallback sink break fail-open routing', async () => {
+    setIntakeFallbackSink(() => {
+      throw new Error('sink unavailable');
+    });
+    mockGenerateContent.mockRejectedValue(new Error('Gemini unavailable'));
+
+    const result = await classifySlackIntake('what can you do?', 'api-key');
+
+    expect(result.route).toBe('analytics_pipeline');
+    expect(result.responseText).toBeNull();
+  });
+
   it('falls back when the intake call times out', async () => {
     vi.useFakeTimers();
     mockGenerateContent.mockReturnValue(new Promise(() => {}));
@@ -347,7 +354,7 @@ describe('classifySlackIntake', () => {
 
     await classifySlackIntake('a sensitive user question', 'api-key');
 
-    for (const [meta] of mockWarn.mock.calls) {
+    for (const [meta] of mockFallbackSink.mock.calls) {
       const serialized = JSON.stringify(meta);
       expect(serialized).not.toContain(leakyResponse);
       expect(serialized).not.toContain('sensitive user question');
@@ -372,9 +379,8 @@ describe('classifySlackIntake', () => {
       threadTs: '12345.67890',
     });
 
-    const call = mockWarn.mock.calls.find((c) => c[1] === 'intake.fallback');
-    expect(call).toBeDefined();
-    expect(call![0]).toMatchObject({
+    expect(mockFallbackSink).toHaveBeenCalled();
+    expect(mockFallbackSink.mock.calls[0][0]).toMatchObject({
       reason: 'sanitize_empty',
       channel: 'C12345',
       threadTs: '12345.67890',

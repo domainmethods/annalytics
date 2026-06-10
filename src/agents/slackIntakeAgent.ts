@@ -2,7 +2,6 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { toJSONSchema } from 'zod/v4/core';
 import { generateForNode } from './modelGateway.js';
-import { rootLogger } from '../logging.js';
 
 const SlackIntakeSchema = z.object({
   route: z.enum(['immediate_response', 'analytics_pipeline']),
@@ -53,6 +52,27 @@ interface IntakeLogContext {
   threadTs?: string;
 }
 
+export interface IntakeFallbackEvent {
+  reason: IntakeFallbackReason;
+  channel?: string;
+  threadTs?: string;
+  elapsedMs?: number;
+  textLength?: number;
+}
+
+type IntakeFallbackSink = (e: IntakeFallbackEvent) => void;
+
+const defaultFallbackSink: IntakeFallbackSink = (e) =>
+  console.warn(`intake.fallback ${JSON.stringify(e)}`);
+
+let fallbackSink: IntakeFallbackSink = defaultFallbackSink;
+
+/** Process-wide sink for fail-open fallback telemetry. Wiring to a concrete
+ *  logger happens in app.ts — agents/ stays free of logging imports. */
+export function setIntakeFallbackSink(sink: IntakeFallbackSink | undefined): void {
+  fallbackSink = sink ?? defaultFallbackSink;
+}
+
 // Distinct error type so the catch can tell a timeout apart from a model/network
 // failure without string-matching the message.
 class IntakeTimeoutError extends Error {}
@@ -61,7 +81,11 @@ function logIntakeFallback(
   reason: IntakeFallbackReason,
   meta: IntakeLogContext & { elapsedMs?: number; textLength?: number } = {},
 ): void {
-  rootLogger.warn({ reason, ...meta }, 'intake.fallback');
+  try {
+    fallbackSink({ reason, ...meta });
+  } catch {
+    // Fallback telemetry must never break the fail-open route.
+  }
 }
 
 

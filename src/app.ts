@@ -26,6 +26,7 @@ import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
 import { rootLogger } from './logging.js';
 import { setDefaultUsageSink } from './agents/modelGateway.js';
+import { setIntakeFallbackSink } from './agents/slackIntakeAgent.js';
 import { GoogleGenAI } from '@google/genai';
 import { runDiagnostics, httpStatusForReport } from './health/doctor.js';
 
@@ -43,6 +44,7 @@ initBigQueryClient(config.gcp.projectId);
 // (nodeId, promptTokens, candidatesTokens, thoughtsTokens, latencyMs).
 // Queryable in Cloud Logging via jsonPayload.nodeId / message "model.usage".
 setDefaultUsageSink((r) => rootLogger.info(r, 'model.usage'));
+setIntakeFallbackSink((e) => rootLogger.warn(e, 'intake.fallback'));
 
 // In-memory schema cache — loaded at startup from dbt artifacts
 let tables: TableContext[] = [];
