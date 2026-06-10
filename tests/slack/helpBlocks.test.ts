@@ -10,6 +10,7 @@ describe('buildHelpBlocks', () => {
     expect(json).toContain('clarifying question');
     expect(json).toContain('data team');
     expect(json).toContain('feedback');
+    expect(json).toContain('the SQL I ran');
   });
 
   it('contains example questions', () => {

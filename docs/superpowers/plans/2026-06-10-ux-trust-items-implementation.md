@@ -1178,6 +1178,8 @@ git commit -m "feat: clarification cancel action handler"
 
 ### Task 10: help block builder
 
+> **Amended after code review (2026-06-10):** the original copy omitted the *Show SQL* button (the most trust-central response affordance, present on every answer since `94f136f`), claimed `/anna` works "in any channel" (posting fails with `not_in_channel` where Anna isn't a member), and said "Every answer has buttons" for formats (format overrides are hidden for zero-row/scalar results). Copy corrected; the design doc's button list was amended in the same change set.
+
 **Files:**
 - Create: `src/slack/helpBlocks.ts`
 - Test: `tests/slack/helpBlocks.test.ts`
@@ -1197,6 +1199,7 @@ describe('buildHelpBlocks', () => {
     expect(json).toContain('clarifying question');
     expect(json).toContain('data team');
     expect(json).toContain('feedback');
+    expect(json).toContain('the SQL I ran');
   });
 
   it('contains example questions', () => {
@@ -1255,7 +1258,7 @@ export function buildHelpBlocks(): Record<string, unknown>[] {
         type: 'mrkdwn',
         text:
           '*How to ask*\n' +
-          '• `/anna <your question>` in any channel\n' +
+          '• `/anna <your question>` in any channel I\'ve been added to\n' +
           '• @mention me in a channel\n' +
           '• DM me directly\n\n' +
           'For example: _"How many orders did we get last week?"_ · ' +
@@ -1273,8 +1276,9 @@ export function buildHelpBlocks(): Record<string, unknown>[] {
           'answer it (or cancel) and I\'ll continue.\n' +
           '• If I\'m not confident in an answer, I\'ll *ask the data team* and follow up ' +
           'in your thread when they respond.\n' +
-          '• Every answer has buttons for *feedback* (👍/👎), *my reasoning*, and ' +
-          'alternate formats (table, summary, CSV).',
+          '• Answers include buttons for *feedback* (👍/👎), *my reasoning*, and ' +
+          '*the SQL I ran* — plus alternate formats (table, summary, CSV) when the ' +
+          'result shape supports them.',
       },
     },
     {

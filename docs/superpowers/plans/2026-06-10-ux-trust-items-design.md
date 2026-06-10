@@ -143,7 +143,8 @@ boundary applies to help copy too; implementations override).
    warehouse), how to ask (`/anna <question>`, @mention, DM), three generic
    example questions, what a clarifying question means (answer it or cancel),
    what "asked the data team" means (escalation + expected wait), the response
-   buttons (feedback / reasoning / format overrides), and the rate limit.
+   buttons (feedback / reasoning / show-SQL / format overrides), and the rate
+   limit.
 
 2. **`/anna help` and bare `/anna`** — in `registerCommands`, intercept
    before the rate-limit check and before `maybeHandleSlackIntake`

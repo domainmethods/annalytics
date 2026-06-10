@@ -26,7 +26,7 @@ export function buildHelpBlocks(): Record<string, unknown>[] {
         type: 'mrkdwn',
         text:
           '*How to ask*\n' +
-          '• `/anna <your question>` in any channel\n' +
+          '• `/anna <your question>` in any channel I\'ve been added to\n' +
           '• @mention me in a channel\n' +
           '• DM me directly\n\n' +
           'For example: _"How many orders did we get last week?"_ · ' +
@@ -44,8 +44,9 @@ export function buildHelpBlocks(): Record<string, unknown>[] {
           'answer it (or cancel) and I\'ll continue.\n' +
           '• If I\'m not confident in an answer, I\'ll *ask the data team* and follow up ' +
           'in your thread when they respond.\n' +
-          '• Every answer has buttons for *feedback* (👍/👎), *my reasoning*, and ' +
-          'alternate formats (table, summary, CSV).',
+          '• Answers include buttons for *feedback* (👍/👎), *my reasoning*, and ' +
+          '*the SQL I ran* — plus alternate formats (table, summary, CSV) when the ' +
+          'result shape supports them.',
       },
     },
     {
