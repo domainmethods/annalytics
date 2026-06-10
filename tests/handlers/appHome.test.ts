@@ -6,6 +6,7 @@ vi.mock('../../src/logging.js', () => ({
 }));
 
 import { registerAppHome } from '../../src/handlers/appHome.js';
+import { rootLogger } from '../../src/logging.js';
 
 const mockPublish = vi.fn();
 let eventHandler: (args: {
@@ -44,10 +45,14 @@ describe('registerAppHome', () => {
     expect(mockPublish).not.toHaveBeenCalled();
   });
 
-  it('does not throw when publish fails', async () => {
+  it('does not throw when publish fails, and logs the failure', async () => {
     mockPublish.mockRejectedValue(new Error('not_enabled'));
     await expect(
       eventHandler({ event: { tab: 'home', user: 'U1' }, client }),
     ).resolves.toBeUndefined();
+    expect(rootLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'not_enabled' }),
+      'app_home.publish_failed',
+    );
   });
 });

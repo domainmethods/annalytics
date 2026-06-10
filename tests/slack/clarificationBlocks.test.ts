@@ -82,6 +82,19 @@ describe('buildPendingClarificationBlocks', () => {
     expect((actions as any).elements[0].action_id).toBe('clarification_cancel');
     expect((actions as any).elements[0].value).toBe('clar_1');
   });
+
+  it('escapes mrkdwn entities in the echoed original question', () => {
+    const blocks = buildPendingClarificationBlocks({
+      clarificationId: 'clar_1',
+      originalQuestion: 'ping <!channel> & show me <sessions>',
+    });
+
+    const context = blocks.find((b: any) => b.type === 'context') as any;
+    expect(context.elements[0].text).toContain(
+      'ping &lt;!channel&gt; &amp; show me &lt;sessions&gt;',
+    );
+    expect(context.elements[0].text).not.toContain('<!channel>');
+  });
 });
 
 describe('buildCancelFailedBlocks', () => {

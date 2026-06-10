@@ -5,7 +5,10 @@ import { getClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
 import { rootLogger } from '../logging.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
-import { buildPendingClarificationBlocks } from '../slack/clarificationBlocks.js';
+import {
+  buildPendingClarificationBlocks,
+  PENDING_CLARIFICATION_TEXT,
+} from '../slack/clarificationBlocks.js';
 
 /**
  * Shared preflight guard: runs lock + clarification + escalation checks in order.
@@ -48,7 +51,7 @@ export async function preflightChecks(
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,
-        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+        text: PENDING_CLARIFICATION_TEXT,
         blocks: buildPendingClarificationBlocks({
           clarificationId: pendingClarification.clarificationId,
           originalQuestion: pendingClarification.originalQuestion,

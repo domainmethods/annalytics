@@ -753,6 +753,8 @@ git commit -m "feat: deliver promotion notifications on the lifecycle sweep"
 
 ### Task 7: cancel button on both clarification surfaces (blocks only)
 
+> **Amended after final review (2026-06-10):** the nudge copy was duplicated between this builder and preflight guard 2's message fallback `text` — it is now exported as `PENDING_CLARIFICATION_TEXT` and shared. The echoed original question is now passed through `escapeMrkdwn` before interpolation: it is user-controlled text, and a stored `<!channel>` would otherwise re-ping the channel when echoed back.
+
 **Files:**
 - Modify: `src/slack/clarificationBlocks.ts`
 - Test: `tests/slack/clarificationBlocks.test.ts` (extend)
@@ -825,22 +827,35 @@ export interface PendingClarificationBlocksOptions {
   originalQuestion: string;
 }
 
-/** Preflight guard 2's block message: the nudge, the question being waited on, and a way out. */
+/** Guard 2's nudge — also the message fallback text in preflightChecks. */
+export const PENDING_CLARIFICATION_TEXT =
+  "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.";
+
+// Slack mrkdwn entity escapes. Without them a stored "<!channel>" in the
+// echoed original question would re-ping the channel.
+function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,
 ): Record<string, unknown>[] {
-  return [
+  const blocks: Record<string, unknown>[] = [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+        text: PENDING_CLARIFICATION_TEXT,
       },
     },
     {
       type: 'context',
       elements: [
-        { type: 'mrkdwn', text: `Waiting on my question about: _${options.originalQuestion}_` },
+        {
+          type: 'mrkdwn',
+          text: `Waiting on my question about: _${escapeMrkdwn(options.originalQuestion)}_`,
+        },
       ],
     },
     {
@@ -848,13 +863,18 @@ export function buildPendingClarificationBlocks(
       elements: [
         {
           type: 'button',
-          text: { type: 'plain_text', text: 'Cancel that question' },
+          text: {
+            type: 'plain_text',
+            text: 'Cancel that question',
+          },
           action_id: 'clarification_cancel',
           value: options.clarificationId,
         },
       ],
     },
   ];
+
+  return blocks;
 }
 ```
 
@@ -873,6 +893,8 @@ git commit -m "feat: offer cancel on clarification surfaces"
 ---
 
 ### Task 8: preflight guard 2 posts the bailout blocks
+
+> **Amended after final review (2026-06-10):** the fallback `text` now references the shared `PENDING_CLARIFICATION_TEXT` constant instead of duplicating the nudge copy (see Task 7's note).
 
 **Files:**
 - Modify: `src/handlers/preflightChecks.ts:43-53` (guard 2)
@@ -923,7 +945,10 @@ In `src/handlers/preflightChecks.ts`, swap the import and guard 2 (the lock-rele
 
 ```typescript
 import { getClarificationState } from '../state/clarificationState.js';
-import { buildPendingClarificationBlocks } from '../slack/clarificationBlocks.js';
+import {
+  buildPendingClarificationBlocks,
+  PENDING_CLARIFICATION_TEXT,
+} from '../slack/clarificationBlocks.js';
 import type { KnownBlock } from '@slack/types';
 ```
 
@@ -934,7 +959,7 @@ import type { KnownBlock } from '@slack/types';
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,
-        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+        text: PENDING_CLARIFICATION_TEXT,
         blocks: buildPendingClarificationBlocks({
           clarificationId: pendingClarification.clarificationId,
           originalQuestion: pendingClarification.originalQuestion,
@@ -961,6 +986,8 @@ git commit -m "feat: preflight clarification block shows context and offers canc
 
 ### Task 9: cancel action handler + app.ts registration
 > **Amended after code review (2026-06-10):** the original prescription stripped all blocks on the delete-failure path — telling the user to "try again" while removing the only button that can. The failure path now rewrites the message with `buildCancelFailedBlocks` (failure copy + retry button re-entering the same idempotent handler).
+
+> **Amended after final review (2026-06-10):** the malformed-payload early return in the `app.action` registration was silent — indistinguishable from a working cancel in logs. It now emits `clarification.cancel.malformed_payload` with which fields were missing before returning.
 
 **Files:**
 - Create: `src/handlers/clarificationCancel.ts`
@@ -1149,7 +1176,13 @@ app.action('clarification_cancel', async ({ action, ack, body, client }) => {
   const clarificationId = (action as { value?: string }).value;
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
-  if (!clarificationId || !channel || !messageTs) return;
+  if (!clarificationId || !channel || !messageTs) {
+    rootLogger.warn(
+      { hasId: !!clarificationId, hasChannel: !!channel, hasTs: !!messageTs },
+      'clarification.cancel.malformed_payload',
+    );
+    return;
+  }
   await handleClarificationCancel({ clarificationId, channel, messageTs, client });
 });
 ```
@@ -1182,6 +1215,8 @@ git commit -m "feat: clarification cancel action handler"
 
 > **Amended after Task 12 code review (2026-06-10):** the builder originally returned `Record<string, unknown>[]`, forcing an `as unknown as KnownBlock[]` cast at every call site (duplicated across Tasks 11 and 12). It now returns `KnownBlock[]` directly — compile-time block checking, no casts.
 
+> **Amended after final review (2026-06-10):** the template-boundary test originally used a deny-regex of client names — embedding the very vocabulary it guards against in the template repo. It now pins the three generic example questions positively and denies only `ga4` (public dbt-ga4 package vocabulary, not a client identifier).
+
 **Files:**
 - Create: `src/slack/helpBlocks.ts`
 - Test: `tests/slack/helpBlocks.test.ts`
@@ -1209,8 +1244,13 @@ describe('buildHelpBlocks', () => {
   });
 
   it('stays template-generic (no client-specific vocabulary)', () => {
-    // The template boundary applies to help copy too — implementations override examples.
-    expect(json).not.toMatch(/ga4|velir|domain methods|dm-website/i);
+    // The template boundary applies to help copy too — implementations override
+    // examples. Pin the generic examples positively (a deny-list of client names
+    // would itself embed client vocabulary in the template).
+    expect(json).toContain('How many orders did we get last week?');
+    expect(json).toContain('What were the top products by revenue last month?');
+    expect(json).toContain('How does signup volume compare to the previous quarter?');
+    expect(json).not.toMatch(/ga4/i);
   });
 
   it('uses only blocks valid on both message and home surfaces', () => {
@@ -1404,6 +1444,8 @@ git commit -m "feat: /anna help and bare /anna show the help surface"
 
 > **Amended after code review (2026-06-10):** `buildHelpBlocks()` now returns `KnownBlock[]` (see Task 10's note), so the `as unknown as KnownBlock[]` cast and the `KnownBlock` type import are gone. The README subsection was also renamed `App Home Messages` → `App Home`, since it now covers both the Home and Messages tabs.
 
+> **Amended after final review (2026-06-10):** the publish-failure test only asserted "does not throw"; it now also asserts the `app_home.publish_failed` warn fires with the error message, so a silently-swallowed failure can't pass.
+
 **Files:**
 - Create: `src/handlers/appHome.ts`
 - Modify: `src/app.ts` (call `registerAppHome(app)` next to `registerCommands(app, ...)`, ~line 170)
@@ -1421,6 +1463,7 @@ vi.mock('../../src/logging.js', () => ({
 }));
 
 import { registerAppHome } from '../../src/handlers/appHome.js';
+import { rootLogger } from '../../src/logging.js';
 
 const mockPublish = vi.fn();
 let eventHandler: (args: {
@@ -1459,11 +1502,15 @@ describe('registerAppHome', () => {
     expect(mockPublish).not.toHaveBeenCalled();
   });
 
-  it('does not throw when publish fails', async () => {
+  it('does not throw when publish fails, and logs the failure', async () => {
     mockPublish.mockRejectedValue(new Error('not_enabled'));
     await expect(
       eventHandler({ event: { tab: 'home', user: 'U1' }, client }),
     ).resolves.toBeUndefined();
+    expect(rootLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'not_enabled' }),
+      'app_home.publish_failed',
+    );
   });
 });
 ```

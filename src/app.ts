@@ -278,7 +278,13 @@ app.action('clarification_cancel', async ({ action, ack, body, client }) => {
   const clarificationId = (action as { value?: string }).value;
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
-  if (!clarificationId || !channel || !messageTs) return;
+  if (!clarificationId || !channel || !messageTs) {
+    rootLogger.warn(
+      { hasId: !!clarificationId, hasChannel: !!channel, hasTs: !!messageTs },
+      'clarification.cancel.malformed_payload',
+    );
+    return;
+  }
   await handleClarificationCancel({ clarificationId, channel, messageTs, client });
 });
 

@@ -62,6 +62,16 @@ export interface PendingClarificationBlocksOptions {
   originalQuestion: string;
 }
 
+/** Guard 2's nudge — also the message fallback text in preflightChecks. */
+export const PENDING_CLARIFICATION_TEXT =
+  "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.";
+
+// Slack mrkdwn entity escapes. Without them a stored "<!channel>" in the
+// echoed original question would re-ping the channel.
+function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,
@@ -71,7 +81,7 @@ export function buildPendingClarificationBlocks(
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+        text: PENDING_CLARIFICATION_TEXT,
       },
     },
     {
@@ -79,7 +89,7 @@ export function buildPendingClarificationBlocks(
       elements: [
         {
           type: 'mrkdwn',
-          text: `Waiting on my question about: _${options.originalQuestion}_`,
+          text: `Waiting on my question about: _${escapeMrkdwn(options.originalQuestion)}_`,
         },
       ],
     },

@@ -18,8 +18,13 @@ describe('buildHelpBlocks', () => {
   });
 
   it('stays template-generic (no client-specific vocabulary)', () => {
-    // The template boundary applies to help copy too — implementations override examples.
-    expect(json).not.toMatch(/ga4|velir|domain methods|dm-website/i);
+    // The template boundary applies to help copy too — implementations override
+    // examples. Pin the generic examples positively (a deny-list of client names
+    // would itself embed client vocabulary in the template).
+    expect(json).toContain('How many orders did we get last week?');
+    expect(json).toContain('What were the top products by revenue last month?');
+    expect(json).toContain('How does signup volume compare to the previous quarter?');
+    expect(json).not.toMatch(/ga4/i);
   });
 
   it('uses only blocks valid on both message and home surfaces', () => {
