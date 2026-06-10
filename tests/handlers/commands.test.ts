@@ -89,8 +89,8 @@ describe('registerCommands /anna seam', () => {
     mockRespond.mockResolvedValue({});
   });
 
-  it('responds to /anna help ephemerally without touching rate limit or intake', async () => {
-    await invokeCommand({ text: '  HELP  ' });
+  it('responds to "/anna help" ephemerally without touching rate limit or intake', async () => {
+    await invokeCommand({ text: '  HELP  ' }); // trim + case-insensitive
 
     expect(mockRespond).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -109,8 +109,8 @@ describe('registerCommands /anna seam', () => {
     expect(mockRunPipeline).not.toHaveBeenCalled();
   });
 
-  it('does not treat questions starting with help as help requests', async () => {
-    await invokeCommand({ text: 'help me count last weeks sessions' });
+  it('does not treat questions starting with "help" as help requests', async () => {
+    await invokeCommand({ text: "help me count last week's sessions" });
 
     expect(mockRespond).not.toHaveBeenCalled();
     expect(mockCheckRateLimit).toHaveBeenCalled();

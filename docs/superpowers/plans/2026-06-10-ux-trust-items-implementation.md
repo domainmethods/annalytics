@@ -1310,7 +1310,7 @@ git commit -m "feat: add help block builder"
 
 ### Task 11: `/anna help` and bare `/anna` intercept
 
-> **Amended after code review (2026-06-10):** chat.postEphemeral requires conversation access and throws channel_not_found in private channels/DMs the bot is not in — silent failure exactly where a new user first tries /anna help. The intercept now uses Bolts respond() (response_url-based: ephemeral by default, membership-free). A third test pins that questions starting with help still reach the pipeline.
+> **Amended after code review (2026-06-10):** `chat.postEphemeral` requires conversation access and throws `channel_not_found` in private channels/DMs the bot isn't in — silent failure exactly where a new user first tries `/anna help`. The intercept now uses Bolt's `respond()` (response_url-based: ephemeral by default, membership-free). A third test pins that questions starting with "help" still reach the pipeline.
 
 **Files:**
 - Modify: `src/handlers/commands.ts` (immediately after `await ack();`, before the rate-limit check, ~line 15)
@@ -1341,8 +1341,8 @@ Match the existing harness in `tests/handlers/commands.test.ts` (it registers th
     expect(mockRunPipeline).not.toHaveBeenCalled();
   });
 
-  it('does not treat questions starting with help as help requests', async () => {
-    await invokeCommand({ text: 'help me count last weeks sessions' });
+  it('does not treat questions starting with "help" as help requests', async () => {
+    await invokeCommand({ text: "help me count last week's sessions" });
 
     expect(mockRespond).not.toHaveBeenCalled();
     expect(mockCheckRateLimit).toHaveBeenCalled();
@@ -1365,16 +1365,16 @@ import type { KnownBlock } from '@slack/types';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 ```
 
-Immediately after `await ack();` (before `getConfig()`/rate limiting — help must cost nothing: no rate budget, no Flash intake call, no thread):
+Add `respond` to the listener's destructured args (`async ({ command, ack, respond, client })`), then immediately after `await ack();` (before `getConfig()`/rate limiting — help must cost nothing: no rate budget, no Flash intake call, no thread):
 
 ```typescript
     const trimmed = command.text.trim().toLowerCase();
     if (!trimmed || trimmed === 'help') {
-      // respond() goes through the payload response_url: ephemeral by default
-      // and unlike chat.postEphemeral works in conversations the bot is not
-      // a member of, which is exactly where a new user will try /anna help.
+      // respond() goes through the payload's response_url: ephemeral by default
+      // and — unlike chat.postEphemeral — works in conversations the bot is not
+      // a member of, which is exactly where a new user will try `/anna help`.
       await respond({
-        text: "How to use Anna Lytics",
+        text: 'How to use Anna Lytics',
         blocks: buildHelpBlocks() as unknown as KnownBlock[],
       });
       return;

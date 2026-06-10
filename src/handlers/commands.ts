@@ -17,11 +17,11 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
     const trimmed = command.text.trim().toLowerCase();
     if (!trimmed || trimmed === 'help') {
-      // respond() goes through the payload response_url: ephemeral by default
-      // and unlike chat.postEphemeral works in conversations the bot is not
-      // a member of, which is exactly where a new user will try /anna help.
+      // respond() goes through the payload's response_url: ephemeral by default
+      // and — unlike chat.postEphemeral — works in conversations the bot is not
+      // a member of, which is exactly where a new user will try `/anna help`.
       await respond({
-        text: "How to use Anna Lytics",
+        text: 'How to use Anna Lytics',
         blocks: buildHelpBlocks() as unknown as KnownBlock[],
       });
       return;
