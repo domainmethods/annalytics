@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import type { TeachingCandidate } from '../../src/state/teachingCandidates.js';
 import type { StoredFeedbackNote } from '../../src/state/feedbackNotes.js';
+import type { EscalationState } from '../../src/types.js';
 
 vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
@@ -20,12 +21,22 @@ vi.mock('../../src/state/feedbackNotes.js', () => ({
   markFeedbackNoteReviewed: vi.fn(),
 }));
 
+vi.mock('../../src/state/escalationState.js', () => ({
+  getEscalationById: vi.fn(),
+}));
+
+vi.mock('../../src/state/pendingNotifications.js', () => ({
+  enqueueNotification: vi.fn(),
+}));
+
 vi.mock('../../src/state/firestore.js', () => ({
   initFirestore: vi.fn(),
 }));
 
 import { updateCandidateStatus } from '../../src/state/teachingCandidates.js';
 import { markFeedbackNoteReviewed } from '../../src/state/feedbackNotes.js';
+import { getEscalationById } from '../../src/state/escalationState.js';
+import { enqueueNotification } from '../../src/state/pendingNotifications.js';
 import { runPromotion, runFeedbackReview } from '../../scripts/promote-teachings.js';
 
 function createMockRl(answers: string[]) {
@@ -50,6 +61,43 @@ function makeCandidate(overrides: Partial<TeachingCandidate> = {}): TeachingCand
     humanResponse: 'Use dim_users and filter by is_active = true',
     generatedAt: new Date('2026-02-15T10:00:00Z'),
     ...overrides,
+  };
+}
+
+function makeEscalation(
+  overrides: Partial<Omit<EscalationState, 'context'>> & {
+    context?: Partial<EscalationState['context']>;
+  } = {},
+): EscalationState {
+  const requiredContext: EscalationState['context'] = {
+    clarifiedQuestion: 'how many active users?',
+    userQuestion: 'how many active users?',
+    groundingCitations: [],
+  };
+  const baseContext: EscalationState['context'] = {
+    ...requiredContext,
+    feedbackUserId: 'U0FEEDBACK',
+  };
+  const context = overrides.context === undefined
+    ? baseContext
+    : { ...requiredContext, ...overrides.context };
+
+  return {
+    escalationId: 'esc_abc123',
+    originalThreadTs: '1718000000.000100',
+    originalChannel: 'C0RIGIN',
+    pipelineState: 'resolved',
+    trigger: 'user_negative_feedback',
+    behavior: 'park_wait',
+    stageToResume: 'sql_generation',
+    escalationChannel: 'CESCALATE',
+    escalationTs: '1718000001.000200',
+    statusMsgTs: '1718000000.000300',
+    createdAt: new Date('2026-02-15T10:00:00Z'),
+    expiresAt: new Date('2026-02-15T14:00:00Z'),
+    traceId: 'trace_abc123',
+    ...overrides,
+    context,
   };
 }
 
@@ -142,6 +190,52 @@ describe('promote-teachings CLI', () => {
     await runPromotion(rl, [candidate]);
 
     expect(mkdirSync).toHaveBeenCalledWith(expect.stringContaining('teachings'), { recursive: true });
+  });
+});
+
+describe('promotion notification enqueue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('enqueues with the origin thread and the feedback user on approve', async () => {
+    vi.mocked(getEscalationById).mockResolvedValue(makeEscalation());
+    await runPromotion(createMockRl(['a']), [makeCandidate()]);
+
+    expect(getEscalationById).toHaveBeenCalledWith('esc_abc123');
+    expect(enqueueNotification).toHaveBeenCalledWith({
+      id: 'notif_teach_esc_abc123',
+      kind: 'teaching_promoted',
+      channel: 'C0RIGIN',
+      threadTs: '1718000000.000100',
+      userId: 'U0FEEDBACK',
+      teachingId: 'teach_esc_abc123',
+    });
+  });
+
+  it('omits userId when the escalation has no feedbackUserId', async () => {
+    vi.mocked(getEscalationById).mockResolvedValue(makeEscalation({ context: {} }));
+    await runPromotion(createMockRl(['a']), [makeCandidate()]);
+    expect(vi.mocked(enqueueNotification).mock.calls[0][0]).not.toHaveProperty('userId');
+  });
+
+  it('skips silently when the origin escalation is gone (past retention)', async () => {
+    vi.mocked(getEscalationById).mockResolvedValue(null);
+    const counts = await runPromotion(createMockRl(['a']), [makeCandidate()]);
+    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(counts.approved).toBe(1);
+  });
+
+  it('does not fail the promotion when enqueue throws', async () => {
+    vi.mocked(getEscalationById).mockResolvedValue(makeEscalation());
+    vi.mocked(enqueueNotification).mockRejectedValue(new Error('firestore down'));
+    const counts = await runPromotion(createMockRl(['a']), [makeCandidate()]);
+    expect(counts.approved).toBe(1);
+  });
+
+  it('does not look up provenance on reject', async () => {
+    await runPromotion(createMockRl(['r']), [makeCandidate()]);
+    expect(getEscalationById).not.toHaveBeenCalled();
   });
 });
 

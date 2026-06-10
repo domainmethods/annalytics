@@ -5,6 +5,8 @@ import { stringify } from 'yaml';
 import { initFirestore } from '../src/state/firestore.js';
 import { getPendingCandidates, updateCandidateStatus } from '../src/state/teachingCandidates.js';
 import type { TeachingCandidate } from '../src/state/teachingCandidates.js';
+import { getEscalationById } from '../src/state/escalationState.js';
+import { enqueueNotification } from '../src/state/pendingNotifications.js';
 import {
   getPendingFeedbackNotes,
   markFeedbackNoteReviewed,
@@ -15,6 +17,29 @@ import type { TeachingFile } from '../src/teachings/types.js';
 interface Rl {
   question: (prompt: string) => Promise<string>;
   close: () => void;
+}
+
+async function enqueuePromotionNotification(candidate: TeachingCandidate): Promise<void> {
+  try {
+    const escalation = await getEscalationById(candidate.escalationId);
+    if (!escalation) {
+      console.log('  (origin escalation not found — no user notification queued)');
+      return;
+    }
+    await enqueueNotification({
+      id: `notif_${candidate.candidateId}`,
+      kind: 'teaching_promoted',
+      channel: escalation.originalChannel,
+      threadTs: escalation.originalThreadTs,
+      ...(escalation.context.feedbackUserId
+        ? { userId: escalation.context.feedbackUserId }
+        : {}),
+      teachingId: candidate.candidateId,
+    });
+    console.log('  -> User notification queued (delivered by the next lifecycle sweep).');
+  } catch (err) {
+    console.warn(`  (could not queue user notification: ${(err as Error).message})`);
+  }
 }
 
 export async function runPromotion(
@@ -76,6 +101,7 @@ export async function runPromotion(
       const filePath = join(teachingsDir, `${candidate.candidateId}.yml`);
       writeFileSync(filePath, yamlContent, 'utf-8');
       await updateCandidateStatus(candidate.candidateId, 'approved');
+      await enqueuePromotionNotification(candidate);
       counts.approved++;
       console.log(`  -> Approved. Written to teachings/${candidate.candidateId}.yml`);
     } else if (choice === 'r') {

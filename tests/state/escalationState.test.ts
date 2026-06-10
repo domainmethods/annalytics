@@ -293,6 +293,7 @@ describe('getEscalationById', () => {
 
     const state = await getEscalationById('esc_fb_tr1');
 
+    expect(mockDoc).toHaveBeenCalledWith('esc_fb_tr1');
     expect(state?.originalChannel).toBe('C0RIGIN');
     expect(state?.context.feedbackUserId).toBe('U1');
     expect(state?.createdAt).toBeInstanceOf(Date);
