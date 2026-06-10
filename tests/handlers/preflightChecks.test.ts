@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { preflightChecks } from '../../src/handlers/preflightChecks.js';
+import type { ClarificationState } from '../../src/state/clarificationState.js';
 
 const mockAcquireThreadLock = vi.fn();
 const mockReleaseThreadLock = vi.fn();
-const mockHasPendingClarification = vi.fn();
+const mockGetClarificationState = vi.fn();
 const mockGetEscalationByThread = vi.fn();
 const mockPostMessage = vi.fn();
 
@@ -13,7 +14,7 @@ vi.mock('../../src/state/threadLock.js', () => ({
 }));
 
 vi.mock('../../src/state/clarificationState.js', () => ({
-  hasPendingClarification: (...args: unknown[]) => mockHasPendingClarification(...args),
+  getClarificationState: (...args: unknown[]) => mockGetClarificationState(...args),
 }));
 
 vi.mock('../../src/state/escalationState.js', () => ({
@@ -24,11 +25,29 @@ const mockClient = {
   chat: { postMessage: mockPostMessage },
 } as any;
 
+function pendingClarificationFixture(overrides: Partial<ClarificationState> = {}): ClarificationState {
+  return {
+    clarificationId: 'clar-123',
+    threadTs: '1234.5678',
+    channel: 'C123',
+    originalQuestion: 'show me sessions',
+    ambiguities: ['Need a date range'],
+    ambiguityType: 'user_intent',
+    ambiguityDomain: 'traffic',
+    ambiguityQuestion: 'Which date range should I use?',
+    clarifyingMessageTs: '1234.5679',
+    state: 'awaiting_reply',
+    createdAt: new Date('2026-06-10T12:00:00.000Z'),
+    expiresAt: new Date('2026-06-10T13:00:00.000Z'),
+    ...overrides,
+  };
+}
+
 describe('preflightChecks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAcquireThreadLock.mockResolvedValue(true);
-    mockHasPendingClarification.mockResolvedValue(false);
+    mockGetClarificationState.mockResolvedValue(null);
     mockGetEscalationByThread.mockResolvedValue(null);
     mockPostMessage.mockResolvedValue({ ts: 'msg-ts' });
     mockReleaseThreadLock.mockResolvedValue(undefined);
@@ -39,7 +58,7 @@ describe('preflightChecks', () => {
 
     expect(result).toBe(true);
     expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678');
-    expect(mockHasPendingClarification).toHaveBeenCalledWith('1234.5678');
+    expect(mockGetClarificationState).toHaveBeenCalledWith('1234.5678');
     expect(mockGetEscalationByThread).toHaveBeenCalledWith('1234.5678');
   });
 
@@ -57,11 +76,11 @@ describe('preflightChecks', () => {
       }),
     );
     // Should not check further guards
-    expect(mockHasPendingClarification).not.toHaveBeenCalled();
+    expect(mockGetClarificationState).not.toHaveBeenCalled();
   });
 
   it('returns false, posts a nudge, and releases lock when pending clarification', async () => {
-    mockHasPendingClarification.mockResolvedValue(true);
+    mockGetClarificationState.mockResolvedValue(pendingClarificationFixture());
 
     const result = await preflightChecks('C123', '1234.5678', mockClient);
 
@@ -73,6 +92,24 @@ describe('preflightChecks', () => {
         channel: 'C123',
         thread_ts: '1234.5678',
         text: expect.stringContaining('earlier question'),
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'context',
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('show me sessions'),
+              }),
+            ]),
+          }),
+          expect.objectContaining({
+            type: 'actions',
+            elements: expect.arrayContaining([
+              expect.objectContaining({
+                action_id: 'clarification_cancel',
+              }),
+            ]),
+          }),
+        ]),
       }),
     );
     expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
@@ -106,7 +143,7 @@ describe('preflightChecks', () => {
     // A Firestore blip after the lock is acquired must not leave the thread
     // wedged: the caller only assumes lock ownership on a `true` return, so
     // preflightChecks must release on the throw path itself.
-    mockHasPendingClarification.mockRejectedValue(new Error('Firestore error'));
+    mockGetClarificationState.mockRejectedValue(new Error('Firestore error'));
 
     await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
 

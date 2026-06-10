@@ -62,6 +62,7 @@ export interface PendingClarificationBlocksOptions {
   originalQuestion: string;
 }
 
+/** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,
 ): Record<string, unknown>[] {

@@ -1,9 +1,11 @@
 import type { WebClient } from '@slack/web-api';
+import type { KnownBlock } from '@slack/types';
 import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
-import { hasPendingClarification } from '../state/clarificationState.js';
+import { getClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
 import { rootLogger } from '../logging.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
+import { buildPendingClarificationBlocks } from '../slack/clarificationBlocks.js';
 
 /**
  * Shared preflight guard: runs lock + clarification + escalation checks in order.
@@ -40,13 +42,17 @@ export async function preflightChecks(
     // is still open. Returning false silently here left the user with no feedback
     // at all (indistinguishable from the bot being down). Surface the block the
     // same way Guards 1 and 3 do: a structured log plus a user-visible nudge.
-    const pendingClarification = await hasPendingClarification(threadTs);
+    const pendingClarification = await getClarificationState(threadTs);
     if (pendingClarification) {
       rootLogger.warn({ threadTs }, 'preflight.pending_clarification_block');
       await client.chat.postMessage({
         channel,
         thread_ts: threadTs,
         text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+        blocks: buildPendingClarificationBlocks({
+          clarificationId: pendingClarification.clarificationId,
+          originalQuestion: pendingClarification.originalQuestion,
+        }) as unknown as KnownBlock[],
       });
       await releaseThreadLock(threadTs);
       return false;
