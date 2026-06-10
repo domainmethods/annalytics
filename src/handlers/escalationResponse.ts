@@ -50,6 +50,8 @@ export async function checkEscalationResponse(
  * Handle a human's response to an escalation.
  * park_wait: re-run pipeline with human guidance injected.
  * best_effort_verify: post human's verification to the original thread.
+ * `options.skipTeachingCandidate` suppresses teaching-candidate harvesting for
+ * resolutions that carry no new human-authored guidance (e.g. a ✅ reaction).
  */
 export async function resumeFromEscalation(
   ctx: EscalationResumeContext,
