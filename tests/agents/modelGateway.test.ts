@@ -65,3 +65,51 @@ describe('generateForNode', () => {
     await expect(generateForNode('supervisor', ai, { contents: [] })).resolves.toBeDefined();
   });
 });
+
+describe('default usage sink', () => {
+  afterEach(async () => {
+    const { setDefaultUsageSink } = await import('../../src/agents/modelGateway.js');
+    setDefaultUsageSink(undefined);
+    vi.resetModules();
+  });
+
+  it('falls back to the default sink when no ALS sink is active', async () => {
+    const { generateForNode, setDefaultUsageSink } = await import('../../src/agents/modelGateway.js');
+    const { ai } = fakeAi({ promptTokenCount: 7, candidatesTokenCount: 2, thoughtsTokenCount: 1 });
+    const spy = vi.fn();
+    setDefaultUsageSink(spy);
+    await generateForNode('supervisor', ai, { contents: [] });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toMatchObject({
+      nodeId: 'supervisor',
+      promptTokens: 7,
+      candidatesTokens: 2,
+      thoughtsTokens: 1,
+    });
+    expect(typeof spy.mock.calls[0][0].latencyMs).toBe('number');
+  });
+
+  it('ALS sink takes precedence — replaces, never duplicates, the default', async () => {
+    const { generateForNode, withUsageSink, setDefaultUsageSink } =
+      await import('../../src/agents/modelGateway.js');
+    const { ai } = fakeAi({ promptTokenCount: 1 });
+    const defaultSpy = vi.fn();
+    const alsSpy = vi.fn();
+    setDefaultUsageSink(defaultSpy);
+    await withUsageSink(alsSpy, async () => {
+      await generateForNode('supervisor', ai, { contents: [] });
+    });
+    expect(alsSpy).toHaveBeenCalledTimes(1);
+    expect(defaultSpy).not.toHaveBeenCalled();
+  });
+
+  it('setDefaultUsageSink(undefined) clears the fallback; with no sink at all it neither throws nor records', async () => {
+    const { generateForNode, setDefaultUsageSink } = await import('../../src/agents/modelGateway.js');
+    const { ai } = fakeAi({ promptTokenCount: 1 });
+    const spy = vi.fn();
+    setDefaultUsageSink(spy);
+    setDefaultUsageSink(undefined);
+    await expect(generateForNode('supervisor', ai, { contents: [] })).resolves.toBeDefined();
+    expect(spy).not.toHaveBeenCalled();
+  });
+});

@@ -13,6 +13,16 @@ type UsageSink = (r: UsageRecord) => void;
 
 const sinkStore = new AsyncLocalStorage<UsageSink>();
 
+let defaultSink: UsageSink | undefined;
+
+/** Process-wide fallback sink, used when no AsyncLocalStorage-scoped sink is
+ *  active. ALS sinks (withUsageSink) take precedence and fully replace it for
+ *  their scope. Wiring to a concrete logger happens in app.ts — agents/ stays
+ *  free of logging imports. */
+export function setDefaultUsageSink(sink: UsageSink | undefined): void {
+  defaultSink = sink;
+}
+
 export async function withUsageSink<T>(sink: UsageSink, fn: () => Promise<T>): Promise<T> {
   return sinkStore.run(sink, fn);
 }
@@ -22,7 +32,7 @@ function num(v: unknown): number {
 }
 
 function recordUsage(nodeId: NodeId, usage: unknown, latencyMs: number): void {
-  const sink = sinkStore.getStore();
+  const sink = sinkStore.getStore() ?? defaultSink;
   if (!sink) return;
   const u = (usage ?? {}) as Record<string, unknown>;
   sink({
