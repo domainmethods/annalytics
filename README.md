@@ -92,7 +92,7 @@ Plain 1:1 DMs are delivered through `message.im`. Group DMs are delivered
 through `message.mpim`. Channel messages require `app_mention` unless the bot
 has already participated in the thread.
 
-### App Home Messages
+### App Home
 
 Go to **Features -> App Home** and enable the **Home Tab** toggle. The Home tab
 shows the same static help content as `/anna help`; no new OAuth scope is needed

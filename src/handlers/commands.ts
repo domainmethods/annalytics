@@ -1,5 +1,4 @@
 import type { App } from '@slack/bolt';
-import type { KnownBlock } from '@slack/types';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
@@ -22,7 +21,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       // a member of, which is exactly where a new user will try `/anna help`.
       await respond({
         text: 'How to use Anna Lytics',
-        blocks: buildHelpBlocks() as unknown as KnownBlock[],
+        blocks: buildHelpBlocks(),
       });
       return;
     }

@@ -1,5 +1,4 @@
 import type { App } from '@slack/bolt';
-import type { KnownBlock } from '@slack/types';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 import { rootLogger } from '../logging.js';
 
@@ -14,7 +13,7 @@ export function registerAppHome(app: App): void {
     await client.views
       .publish({
         user_id: event.user,
-        view: { type: 'home', blocks: buildHelpBlocks() as unknown as KnownBlock[] },
+        view: { type: 'home', blocks: buildHelpBlocks() },
       })
       .catch((err) =>
         rootLogger.warn({ error: (err as Error).message }, 'app_home.publish_failed'),

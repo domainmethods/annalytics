@@ -1180,6 +1180,8 @@ git commit -m "feat: clarification cancel action handler"
 
 > **Amended after code review (2026-06-10):** the original copy omitted the *Show SQL* button (the most trust-central response affordance, present on every answer since `94f136f`), claimed `/anna` works "in any channel" (posting fails with `not_in_channel` where Anna isn't a member), and said "Every answer has buttons" for formats (format overrides are hidden for zero-row/scalar results). Copy corrected; the design doc's button list was amended in the same change set.
 
+> **Amended after Task 12 code review (2026-06-10):** the builder originally returned `Record<string, unknown>[]`, forcing an `as unknown as KnownBlock[]` cast at every call site (duplicated across Tasks 11 and 12). It now returns `KnownBlock[]` directly — compile-time block checking, no casts.
+
 **Files:**
 - Create: `src/slack/helpBlocks.ts`
 - Test: `tests/slack/helpBlocks.test.ts`
@@ -1230,13 +1232,15 @@ Expected: FAIL — module does not exist.
 `src/slack/helpBlocks.ts`:
 
 ```typescript
+import type { KnownBlock } from '@slack/types';
+
 /**
  * Static help/onboarding content, shared by `/anna help` (ephemeral message)
  * and the App Home tab. Template-generic by design: no client table names,
  * domains, or metrics — implementations replace the examples with their own.
  * Only header/section/context/divider blocks: valid on both surfaces.
  */
-export function buildHelpBlocks(): Record<string, unknown>[] {
+export function buildHelpBlocks(): KnownBlock[] {
   return [
     {
       type: 'header',
@@ -1312,6 +1316,8 @@ git commit -m "feat: add help block builder"
 
 > **Amended after code review (2026-06-10):** `chat.postEphemeral` requires conversation access and throws `channel_not_found` in private channels/DMs the bot isn't in — silent failure exactly where a new user first tries `/anna help`. The intercept now uses Bolt's `respond()` (response_url-based: ephemeral by default, membership-free). A third test pins that questions starting with "help" still reach the pipeline.
 
+> **Amended after Task 12 code review (2026-06-10):** `buildHelpBlocks()` now returns `KnownBlock[]` (see Task 10's note), so the `as unknown as KnownBlock[]` cast and the `KnownBlock` type import are gone.
+
 **Files:**
 - Modify: `src/handlers/commands.ts` (immediately after `await ack();`, before the rate-limit check, ~line 15)
 - Test: `tests/handlers/commands.test.ts` (extend — read its harness first and reuse its mocked client/payload builders)
@@ -1358,10 +1364,9 @@ Expected: new tests FAIL (pipeline runs instead).
 
 **Step 3: Write the implementation**
 
-In `src/handlers/commands.ts` — add imports:
+In `src/handlers/commands.ts` — add the import:
 
 ```typescript
-import type { KnownBlock } from '@slack/types';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 ```
 
@@ -1375,7 +1380,7 @@ Add `respond` to the listener's destructured args (`async ({ command, ack, respo
       // a member of, which is exactly where a new user will try `/anna help`.
       await respond({
         text: 'How to use Anna Lytics',
-        blocks: buildHelpBlocks() as unknown as KnownBlock[],
+        blocks: buildHelpBlocks(),
       });
       return;
     }
@@ -1396,6 +1401,8 @@ git commit -m "feat: /anna help and bare /anna show the help surface"
 ---
 
 ### Task 12: App Home tab
+
+> **Amended after code review (2026-06-10):** `buildHelpBlocks()` now returns `KnownBlock[]` (see Task 10's note), so the `as unknown as KnownBlock[]` cast and the `KnownBlock` type import are gone. The README subsection was also renamed `App Home Messages` → `App Home`, since it now covers both the Home and Messages tabs.
 
 **Files:**
 - Create: `src/handlers/appHome.ts`
@@ -1472,7 +1479,6 @@ Expected: FAIL — module does not exist.
 
 ```typescript
 import type { App } from '@slack/bolt';
-import type { KnownBlock } from '@slack/types';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 import { rootLogger } from '../logging.js';
 
@@ -1487,7 +1493,7 @@ export function registerAppHome(app: App): void {
     await client.views
       .publish({
         user_id: event.user,
-        view: { type: 'home', blocks: buildHelpBlocks() as unknown as KnownBlock[] },
+        view: { type: 'home', blocks: buildHelpBlocks() },
       })
       .catch((err) =>
         rootLogger.warn({ error: (err as Error).message }, 'app_home.publish_failed'),

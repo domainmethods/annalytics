@@ -1,10 +1,12 @@
+import type { KnownBlock } from '@slack/types';
+
 /**
  * Static help/onboarding content, shared by `/anna help` (ephemeral message)
  * and the App Home tab. Template-generic by design: no client table names,
  * domains, or metrics — implementations replace the examples with their own.
  * Only header/section/context/divider blocks: valid on both surfaces.
  */
-export function buildHelpBlocks(): Record<string, unknown>[] {
+export function buildHelpBlocks(): KnownBlock[] {
   return [
     {
       type: 'header',
