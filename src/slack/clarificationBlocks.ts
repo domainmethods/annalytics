@@ -39,5 +39,64 @@ export function buildClarificationBlocks(
     ],
   });
 
+  blocks.push({
+    type: 'actions',
+    elements: [
+      {
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'Never mind — cancel',
+        },
+        action_id: 'clarification_cancel',
+        value: options.clarificationId,
+      },
+    ],
+  });
+
+  return blocks;
+}
+
+export interface PendingClarificationBlocksOptions {
+  clarificationId: string;
+  originalQuestion: string;
+}
+
+export function buildPendingClarificationBlocks(
+  options: PendingClarificationBlocksOptions,
+): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.",
+      },
+    },
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `Waiting on my question about: _${options.originalQuestion}_`,
+        },
+      ],
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: {
+            type: 'plain_text',
+            text: 'Cancel that question',
+          },
+          action_id: 'clarification_cancel',
+          value: options.clarificationId,
+        },
+      ],
+    },
+  ];
+
   return blocks;
 }

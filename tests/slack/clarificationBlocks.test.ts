@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildClarificationBlocks } from '../../src/slack/clarificationBlocks.js';
+import {
+  buildClarificationBlocks,
+  buildPendingClarificationBlocks,
+} from '../../src/slack/clarificationBlocks.js';
 
 describe('buildClarificationBlocks', () => {
   const options = {
@@ -48,5 +51,33 @@ describe('buildClarificationBlocks', () => {
     const contextBlock = blocks.find((b: any) => b.type === 'context');
     expect(contextBlock).toBeDefined();
     expect(contextBlock.elements[0].text).toContain('Reply with your choices');
+  });
+
+  it('includes a cancel button carrying the clarificationId', () => {
+    const blocks = buildClarificationBlocks({
+      clarificationId: 'clar_1',
+      clarifyingQuestions: ['Which sessions should I include?'],
+      originalQuestion: 'show me sessions',
+    });
+
+    const actions = blocks.find((b: any) => b.type === 'actions');
+    expect(actions).toBeDefined();
+    expect((actions as any).elements[0].action_id).toBe('clarification_cancel');
+    expect((actions as any).elements[0].value).toBe('clar_1');
+  });
+});
+
+describe('buildPendingClarificationBlocks', () => {
+  it('shows the original question and the same cancel action', () => {
+    const blocks = buildPendingClarificationBlocks({
+      clarificationId: 'clar_1',
+      originalQuestion: 'show me sessions',
+    });
+
+    expect(JSON.stringify(blocks)).toContain('show me sessions');
+    const actions = blocks.find((b: any) => b.type === 'actions');
+    expect(actions).toBeDefined();
+    expect((actions as any).elements[0].action_id).toBe('clarification_cancel');
+    expect((actions as any).elements[0].value).toBe('clar_1');
   });
 });
