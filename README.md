@@ -399,7 +399,8 @@ manifest: `rate_limits` (bounded sliding window, overwritten in place per
 user), `teaching_candidates` and `feedback_notes` (human-drained queues), and
 `config` (singleton metadata docs). Most
 collections (locks, clarification state, caches, Slack event dedupe, dbt run
-history, `response_context`) use `expiresAt`; for `response_context` the window
+history, `response_context`, `pending_notifications` queue) use `expiresAt`;
+for `response_context` the window
 is `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90 days). `escalation_state`
 retention uses `retainUntil` (fixed 90 days) because its `expiresAt` is the
 escalation timeout, not a retention deadline. The manifest
@@ -420,11 +421,8 @@ node -e '...' | sh   # same one-liner as above, piped to sh
 ```
 
 For an existing install, applying a newly declared TTL is a manual operator
-step:
-
-```bash
-gcloud firestore fields ttls update expiresAt --collection-group=pending_notifications --database="(default)" --enable-ttl --project "$GCP_PROJECT_ID"
-```
+step: re-run the manifest-driven one-liner above, review the printed commands,
+then pipe them to a shell to apply.
 
 Verify what is live at any time:
 
