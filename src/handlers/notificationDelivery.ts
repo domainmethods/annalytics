@@ -10,14 +10,18 @@ export interface NotificationDeliveryResult {
   failed: number;
 }
 
-function notificationText(notification: PendingNotification): string {
-  if (notification.userId) {
-    return `Heads up <@${notification.userId}>: your feedback was reviewed and is now part of my knowledge.`;
-  }
-
-  return 'Heads up: guidance from this thread is now part of my knowledge.';
+function notificationText(n: PendingNotification): string {
+  return n.userId
+    ? `✅ <@${n.userId}> your feedback on this answer was reviewed by the data team and is now part of my knowledge. Future answers to questions like this will use it.`
+    : '✅ An update from the data team: the guidance from this thread is now part of my knowledge. Future answers to questions like this will use it.';
 }
 
+/**
+ * Drains the pending_notifications queue: posts each to its originating thread,
+ * marking delivered only after the post succeeds. A failed post leaves the doc
+ * pending for the next sweep — at-least-once delivery, deduplicated by the
+ * idempotent notif_<candidateId> doc id at enqueue time.
+ */
 export async function deliverPendingNotifications(
   client: WebClient,
 ): Promise<NotificationDeliveryResult> {

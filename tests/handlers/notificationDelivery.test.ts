@@ -50,14 +50,11 @@ describe('deliverPendingNotifications', () => {
 
     const result = await deliverPendingNotifications(mockClient);
 
-    expect(mockPostMessage).toHaveBeenCalledWith({
-      channel: 'C1',
-      thread_ts: '1718000000.000100',
-      text: expect.stringContaining('<@U1>'),
-    });
     expect(mockPostMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining('part of my knowledge'),
+        channel: 'C1',
+        thread_ts: '1718000000.000100',
+        text: '✅ <@U1> your feedback on this answer was reviewed by the data team and is now part of my knowledge. Future answers to questions like this will use it.',
       }),
     );
     expect(mockMarkNotificationDelivered).toHaveBeenCalledWith('notif_teach_1');
@@ -72,12 +69,7 @@ describe('deliverPendingNotifications', () => {
 
     expect(mockPostMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.not.stringContaining('<@'),
-      }),
-    );
-    expect(mockPostMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('guidance from this thread is now part of my knowledge'),
+        text: '✅ An update from the data team: the guidance from this thread is now part of my knowledge. Future answers to questions like this will use it.',
       }),
     );
     expect(mockMarkNotificationDelivered).toHaveBeenCalledWith('notif_teach_1');
