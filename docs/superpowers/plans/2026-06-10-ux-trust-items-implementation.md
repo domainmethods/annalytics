@@ -16,6 +16,7 @@
 - Run single test files with `npx vitest run <path>`; full suite is `npm test`; types with `npm run typecheck`.
 - Firestore writes must never contain a literal `undefined` value — omit absent optional keys (conditional spread), or `.set()` throws at runtime.
 - Block Kit arrays passed to Slack client calls are cast `as unknown as KnownBlock[]` (existing idiom, see `src/handlers/feedbackEscalation.ts`).
+- **Parity convention:** *implementation* code blocks and fragments in this plan are kept byte-identical to (or verbatim-contained in) the shipped source and test files, amended in the same change set as any review-driven fix. Step-1 "failing test" prescriptions are starting points, not parity surfaces — the shipped tests supersede them.
 
 ---
 
@@ -809,7 +810,10 @@ In `src/slack/clarificationBlocks.ts` — in `buildClarificationBlocks`, after t
     elements: [
       {
         type: 'button',
-        text: { type: 'plain_text', text: 'Never mind — cancel' },
+        text: {
+          type: 'plain_text',
+          text: 'Never mind — cancel',
+        },
         action_id: 'clarification_cancel',
         value: options.clarificationId,
       },
