@@ -99,7 +99,7 @@ describe('validateReferenceCardIntegrity', () => {
   });
 
   it('accepts the starter revenue sample cards', () => {
-    const yaml = readFileSync('references/revenue.yml', 'utf-8');
+    const yaml = readFileSync('references/examples/revenue.yml', 'utf-8');
     const cards = parseReferenceCardFile(yaml);
 
     expect(cards.map(({ id }) => id)).toEqual([

@@ -17,3 +17,5 @@ benchmarks/results/*
 !benchmarks/results/.gitkeep
 # Client-specific live corpus (real schema). Template stays in benchmarks/corpus.json.
 benchmarks/corpus.live.json
+# Implementation-specific ReferenceCards (real schema). Starter examples stay in references/examples/.
+references/*.live.yml
