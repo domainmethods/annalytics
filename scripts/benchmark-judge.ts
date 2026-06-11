@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { GoogleGenAI } from '@google/genai';
 import type { CorpusEntry, JudgeResult, BenchmarkRun } from './benchmark-types.js';
 import { getJudgeModel } from '../src/agents/modelConfig.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
+import { corpusHashMatches, resolveCorpusPath } from './benchmarkSupport.js';
 
 // ── Env validation ────────────────────────────────────────────────────────────
 
@@ -35,12 +36,21 @@ async function main() {
     process.exit(1);
   }
 
-  // Load corpus
-  const corpusPath = 'benchmarks/corpus.json';
+  // Load the same corpus the benchmark ran with (corpus.live.json preferred when
+  // present, mirroring scripts/benchmark.ts).
+  const corpusPath = await resolveCorpusPath(process.cwd(), async path => existsSync(path));
   let corpus: CorpusEntry[] = [];
   try {
     const raw = readFileSync(corpusPath, 'utf-8');
+    if (!corpusHashMatches(raw, benchmarkRun.metadata?.corpusHash)) {
+      console.error(
+        `Error: ${corpusPath} does not match this run's recorded corpusHash. ` +
+        'Judging against a different corpus would attach the wrong expectations to each result — aborting.',
+      );
+      process.exit(1);
+    }
     corpus = JSON.parse(raw) as CorpusEntry[];
+    console.log(`Corpus file: ${corpusPath}`);
   } catch (err) {
     console.warn(`Warning: Could not load corpus: ${(err as Error).message}. Proceeding without corpus metadata.`);
   }

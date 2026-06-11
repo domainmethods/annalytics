@@ -5,6 +5,7 @@ import {
   buildBenchmarkMetadata,
   clarificationPassed,
   combineReferenceIds,
+  corpusHashMatches,
   extractTablesFromSql,
   extractReferenceIdsFromCitations,
   formatValidationTrace,
@@ -312,5 +313,23 @@ describe('resolveCorpusPath', () => {
   it('falls back to benchmarks/corpus.json when no live corpus exists', async () => {
     const path = await resolveCorpusPath('/repo', async () => false);
     expect(path).toBe(join('/repo', 'benchmarks', 'corpus.json'));
+  });
+});
+
+describe('corpusHashMatches', () => {
+  const corpusRaw = '[{"id":"live-easy-001"}]';
+  const corpusHash = createHash('sha256').update(corpusRaw).digest('hex');
+
+  it('accepts a corpus whose hash matches the run metadata', () => {
+    expect(corpusHashMatches(corpusRaw, corpusHash)).toBe(true);
+  });
+
+  it('rejects a corpus that differs from the one the run recorded', () => {
+    expect(corpusHashMatches('[{"id":"other"}]', corpusHash)).toBe(false);
+  });
+
+  it('accepts runs with no recorded hash (nothing to verify against)', () => {
+    expect(corpusHashMatches(corpusRaw, undefined)).toBe(true);
+    expect(corpusHashMatches(corpusRaw, null)).toBe(true);
   });
 });

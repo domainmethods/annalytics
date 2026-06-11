@@ -54,6 +54,14 @@ export async function resolveCorpusPath(
   return join(root, 'benchmarks', 'corpus.json');
 }
 
+// The judge attaches corpus expectations (expected tables/fragments) to each result;
+// a corpus file that differs from the one the benchmark ran with would attach the
+// wrong expectations silently, so callers verify the run's recorded hash first.
+export function corpusHashMatches(corpusRaw: string, recordedHash: string | null | undefined): boolean {
+  if (!recordedHash) return true;
+  return sha256(corpusRaw) === recordedHash;
+}
+
 export function buildBenchmarkMetadata(input: BenchmarkMetadataInput) {
   let packageVersion = 'unknown';
   try {
