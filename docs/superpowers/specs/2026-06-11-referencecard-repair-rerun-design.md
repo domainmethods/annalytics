@@ -98,7 +98,7 @@ The clarification prompt consumes `KnowledgeSummary` records from `src/teachings
 
 Design requirement:
 
-- Expand ReferenceCard summary definitions only as much as needed for clarification and routing. Include compact aliases/triggers already present in the prompt path, and include concise required/exclusion language when it affects whether a question should proceed.
+- Expand ReferenceCard summary definitions only as much as needed for clarification and routing. Include compact aliases/triggers already present in the prompt path, and include concise required, exclusion, and avoid-table guidance when it affects whether a question should proceed.
 - Keep the summary bounded. It should not become the full markdown document; File Search already carries the full card for generation.
 
 This is template-safe because it changes how existing card fields are summarized, not the schema or the live cards themselves.
@@ -156,7 +156,7 @@ Add focused unit tests around deterministic prompt construction and summary conv
 
 Recommended coverage:
 
-- `tests/teachings/summaryMap.test.ts`: ReferenceCard summaries include enough required/exclusion guidance to make in-domain metrics recognizable without including the full markdown card.
+- `tests/teachings/summaryMap.test.ts`: ReferenceCard summaries include enough required, exclusion, and avoid-table guidance to make in-domain metrics recognizable without including the full markdown card.
 - `tests/agents/sqlGenerator.test.ts`: the prompt says retrieved ReferenceCards are authoritative and that avoid tables/exclusions require explicit justification.
 - `tests/agents/supervisorAgent.test.ts`: the prompt tells the supervisor to fail ReferenceCard contradictions, including wrong grain, avoided table, and dimension substitution.
 

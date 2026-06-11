@@ -50,15 +50,19 @@ git log -1 --oneline
 
 Expected: either a clean tree, or only ignored operator-local files. If tracked files are dirty, inspect them before editing and do not overwrite unrelated work.
 
-- [ ] **Step 2: Confirm ignored operator-local artifacts are present**
+- [ ] **Step 2: Confirm operator-local artifacts are ignored and present**
 
 Run:
 
 ```bash
 git check-ignore -v references/sessions-traffic.live.yml benchmarks/corpus.live.json dbt/manifest.json dbt/catalog.json
+test -f references/sessions-traffic.live.yml
+test -f benchmarks/corpus.live.json
+test -f dbt/manifest.json
+test -f dbt/catalog.json
 ```
 
-Expected: each path is ignored by `.gitignore`. If a path is not present locally, continue with template-safe tasks and stop before live sync/benchmark.
+Expected: each path is ignored by `.gitignore`, and each `test -f` command exits 0. If any file is missing locally, continue with template-safe tasks and stop before live sync/benchmark.
 
 ## Task 1: Expand ReferenceCard Summary Guidance
 
