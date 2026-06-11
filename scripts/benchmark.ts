@@ -96,7 +96,7 @@ async function main() {
     judgeModel,
   ]);
 
-  const root = join(process.cwd());
+  const root = process.cwd();
   const corpusPath = await resolveCorpusPath(root, fileExists);
   console.log(`Corpus file: ${corpusPath}`);
   const corpusRaw = await readFile(corpusPath, 'utf-8');
