@@ -99,6 +99,20 @@ describe('buildKnowledgeSummaries', () => {
       }),
     ]);
   });
+
+  it('summarizes ReferenceCard required guidance, exclusions, and avoid tables', () => {
+    const summaries = buildKnowledgeSummaries([], [{
+      ...revenueCard,
+      avoid_tables: ['analytics.raw_orders'],
+    }]);
+
+    const summary = summaries[0];
+    expect(summary.definition).toContain('Canonical Revenue Definition.');
+    expect(summary.definition).toContain('Canonical metric total_amount at order grain.');
+    expect(summary.definition).toContain("Required guidance: order_status = 'completed'.");
+    expect(summary.definition).toContain('Exclusions: cancelled orders.');
+    expect(summary.definition).toContain('Avoid tables: analytics.raw_orders.');
+  });
 });
 
 describe('getTeachingSummaries', () => {

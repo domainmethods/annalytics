@@ -78,8 +78,22 @@ export function _resetCache(): void {
 }
 
 function buildReferenceSummaryDefinition(card: ReferenceCard): string {
-  const filters = card.required_filters.length > 0
-    ? ` Required guidance: ${card.required_filters.join('; ')}.`
-    : '';
-  return `${card.title}. Canonical metric ${card.canonical_metric} at ${card.grain} grain.${filters}`;
+  const parts = [
+    `${card.title}.`,
+    `Canonical metric ${card.canonical_metric} at ${card.grain} grain.`,
+  ];
+
+  if (card.required_filters.length > 0) {
+    parts.push(`Required guidance: ${card.required_filters.join('; ')}.`);
+  }
+
+  if (card.exclusions.length > 0) {
+    parts.push(`Exclusions: ${card.exclusions.join('; ')}.`);
+  }
+
+  if (card.avoid_tables.length > 0) {
+    parts.push(`Avoid tables: ${card.avoid_tables.join('; ')}.`);
+  }
+
+  return parts.join(' ');
 }
