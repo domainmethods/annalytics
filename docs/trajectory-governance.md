@@ -92,7 +92,7 @@ Template decision on 2026-06-05 (still in force):
 
 - Keep implementation-specific dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, and benchmark evidence out of the template repository.
 - Rationale: Anna Lytics is intended to be reused across analytics teams and warehouse schemas. The template should document the path for an implementation to provide its own knowledge and artifacts without embedding one client's business model or infrastructure identifiers.
-- Starter content: `references/revenue.yml` and `benchmarks/corpus.json` remain sample content that implementations must replace or consciously keep.
+- Starter content: `references/examples/revenue.yml` and `benchmarks/corpus.json` remain sample content that implementations must replace or consciously keep.
 - Mock evidence: `benchmarks/mock-results/` exercises the deterministic acceptance analyzer without external services or client identifiers. Mock artifacts never count as live acceptance evidence.
 - Next branch: an implementation repo or branch should align its own cards, corpus, dbt artifacts, File Search store, and deploy target before running a real acceptance benchmark.
 

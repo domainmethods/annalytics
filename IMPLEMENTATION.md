@@ -31,7 +31,7 @@ This document sequences the work and points to the authoritative source for each
 Trajectory rule: **one high-confusion domain, 5–10 cards, before any expansion** (trajectory-governance, Active Tranche A and guardrail #2).
 
 - [ ] Pick the domain. If you have production feedback signal, use the per-domain pain ranking (`src/feedback/`); otherwise use analyst judgment.
-- [ ] Replace `references/revenue.yml` (starter sample) with your domain's ReferenceCards. The card schema lives in `src/references/`; field-by-field guidance is in the trajectory-governance Evidence Log (2026-06-04 entry).
+- [ ] Author your domain's ReferenceCards at `references/<domain>.live.yml` (gitignored), using the starter sample at `references/examples/revenue.yml` (not live-loaded) as a model. The card schema lives in `src/references/`; field-by-field guidance is in the trajectory-governance Evidence Log (2026-06-04 entry).
 - [ ] Author initial teachings using `docs/teaching-interview-prompt.md`.
 - [ ] Create a Gemini File Search store (README **"File Search Setup"**) and set `FILE_SEARCH_STORE_ID`.
 - [ ] Run `npm run knowledge:validate` — for an implementation, treat table-reference **warnings as failures**, not acceptable noise.
