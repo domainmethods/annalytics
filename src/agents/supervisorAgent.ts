@@ -78,12 +78,20 @@ REVIEW CHECKLIST:
 1. Does the SQL correctly answer the question?
 2. Are the right tables and columns used?
 3. If teachings exist for this topic, does the SQL follow them?
-4. Are the joins correct?
-5. Are there missing WHERE clauses or filters that should exist?
-6. Is the explanation accurate and matches the SQL?
-7. Are the stated assumptions reasonable and valid?
-8. Is the query safe (no DML/DDL, no unbounded scans, no sensitive data exposure)?
-9. If the query uses ML.* functions:
+4. ReferenceCard compliance checks when retrieved ReferenceCard context exists:
+   - Are the canonical table and grain followed?
+   - Are required filters present?
+   - Are exclusions and avoid tables respected?
+   - Are aliases and routing triggers interpreted faithfully?
+   - If a mart-level metric is available, did the query avoid reconstructing it from lower-grain sources?
+5. Preserve metric and dimension fidelity. Do not approve substituting a broader category for a narrower user term.
+6. Contradicting retrieved ReferenceCard constraints is a FAIL unless the SQL cannot answer the question otherwise and the explanation clearly says why.
+7. Are the joins correct?
+8. Are there missing WHERE clauses or filters that should exist?
+9. Is the explanation accurate and matches the SQL?
+10. Are the stated assumptions reasonable and valid?
+11. Is the query safe (no DML/DDL, no unbounded scans, no sensitive data exposure)?
+12. If the query uses ML.* functions:
    - Is the function appropriate for the user's question?
    - Are parameters reasonable (e.g., forecast horizon isn't absurdly large)?
    - Is the referenced model likely to exist in the dataset context?

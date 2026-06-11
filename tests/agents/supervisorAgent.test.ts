@@ -234,4 +234,39 @@ describe('reviewSql — Supervisor Agent', () => {
     const prompt = call.contents[0].parts[0].text as string;
     expect(prompt).toContain('ML.*');
   });
+
+  it('instructs the supervisor to fail ReferenceCard contradictions', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        verdict: 'PASS',
+        confidence: 'high',
+        issues: [],
+        suggestions: [],
+        teaching_compliance: 'compliant',
+      }),
+    });
+
+    await reviewSql({
+      ...baseInput,
+      groundingCitations: [{
+        sourceFile: 'reference_card:revenue-canonical-definition',
+        chunkText: [
+          '# ReferenceCard: revenue-canonical-definition',
+          'Canonical table: analytics.fct_orders',
+          'Grain: order',
+          '## Avoid Tables',
+          '- analytics.raw_orders',
+        ].join('\n'),
+        relevanceScore: 0.95,
+      }],
+    });
+
+    const call = mockGenerateContent.mock.calls[0][0];
+    const prompt = call.contents[0].parts[0].text as string;
+    expect(prompt).toContain('ReferenceCard compliance checks');
+    expect(prompt).toContain('canonical table and grain');
+    expect(prompt).toContain('exclusions and avoid tables');
+    expect(prompt).toContain('Preserve metric and dimension fidelity');
+    expect(prompt).toContain('Contradicting retrieved ReferenceCard constraints is a FAIL');
+  });
 });
