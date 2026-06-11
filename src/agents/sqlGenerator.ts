@@ -77,8 +77,11 @@ ${schemaSections.join('\n\n')}
     prompt += `\nKNOWLEDGE CONTEXT:
 Relevant teachings and reference cards are automatically retrieved via Gemini File Search.
 Follow sanctioned SQL patterns from teachings when they exist.
-When the user's metric, domain term, or routing trigger matches a retrieved ReferenceCard, treat that card as authoritative.
-Follow reference-card constraints for canonical tables, metrics, grains, required filters, exclusions, and avoid-table guidance when they apply.\n`;
+Retrieved ReferenceCards are operational constraints for matching business terms, metrics, and routing triggers.
+When a ReferenceCard applies, treat its canonical table, canonical metric, grain, required filters, exclusions, and avoid-table guidance as binding unless the available schema cannot answer the question.
+Do not substitute a broader category for a narrower user term; preserve the user's requested metric and dimension.
+If a mart table exposes the requested metric, prefer the mart column over reconstructing it from lower-grain staging or event sources.
+If you must violate a ReferenceCard constraint, lower confidence and explain the reason in the explanation and assumptions.\n`;
   }
 
   // Add negative example if provided

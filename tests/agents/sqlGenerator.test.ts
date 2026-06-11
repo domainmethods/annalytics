@@ -216,4 +216,33 @@ describe('generateSql', () => {
 
     expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3-flash-preview');
   });
+
+  it('treats retrieved ReferenceCards as binding operational constraints', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT 1',
+        explanation: 'test',
+        tables_used: [],
+        confidence: 'high',
+        assumptions: [],
+        reasoning_chain: 'test',
+        headline: 'test',
+      }),
+    });
+
+    await generateSql({
+      question: 'test',
+      tables: mockTables,
+      threadContext: [],
+      apiKey: 'test-api-key',
+      fileSearchStoreId: 'test-store',
+    });
+
+    const callArgs = mockGenerateContent.mock.calls[0][0];
+    const systemPrompt = callArgs.config.systemInstruction;
+    expect(systemPrompt).toContain('Retrieved ReferenceCards are operational constraints');
+    expect(systemPrompt).toContain('canonical table, canonical metric, grain, required filters, exclusions, and avoid-table guidance');
+    expect(systemPrompt).toContain('Do not substitute a broader category for a narrower user term');
+    expect(systemPrompt).toContain('prefer the mart column over reconstructing it from lower-grain staging or event sources');
+  });
 });
