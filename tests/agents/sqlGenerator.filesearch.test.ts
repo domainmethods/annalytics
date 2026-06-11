@@ -76,7 +76,8 @@ describe('generateSql — File Search integration', () => {
     expect(call.config.systemInstruction).toContain('KNOWLEDGE CONTEXT');
     expect(call.config.systemInstruction).toContain('teachings');
     expect(call.config.systemInstruction).toContain('reference cards');
-    expect(call.config.systemInstruction).toContain('treat that card as authoritative');
+    expect(call.config.systemInstruction).toContain('Retrieved ReferenceCards are operational constraints');
+    expect(call.config.systemInstruction).toContain('avoid-table guidance');
   });
 
   it('does NOT include tools when store ID is not provided', async () => {
