@@ -80,6 +80,7 @@ describe('registerCommands /anna seam', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockReleaseThreadLock.mockResolvedValue(undefined);
     mockMaybeHandleSlackIntake.mockResolvedValue(false);
     mockPreflightChecks.mockResolvedValue(true);
     mockToPipelineConfig.mockReturnValue({ pipeline: true });
@@ -154,5 +155,63 @@ describe('registerCommands /anna seam', () => {
     // The handler itself does not update the placeholder on the success path —
     // runPipeline owns it from here.
     expect(client.chat.update).not.toHaveBeenCalled();
+  });
+
+  it('tells the user to invite the bot when the placeholder post hits channel_not_found', async () => {
+    const client = makeClient();
+    client.chat.postMessage.mockRejectedValue({ data: { error: 'channel_not_found' } });
+    const handler = captureCommandHandler();
+
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
+
+    expect(mockRespond).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('/invite') }),
+    );
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+    expect(client.chat.update).not.toHaveBeenCalled();
+  });
+
+  it('falls back to respond() when the rate-limit notice hits not_in_channel', async () => {
+    mockCheckRateLimit.mockResolvedValue({ allowed: false, retryAfterMinutes: 10 });
+    const client = makeClient();
+    client.chat.postMessage.mockRejectedValue({ data: { error: 'not_in_channel' } });
+    const handler = captureCommandHandler();
+
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
+
+    expect(mockRespond).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('/invite') }),
+    );
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  it('releases the lock and updates the placeholder on a pipeline error', async () => {
+    mockRunPipeline.mockRejectedValue(new Error('boom'));
+    const client = makeClient();
+    const handler = captureCommandHandler();
+
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
+
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('status-1');
+    expect(client.chat.update).toHaveBeenCalledWith({
+      channel: 'C123',
+      ts: 'status-1',
+      text: 'friendly error',
+    });
+    expect(mockRespond).not.toHaveBeenCalled();
+  });
+
+  it('responds with a friendly error when a failure precedes the placeholder', async () => {
+    mockMaybeHandleSlackIntake.mockRejectedValue(new Error('intake down'));
+    const client = makeClient();
+    const handler = captureCommandHandler();
+
+    await handler({ command, ack: vi.fn(), respond: mockRespond, client });
+
+    // No placeholder was ever posted, so there is no lock to release and no
+    // message to update — respond() is the only remaining surface.
+    expect(mockReleaseThreadLock).not.toHaveBeenCalled();
+    expect(client.chat.update).not.toHaveBeenCalled();
+    expect(mockRespond).toHaveBeenCalledWith({ text: 'friendly error' });
   });
 });
