@@ -169,8 +169,8 @@ nodes; clarification itself is already sized clean (ε≈0.01). Validated end-to
 **Corpus history (2026-06-08).** The original 47-question `benchmarks/corpus.live.json` was
 gitignored, never committed, and lived only in the since-removed `silly-mcnulty-73ba04`
 worktree — so it was lost and unrecoverable from git or disk. It has since been **rebuilt**
-(same 15 easy / 18 medium / 10 hard / 4 ambiguous distribution) targeting the real Velir
-dbt-ga4 package schema (dataset `analytics`), with no GCP project ids, client names, or PII.
+(same 15 easy / 18 medium / 10 hard / 4 ambiguous distribution) targeting the implementation's
+real dbt-ga4 package schema (dataset `analytics`), with no GCP project ids, client names, or PII.
 Per the `benchmarks/results/*` gitignore rationale the rebuilt copy is kept durable **outside
 the template** (a path on the operator's machine, recorded in the operator's notes — not
 committed here, since the template must stay free of client-derived benchmark evidence).
