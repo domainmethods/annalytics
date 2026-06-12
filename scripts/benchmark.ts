@@ -398,7 +398,13 @@ async function main() {
   // Write results
   const resultsDir = join(root, 'benchmarks', 'results');
   await mkdir(resultsDir, { recursive: true });
-  const outputPath = join(resultsDir, `${runDate}.json`);
+  // Same-day re-runs are the normal repair cadence; never overwrite an
+  // earlier run's evidence — suffix instead. Downstream judge/analyze take
+  // the path explicitly and derive report names from the basename.
+  let outputPath = join(resultsDir, `${runDate}.json`);
+  for (let n = 2; await fileExists(outputPath); n++) {
+    outputPath = join(resultsDir, `${runDate}-run${n}.json`);
+  }
   const output = {
     runDate,
     metadata,
@@ -407,7 +413,7 @@ async function main() {
     judgeResults: [],
   };
   await writeFile(outputPath, JSON.stringify(output, null, 2), 'utf-8');
-  console.log(`Results written to benchmarks/results/${runDate}.json`);
+  console.log(`Results written to ${outputPath}`);
 
   // Summary
   const passed = results.filter(r => r.qualityVerdict === 'pass' || r.qualityVerdict === 'fail_then_pass').length;
