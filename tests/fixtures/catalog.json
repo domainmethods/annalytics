@@ -7,7 +7,9 @@
         "CUSTOMER_ID": { "type": "STRING", "index": 2 },
         "ORDER_DATE": { "type": "DATE", "index": 3 },
         "TOTAL_AMOUNT": { "type": "FLOAT64", "index": 4 },
-        "ORDER_STATUS": { "type": "STRING", "index": 5 }
+        "ORDER_STATUS": { "type": "STRING", "index": 5 },
+        "ORDER_CHANNEL": { "type": "STRING", "index": 6 },
+        "CREATED_AT": { "type": "TIMESTAMP", "index": 7 }
       },
       "stats": { "row_count": { "value": 50000 } }
     },
