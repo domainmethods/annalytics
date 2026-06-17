@@ -505,7 +505,7 @@ The bot reads dbt metadata from files baked into the container image. To update 
 4. Run `npm run setup:check`; treat table-reference warnings as acceptable only for template/example setup, not for implementation readiness.
 5. Commit and push the implementation-specific changes only in the implementation repo or branch where committing those artifacts is intentional.
 
-The `/refresh-metadata` endpoint exists as a placeholder for future live reload support.
+The `/refresh-metadata` endpoint returns `501 not_implemented` because live metadata reload is not implemented; dbt metadata is loaded once at startup, so redeploy to pick up new artifacts.
 
 ## Configuration
 
