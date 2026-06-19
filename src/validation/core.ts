@@ -48,6 +48,13 @@ export interface CoreValidationOutcome {
   blocked: ValidationResult | null;
   /** Dry-run bytes when L3 passed; undefined when blocked before L3 succeeded. */
   bytesProcessed?: number;
+  /**
+   * Raw L3 dry-run bytes, un-coalesced — `undefined` when the dry run reported
+   * no byte estimate. Callers that must preserve the undefined/null distinction
+   * downstream (qualityLoop's supervisor dryRunMetadata) read this instead of
+   * the coalesced `bytesProcessed`.
+   */
+  rawBytesProcessed?: number;
 }
 
 /**
@@ -76,5 +83,11 @@ export async function runCoreValidation(
     return { records, blockedLayer: 'l3', blocked: l3 };
   }
 
-  return { records, blockedLayer: null, blocked: null, bytesProcessed: l3.bytesProcessed ?? 0 };
+  return {
+    records,
+    blockedLayer: null,
+    blocked: null,
+    bytesProcessed: l3.bytesProcessed ?? 0,
+    rawBytesProcessed: l3.bytesProcessed,
+  };
 }

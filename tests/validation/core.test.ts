@@ -57,4 +57,14 @@ describe('runCoreValidation', () => {
     expect(out.records.map(r => r.layer)).toEqual(['l1', 'l2', 'l3']);
     expect(out.records.every(r => r.attempt === 1)).toBe(true);
   });
+
+  it('preserves undefined dry-run bytes: coalesces bytesProcessed to 0 but keeps rawBytesProcessed undefined', async () => {
+    mockDryRun.mockResolvedValue({ valid: true, layer: 'L3-dryrun' }); // no bytesProcessed
+    const out = await runCoreValidation('SELECT 1', 0);
+    expect(out.blockedLayer).toBeNull();
+    expect(out.bytesProcessed).toBe(0);            // coalesced for callers that ?? 0
+    expect(out.rawBytesProcessed).toBeUndefined(); // un-coalesced for qualityLoop's dryRunMetadata
+    const l3 = out.records.find(r => r.layer === 'l3');
+    expect(l3?.bytesProcessed).toBeUndefined();    // toLayerRecord copies verbatim, no coalescing
+  });
 });

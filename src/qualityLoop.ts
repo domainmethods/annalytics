@@ -89,9 +89,9 @@ export async function qualityLoop(
       previousError = { sql: sqlResult.sql, error: core.blocked?.error || 'Dry-run failed' };
       continue;
     }
-    // Raw L3 bytes (may be undefined) — the L3 record preserves the dry-run
+    // Raw L3 bytes (may be undefined) — rawBytesProcessed preserves the dry-run
     // value verbatim, distinct from core.bytesProcessed which coalesces to 0.
-    const l3Bytes = core.records[core.records.length - 1].bytesProcessed;
+    const l3Bytes = core.rawBytesProcessed;
     lastBytesProcessed = l3Bytes;
 
     // 5. Supervisor review (only for structurally valid SQL)
