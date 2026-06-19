@@ -1,5 +1,4 @@
 import type { WebClient } from '@slack/web-api';
-import type { KnownBlock } from '@slack/types';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
 import type { EscalationState } from '../types.js';
@@ -92,7 +91,7 @@ export async function resumeFromEscalation(
       channel: ctx.originalChannel,
       thread_ts: ctx.originalThreadTs,
       text: ctx.humanGuidance,
-      blocks: blocks as unknown as KnownBlock[],
+      blocks: blocks,
     });
   }
 

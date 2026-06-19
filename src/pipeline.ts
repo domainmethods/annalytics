@@ -415,7 +415,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel,
         ts: statusMsgTs,
         text: "I've asked the data team — I'll reply here when I have the answer.",
-        blocks: waitingBlocks as unknown as KnownBlock[],
+        blocks: waitingBlocks,
       });
 
       const stuckDescription = failureDiagnostics || qualityResult.supervisorNotes || 'Could not generate a confident answer';
@@ -428,7 +428,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription,
           bestGuessSql: qualityResult.sqlResult.sql,
-        }) as unknown as KnownBlock[],
+        }),
       });
 
       await saveEscalationState({
@@ -583,7 +583,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription: qualityResult.supervisorNotes || 'Answer needs verification',
           bestGuessSql: qualityResult.sqlResult.sql,
-        }) as unknown as KnownBlock[],
+        }),
       });
 
       await saveEscalationState({

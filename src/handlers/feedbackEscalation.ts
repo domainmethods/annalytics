@@ -50,7 +50,7 @@ export async function promptFeedbackReason(params: PromptFeedbackReasonParams): 
     user: params.userId,
     thread_ts: params.threadTs,
     text: 'What was off about this answer?',
-    blocks: buildFeedbackReasonBlocks(compoundKey) as unknown as KnownBlock[],
+    blocks: buildFeedbackReasonBlocks(compoundKey),
   });
 }
 
@@ -181,7 +181,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
         threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
         stuckDescription: `User flagged this answer as "${reason.label}". Please verify and reply with a correction.`,
         bestGuessSql: ctx.generatedSql,
-      }) as unknown as KnownBlock[],
+      }),
     });
 
     await saveEscalationState({
@@ -222,7 +222,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
 
   await respond({
     replace_original: true,
-    blocks: buildFeedbackAckBlocks("✅ Flagged for the data team — I'll reply here when they weigh in.") as unknown as KnownBlock[],
+    blocks: buildFeedbackAckBlocks("✅ Flagged for the data team — I'll reply here when they weigh in."),
     text: 'Flagged for the data team.',
     thread_ts: threadTs,
   } as any);
