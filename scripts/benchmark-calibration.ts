@@ -61,6 +61,13 @@ export function evaluateBenchmarkCalibration(
   const missingJudgeCorpusIds: string[] = [];
 
   for (const result of run.results ?? []) {
+    // Correct abstentions (pipeline suspended for clarification -> no SQL) are
+    // not answers: they belong in neither the wrong count nor the bucket
+    // denominator. Counting them poisons the low-confidence bucket, since judges
+    // score the absent answer's correctness low. Skip before the judge lookup so
+    // an absent judge here is not reported as a missing-judge gap.
+    if (result.generatedSql === null) continue;
+
     const judge = judgesByCorpusId.get(result.corpusId);
     if (!judge) {
       missingJudgeCorpusIds.push(result.corpusId);

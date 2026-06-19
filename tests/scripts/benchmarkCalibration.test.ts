@@ -158,6 +158,29 @@ describe('evaluateBenchmarkCalibration', () => {
     }));
   });
 
+  it('excludes correct abstentions (generatedSql null) from calibration buckets', () => {
+    // Two low-confidence results: one correct abstention (generatedSql null,
+    // judge marks it wrong) and one real answer (generatedSql 'SELECT 1',
+    // judge correct). The abstention must count in neither total nor wrong.
+    const answer = result('low-answer', 'low');
+    const abstention: BenchmarkResult = { ...result('low-abstain', 'low'), generatedSql: null };
+    const calibration = evaluateBenchmarkCalibration({
+      runDate: '2026-06-08',
+      metadata,
+      corpusSize: 2,
+      results: [abstention, answer],
+      judgeResults: [
+        judge('low-abstain', 1, true), // would be tallied wrong if not excluded
+        judge('low-answer', 5),
+      ],
+    });
+
+    const low = bucketMap(calibration).get('low');
+    expect(low?.total).toBe(1); // only the real answer
+    expect(low?.wrong).toBe(0); // abstention is neither total nor wrong
+    expect(calibration.missingJudgeCorpusIds).not.toContain('low-abstain');
+  });
+
   it('fails when any benchmark result is missing a judge result', () => {
     const calibration = evaluateBenchmarkCalibration({
       ...run({
