@@ -5,12 +5,10 @@ import { reviewSql } from './agents/supervisorAgent.js';
 import { extractReferenceIdsFromCitations, extractTeachingIdsFromCitations } from './agents/grounding.js';
 import type { TableContext } from './dbt/types.js';
 import type { KnowledgeSummary } from './teachings/types.js';
-import type { ThreadMessage, ValidationResult } from './types.js';
-import type { FailureRecord, QualityResult, ValidationLayerRecord } from './qualityLoop.js';
-import { staticAnalysis } from './validation/staticAnalysis.js';
-import { astValidation } from './validation/astValidation.js';
-import { dryRunValidation } from './validation/dryRun.js';
+import type { ThreadMessage } from './types.js';
+import type { FailureRecord, QualityResult } from './qualityLoop.js';
 import { costGate } from './validation/costGate.js';
+import { runCoreValidation, toLayerRecord, type ValidationLayerRecord } from './validation/core.js';
 
 export type SupervisorDecision = 'skipped' | 'required';
 
@@ -67,7 +65,8 @@ export async function runRoutineFastPath(input: RoutineFastPathInput): Promise<R
     bqml_hint: input.bqml_hint,
   });
 
-  const validationHistory: ValidationLayerRecord[] = [];
+  const core = await runCoreValidation(sqlResult.sql, 0);
+  const validationHistory: ValidationLayerRecord[] = core.records;
   const failureHistory: FailureRecord[] = [];
   const fallback = (reason: string, error: string): RoutineFastPathResult => ({
     kind: 'fallback',
@@ -78,26 +77,18 @@ export async function runRoutineFastPath(input: RoutineFastPathInput): Promise<R
     sqlResult,
   });
 
-  const l1 = staticAnalysis(sqlResult.sql);
-  validationHistory.push(toLayerRecord(0, 'l1', l1));
-  if (!l1.valid) {
-    const error = l1.error || 'L1 static analysis blocked';
+  if (core.blockedLayer === 'l1') {
+    const error = core.blocked?.error || 'L1 static analysis blocked';
     failureHistory.push({ attempt: 0, failureType: 'structural', detail: error });
     return fallback('l1_failed', error);
   }
-
-  const l2 = astValidation(sqlResult.sql);
-  validationHistory.push(toLayerRecord(0, 'l2', l2));
-
-  const l3 = await dryRunValidation(sqlResult.sql);
-  validationHistory.push(toLayerRecord(0, 'l3', l3));
-  if (!l3.valid) {
-    const error = l3.error || 'Dry-run validation failed';
+  if (core.blockedLayer === 'l3') {
+    const error = core.blocked?.error || 'Dry-run validation failed';
     failureHistory.push({ attempt: 0, failureType: 'dry_run', detail: error });
     return fallback('l3_failed', error);
   }
 
-  const bytesProcessed = l3.bytesProcessed ?? 0;
+  const bytesProcessed = core.bytesProcessed ?? 0;
   const l4 = costGate(bytesProcessed, input.maxBytesProcessed);
   validationHistory.push(toLayerRecord(0, 'l4', l4));
   if (!l4.valid) {
@@ -325,20 +316,6 @@ function qualityFrom(
     failureHistory,
     validationHistory,
     bytesProcessed,
-  };
-}
-
-function toLayerRecord(
-  attempt: number,
-  layer: ValidationLayerRecord['layer'],
-  result: ValidationResult,
-): ValidationLayerRecord {
-  return {
-    attempt,
-    layer,
-    valid: result.valid,
-    detail: result.error,
-    bytesProcessed: result.bytesProcessed,
   };
 }
 
