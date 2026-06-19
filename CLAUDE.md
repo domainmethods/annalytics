@@ -126,7 +126,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `response_context` | `threadTs_statusMsgTs` | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
 | `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
-| `config` | `metadata_state` | dbt metadata freshness |
+| `config` | `metadata_state` | `/health/doctor` Firestore connectivity probe target (cheap read; the doc need not exist). The dbt-metadata-freshness writer was never wired; its dead module was removed 2026-06-19. |
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |

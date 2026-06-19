@@ -11,6 +11,6 @@ calling Gemini, BigQuery, Firestore, or File Search.
 The generated `*-summary.md` and `*-referencecard-acceptance.md` files are
 checked in to make the analyzer output shape inspectable.
 
-These mocks do not satisfy the live Revenue ReferenceCard Acceptance Run in
+These mocks do not satisfy a live ReferenceCard Acceptance Run referenced in
 `docs/trajectory-governance.md`. Real acceptance evidence must still come from
 a saved benchmark JSON under `benchmarks/results/`.
