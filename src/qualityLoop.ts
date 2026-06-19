@@ -1,9 +1,10 @@
 import { generateSql, type GenerateSqlOptions } from './agents/sqlGenerator.js';
 import { reviewSql, type SupervisorInput } from './agents/supervisorAgent.js';
-import { staticAnalysis } from './validation/staticAnalysis.js';
-import { astValidation } from './validation/astValidation.js';
-import { dryRunValidation } from './validation/dryRun.js';
 import { costGate } from './validation/costGate.js';
+import { runCoreValidation, toLayerRecord, type ValidationLayerRecord } from './validation/core.js';
+// Re-exported so existing importers (scripts/benchmark-types.ts, scripts/benchmarkSupport.ts)
+// keep importing ValidationLayerRecord from this module unchanged.
+export type { ValidationLayerRecord };
 import type { SqlGenerationResult } from './types.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -12,14 +13,6 @@ export interface FailureRecord {
   attempt: number;
   failureType: 'structural' | 'dry_run' | 'semantic';
   detail: string;
-}
-
-export interface ValidationLayerRecord {
-  attempt: number;
-  layer: 'l1' | 'l2' | 'l3' | 'l4';
-  valid: boolean;
-  detail?: string;
-  bytesProcessed?: number;
 }
 
 export interface QualityResult {
@@ -73,55 +66,33 @@ export async function qualityLoop(
     const sqlResult = await generateSql(genOptions);
     lastSqlResult = sqlResult;
 
-    // 2. L1: Static analysis
+    // 2-4. L1 static → L2 AST (advisory) → L3 dry run
     await callbacks?.onValidate?.();
-    const l1 = staticAnalysis(sqlResult.sql);
-    validationHistory.push({
-      attempt,
-      layer: 'l1',
-      valid: l1.valid,
-      detail: l1.error,
-      bytesProcessed: l1.bytesProcessed,
-    });
-    if (!l1.valid) {
+    const core = await runCoreValidation(sqlResult.sql, attempt);
+    validationHistory.push(...core.records);
+
+    if (core.blockedLayer === 'l1') {
       failureHistory.push({
         attempt,
         failureType: 'structural',
-        detail: l1.error || 'L1 static analysis blocked',
+        detail: core.blocked?.error || 'L1 static analysis blocked',
       });
-      previousError = { sql: sqlResult.sql, error: l1.error || 'Static analysis blocked' };
+      previousError = { sql: sqlResult.sql, error: core.blocked?.error || 'Static analysis blocked' };
       continue;
     }
-
-    // 3. L2: AST validation (advisory — failures pass through)
-    const l2 = astValidation(sqlResult.sql);
-    validationHistory.push({
-      attempt,
-      layer: 'l2',
-      valid: l2.valid,
-      detail: l2.error,
-      bytesProcessed: l2.bytesProcessed,
-    });
-
-    // 4. L3: Dry-run validation
-    const l3 = await dryRunValidation(sqlResult.sql);
-    validationHistory.push({
-      attempt,
-      layer: 'l3',
-      valid: l3.valid,
-      detail: l3.error,
-      bytesProcessed: l3.bytesProcessed,
-    });
-    if (!l3.valid) {
+    if (core.blockedLayer === 'l3') {
       failureHistory.push({
         attempt,
         failureType: 'dry_run',
-        detail: l3.error || 'Dry-run validation failed',
+        detail: core.blocked?.error || 'Dry-run validation failed',
       });
-      previousError = { sql: sqlResult.sql, error: l3.error || 'Dry-run failed' };
+      previousError = { sql: sqlResult.sql, error: core.blocked?.error || 'Dry-run failed' };
       continue;
     }
-    lastBytesProcessed = l3.bytesProcessed;
+    // Raw L3 bytes (may be undefined) — rawBytesProcessed preserves the dry-run
+    // value verbatim, distinct from core.bytesProcessed which coalesces to 0.
+    const l3Bytes = core.rawBytesProcessed;
+    lastBytesProcessed = l3Bytes;
 
     // 5. Supervisor review (only for structurally valid SQL)
     await callbacks?.onReview?.();
@@ -133,7 +104,7 @@ export async function qualityLoop(
       reasoningChain: sqlResult.reasoningChain,
       groundingCitations: sqlResult.groundingCitations,
       apiKey: supervisorApiKey,
-      dryRunMetadata: l3.bytesProcessed != null ? { bytesProcessed: l3.bytesProcessed } : undefined,
+      dryRunMetadata: l3Bytes != null ? { bytesProcessed: l3Bytes } : undefined,
     };
 
     const verdict = await reviewSql(supervisorInput);
@@ -181,13 +152,7 @@ export async function qualityLoop(
 
   // L4: Cost gate (outside loop — policy, not quality)
   const l4 = costGate(lastBytesProcessed ?? 0, maxBytesProcessed);
-  validationHistory.push({
-    attempt: passedAttempt,
-    layer: 'l4',
-    valid: l4.valid,
-    detail: l4.error,
-    bytesProcessed: l4.bytesProcessed,
-  });
+  validationHistory.push(toLayerRecord(passedAttempt, 'l4', l4));
   if (!l4.valid) {
     return {
       sqlResult,

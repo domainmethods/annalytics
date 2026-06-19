@@ -119,6 +119,18 @@ describe('runRoutineFastPath', () => {
     expect(reviewSql).not.toHaveBeenCalled();
   });
 
+  it('records l1, l2, l3, l4 in validationHistory for a completed query (attempt 0)', async () => {
+    const result = await runRoutineFastPath(baseInput());
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') return;
+    const layers = result.quality.validationHistory.map(r => r.layer);
+    expect(layers).toEqual(['l1', 'l2', 'l3', 'l4']);
+    expect(result.quality.validationHistory.every(r => r.attempt === 0)).toBe(true);
+    expect(result.quality.validationHistory.find(r => r.layer === 'l3')?.bytesProcessed)
+      .toBeTypeOf('number');
+  });
+
   it('falls back with previousAttempt when generated SQL has no grounding citation', async () => {
     vi.mocked(generateSql).mockResolvedValue({ ...sqlResult, groundingCitations: [] });
     const result = await runRoutineFastPath(baseInput());

@@ -21,10 +21,3 @@ export interface TableQuality {
   columnDescriptionCoverage: number;  // 0-1
   qualityTier: 'high' | 'medium' | 'low';
 }
-
-export interface MetadataState {
-  lastRefreshAt: Date;
-  manifestVersion: string;
-  tableCount: number;
-  refreshSource: 'webhook' | 'poll' | 'manual';
-}

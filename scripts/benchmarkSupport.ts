@@ -54,6 +54,24 @@ export async function resolveCorpusPath(
   return join(root, 'benchmarks', 'corpus.json');
 }
 
+/**
+ * Resolve a results path that never overwrites an earlier same-day run. Same-day
+ * re-runs are the normal repair cadence; collide-suffix (-run2, -run3, ...)
+ * instead of clobbering evidence. The `exists` predicate is injected so this is
+ * pure and unit-testable.
+ */
+export async function resolveCollisionFreeResultPath(
+  resultsDir: string,
+  runDate: string,
+  exists: (path: string) => Promise<boolean>,
+): Promise<string> {
+  let outputPath = join(resultsDir, `${runDate}.json`);
+  for (let n = 2; await exists(outputPath); n++) {
+    outputPath = join(resultsDir, `${runDate}-run${n}.json`);
+  }
+  return outputPath;
+}
+
 // The judge attaches corpus expectations (expected tables/fragments) to each result;
 // a corpus file that differs from the one the benchmark ran with would attach the
 // wrong expectations silently, so callers verify the run's recorded hash first.

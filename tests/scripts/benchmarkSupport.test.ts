@@ -10,6 +10,7 @@ import {
   extractReferenceIdsFromCitations,
   formatValidationTrace,
   referenceRetrievalSource,
+  resolveCollisionFreeResultPath,
   resolveCorpusPath,
   sqlShapePassed,
   tableSelectionPassed,
@@ -313,6 +314,25 @@ describe('resolveCorpusPath', () => {
   it('falls back to benchmarks/corpus.json when no live corpus exists', async () => {
     const path = await resolveCorpusPath('/repo', async () => false);
     expect(path).toBe(join('/repo', 'benchmarks', 'corpus.json'));
+  });
+});
+
+describe('resolveCollisionFreeResultPath', () => {
+  it('uses the bare date path when nothing exists', async () => {
+    const p = await resolveCollisionFreeResultPath('/r', '2026-06-12', async () => false);
+    expect(p).toBe('/r/2026-06-12.json');
+  });
+
+  it('suffixes -run2 when the dated file already exists', async () => {
+    const existing = new Set(['/r/2026-06-12.json']);
+    const p = await resolveCollisionFreeResultPath('/r', '2026-06-12', async path => existing.has(path));
+    expect(p).toBe('/r/2026-06-12-run2.json');
+  });
+
+  it('increments past consecutive collisions', async () => {
+    const existing = new Set(['/r/2026-06-12.json', '/r/2026-06-12-run2.json']);
+    const p = await resolveCollisionFreeResultPath('/r', '2026-06-12', async path => existing.has(path));
+    expect(p).toBe('/r/2026-06-12-run3.json');
   });
 });
 

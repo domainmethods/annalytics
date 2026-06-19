@@ -25,6 +25,7 @@ import {
   getGitSha,
   referenceRetrievalPassed,
   referenceRetrievalSource,
+  resolveCollisionFreeResultPath,
   resolveCorpusPath,
   sqlShapePassed,
   tableSelectionPassed,
@@ -401,10 +402,7 @@ async function main() {
   // Same-day re-runs are the normal repair cadence; never overwrite an
   // earlier run's evidence — suffix instead. Downstream judge/analyze take
   // the path explicitly and derive report names from the basename.
-  let outputPath = join(resultsDir, `${runDate}.json`);
-  for (let n = 2; await fileExists(outputPath); n++) {
-    outputPath = join(resultsDir, `${runDate}-run${n}.json`);
-  }
+  const outputPath = await resolveCollisionFreeResultPath(resultsDir, runDate, fileExists);
   const output = {
     runDate,
     metadata,
