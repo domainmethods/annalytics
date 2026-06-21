@@ -11,7 +11,7 @@ Cloud API shape. The prototype proves that a user can ask a narrow analytics
 question over WhatsApp and receive a safe, compact answer while preserving the
 existing Annalytics trust path: clarification, SQL generation, supervisor
 review, validation, BigQuery execution, safe errors, response persistence,
-rate limiting, idempotency, and human escalation.
+rate limiting, idempotency, and pending-escalation guards.
 
 This is not a Slack parity project. Slack remains the richer operator and
 analyst surface. WhatsApp is a second user-facing ingress and egress path for
@@ -24,7 +24,8 @@ timestamp identifiers plus a Slack `WebClient`, then updates Slack messages,
 loads Slack thread context, emits Block Kit responses, and persists state using
 Slack-flavored `threadTs` and `statusMsgTs` values. Slack handlers also own
 message dedupe, rate limiting, preflight checks, follow-up routing, and
-clarification resume behavior.
+clarification resume behavior. The WhatsApp prototype reuses the relevant
+guard concepts directly, but does not call the Slack-specific preflight helper.
 
 The current governance checkpoint allows product expansion only when it is
 evidence-gated and does not outrun trust infrastructure. A WhatsApp prototype
@@ -55,6 +56,8 @@ channel.
 - Business-initiated outreach outside a valid WhatsApp service window.
 - OpenWA as a repo dependency, production adapter, or deployment requirement.
 - A broad pipeline rewrite before the prototype proves the channel.
+- WhatsApp-origin async human escalation creation, analyst resolution routing,
+  or lifecycle notifications.
 - New benchmark scaffolding beyond the manual prototype acceptance evidence.
 
 ## Recommended Approach
@@ -116,11 +119,14 @@ conversation resumes the suspended request.
 
 ### Escalation
 
-Slack remains the analyst and escalation surface for the prototype. If the
-quality loop parks a request for human review, the WhatsApp user receives a
-plain-text waiting message. The escalation card still posts to the configured
-Slack destination. Analyst resolution posts back to WhatsApp only when the
-stored escalation state identifies a WhatsApp origin.
+Slack remains the analyst and escalation surface for the product. This
+prototype does not create new WhatsApp-origin async escalations or route
+analyst resolutions back to WhatsApp. If a pending escalation already exists
+for the surface-qualified WhatsApp conversation, the user receives a
+plain-text waiting message. If the quality loop exhausts without a validated
+query, WhatsApp receives a safe no-answer message with a trace id. Full
+WhatsApp-origin escalation creation and resolution routing require a later
+channel-adapter tranche.
 
 ### Unsupported Inputs
 
@@ -187,8 +193,9 @@ provider messages, and does not own SQL generation or validation.
   caps rows and characters aggressively.
 
 - `src/handlers/whatsappMessages.ts`
-  Orchestrates dedupe, allowlist checks, rate limiting, preflight, pipeline
-  invocation, and safe failure behavior for WhatsApp inbound messages.
+  Orchestrates dedupe, allowlist checks, rate limiting, pending clarification
+  and escalation guards, pipeline invocation, and safe failure behavior for
+  WhatsApp inbound messages.
 
 ### Pipeline Boundary
 
@@ -209,8 +216,10 @@ All WhatsApp state identifiers must be surface-qualified:
 - Clarification id: `clarify_whatsapp:<wa_id>`
 - Response context key: `whatsapp:<wa_id>_<outboundMessageId>` after the answer
   is sent; if an outbound id is unavailable, use
-  `whatsapp:<wa_id>_<inboundProviderMessageId>`
-- Escalation origin: include `originSurface: 'whatsapp'` or equivalent
+  `whatsapp:<wa_id>_<inboundProviderMessageId>`. The provider message id
+  component must be URL-encoded before it is used as a Firestore document id.
+- Future escalation origin: if a later tranche adds WhatsApp-origin
+  escalation, include `originSurface: 'whatsapp'` or equivalent.
 
 Do not reuse raw WhatsApp ids in state locations that can collide with Slack
 timestamps. Existing Slack keys can remain unchanged for the prototype, but new
@@ -279,8 +288,11 @@ Add focused tests before any live use:
 - dedupe prevents duplicate pipeline invocation
 - allowlist blocks unknown WhatsApp users when configured
 - config requires WhatsApp secrets only when `WHATSAPP_ENABLED=true`
-- renderer truncates table output and includes trace ids
+- renderer strips multiline cell content, truncates table output, and includes
+  trace ids
 - state-key helpers always prefix `whatsapp:`
+- response-context persistence URL-encodes WhatsApp provider message id
+  components before using them as Firestore document ids
 - clarification resume works for a later inbound WhatsApp text
 - existing Slack tests remain unchanged
 
@@ -298,6 +310,8 @@ The prototype is accepted when:
 - Bad signatures and duplicate inbound ids do not run the pipeline.
 - A clarification request can be answered by a later WhatsApp text message in
   the same conversation.
+- Exhausted supervisor loops return a safe no-answer message rather than
+  executing invalid SQL or creating async WhatsApp-origin escalation state.
 - Governance records the prototype as a gated channel experiment before it is
   treated as production product surface.
 
