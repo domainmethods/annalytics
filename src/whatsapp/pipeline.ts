@@ -16,6 +16,7 @@ import {
   renderWhatsAppQueryAnswer,
   renderWhatsAppSafeError,
 } from './renderer.js';
+import { whatsappClarificationId } from './keys.js';
 
 const ACK_TEXT = 'Got it. I am checking that now.';
 
@@ -76,7 +77,7 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
       const sent = await client.sendText(message.conversation, rendered);
 
       await saveClarificationState({
-        clarificationId: `clarify_${conversationId}`,
+        clarificationId: whatsappClarificationId(message.conversation.userId),
         threadTs: conversationId,
         channel: conversationId,
         originalQuestion: message.text,

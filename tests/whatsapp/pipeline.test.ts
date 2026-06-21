@@ -33,6 +33,7 @@ import { executeQuery } from '../../src/execution/runner.js';
 import { getTeachingSummaries } from '../../src/teachings/summaryMap.js';
 import { getSampleRows } from '../../src/dbt/sampleRowCache.js';
 import { getLatestNegativeFeedback } from '../../src/state/responseContext.js';
+import { whatsappClarificationId } from '../../src/whatsapp/keys.js';
 
 const mockSaveClarificationState = vi.mocked(saveClarificationState);
 const mockClassifyQuestion = vi.mocked(classifyQuestion);
@@ -194,6 +195,13 @@ describe('runWhatsAppPipeline', () => {
 
   it('sends clarification text and stores WhatsApp clarification state', async () => {
     const client = createClient();
+    const messageWithDistinctUserId: ChannelMessage = {
+      ...message,
+      conversation: {
+        ...conversation,
+        conversationId: 'whatsapp:conversation-thread',
+      },
+    };
     const answerQuestion = vi.fn().mockResolvedValue({
       kind: 'clarification',
       questions: ['Which revenue definition should I use?'],
@@ -203,7 +211,7 @@ describe('runWhatsAppPipeline', () => {
     const saveResponseContext = vi.fn().mockResolvedValue(undefined);
 
     await runWhatsAppPipeline({
-      message,
+      message: messageWithDistinctUserId,
       client,
       answerQuestion,
       saveResponseContext,
@@ -211,13 +219,13 @@ describe('runWhatsAppPipeline', () => {
 
     expect(client.sendText).toHaveBeenNthCalledWith(
       2,
-      conversation,
+      messageWithDistinctUserId.conversation,
       expect.stringContaining('Which revenue definition should I use?'),
     );
     expect(mockSaveClarificationState).toHaveBeenCalledWith({
-      clarificationId: 'clarify_whatsapp:15551234567',
-      threadTs: 'whatsapp:15551234567',
-      channel: 'whatsapp:15551234567',
+      clarificationId: whatsappClarificationId('15551234567'),
+      threadTs: 'whatsapp:conversation-thread',
+      channel: 'whatsapp:conversation-thread',
       originalQuestion: 'What was revenue yesterday?',
       ambiguities: ['Revenue definition unclear'],
       clarifyingMessageTs: 'outbound/A+B=',
