@@ -31,6 +31,7 @@ export interface ResponseContext {
   responseId: string;
   threadTs: string;
   statusMsgTs: string;
+  surface?: 'slack' | 'whatsapp';
   clarifiedQuestion: string;
   assumptions: string[];
   reasoningChain: string;

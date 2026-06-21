@@ -62,6 +62,19 @@ describe('saveResponseContext', () => {
     expect(mockSet).toHaveBeenCalled();
   });
 
+  it('URL-encodes WhatsApp status message ids in Firestore doc ids', async () => {
+    mockSet.mockResolvedValue(undefined);
+    await saveResponseContext({
+      ...sampleContext(),
+      threadTs: 'whatsapp:15551234567',
+      statusMsgTs: 'outbound/A+B=',
+      surface: 'whatsapp',
+    });
+
+    expect(mockDoc).toHaveBeenCalledWith('whatsapp:15551234567_outbound%2FA%2BB%3D');
+    expect(mockSet).toHaveBeenCalled();
+  });
+
   it('writes expiresAt as a Date 90 days after createdAt by default', async () => {
     mockSet.mockResolvedValue(undefined);
     await saveResponseContext(sampleContext());
