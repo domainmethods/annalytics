@@ -1,0 +1,66 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+const mockCreate = vi.fn();
+const mockGet = vi.fn();
+const mockDelete = vi.fn();
+const mockDoc = vi.fn(() => ({ create: mockCreate, get: mockGet, delete: mockDelete }));
+const mockCollection = vi.fn(() => ({ doc: mockDoc }));
+
+vi.mock('../../src/state/firestore.js', () => ({
+  FieldValue: { serverTimestamp: () => 'server-ts' },
+  getDb: () => ({ collection: mockCollection }),
+}));
+
+import { claimWhatsAppEvent, releaseWhatsAppEventClaim } from '../../src/state/whatsappEventDedupe.js';
+
+describe('whatsappEventDedupe', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('claims a new WhatsApp message id with a surface-qualified doc id', async () => {
+    mockCreate.mockResolvedValue(undefined);
+
+    await expect(claimWhatsAppEvent('wamid.A/B+C=')).resolves.toBe(true);
+
+    expect(mockCollection).toHaveBeenCalledWith('whatsapp_event_dedupe');
+    expect(mockDoc).toHaveBeenCalledWith('whatsapp:wamid.A%2FB%2BC%3D');
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'wamid.A/B+C=',
+      state: 'pending',
+      seenAt: 'server-ts',
+      expiresAt: expect.any(Date),
+    }));
+  });
+
+  it('returns false for an existing non-expired claim', async () => {
+    mockCreate.mockRejectedValueOnce({ code: 6 });
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ expiresAt: new Date(Date.now() + 60_000) }),
+    });
+
+    await expect(claimWhatsAppEvent('wamid.1')).resolves.toBe(false);
+  });
+
+  it('reclaims an expired claim', async () => {
+    mockCreate
+      .mockRejectedValueOnce({ code: 6 })
+      .mockResolvedValueOnce(undefined);
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ expiresAt: new Date(Date.now() - 60_000) }),
+    });
+    mockDelete.mockResolvedValueOnce(undefined);
+
+    await expect(claimWhatsAppEvent('wamid.1')).resolves.toBe(true);
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases a pending claim', async () => {
+    mockDelete.mockResolvedValue(undefined);
+    await releaseWhatsAppEventClaim('wamid.1');
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+  });
+});
