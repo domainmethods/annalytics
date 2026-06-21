@@ -60,9 +60,16 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
   const logger = createLogger(traceId);
   const { message, client } = input;
   const conversationId = message.conversation.conversationId;
+  let messageWasVisible = false;
+
+  const sendVisibleText = async (text: string) => {
+    const sent = await client.sendText(message.conversation, text);
+    messageWasVisible = true;
+    return sent;
+  };
 
   try {
-    await client.sendText(message.conversation, ACK_TEXT);
+    await sendVisibleText(ACK_TEXT);
 
     const outcome = await input.answerQuestion({
       question: message.text,
@@ -74,7 +81,7 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
 
     if (outcome.kind === 'clarification') {
       const rendered = renderWhatsAppClarification(outcome.questions, outcome.traceId);
-      const sent = await client.sendText(message.conversation, rendered);
+      const sent = await sendVisibleText(rendered);
 
       await saveClarificationState({
         clarificationId: whatsappClarificationId(message.conversation.userId),
@@ -95,20 +102,25 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
       assumptions: outcome.assumptions,
       traceId: outcome.traceId,
     });
-    const sent = await client.sendText(message.conversation, rendered);
+    const sent = await sendVisibleText(rendered);
 
-    await input.saveResponseContext({
-      ...outcome.responseContext,
-      threadTs: conversationId,
-      statusMsgTs: sent.messageId,
-      surface: 'whatsapp',
-    });
+    try {
+      await input.saveResponseContext({
+        ...outcome.responseContext,
+        threadTs: conversationId,
+        statusMsgTs: sent.messageId,
+        surface: 'whatsapp',
+      });
+    } catch (err) {
+      logger.error({ err }, 'whatsapp.response_context_save_failed');
+    }
   } catch (err) {
     logger.error({ err }, 'whatsapp.pipeline_failed');
     try {
-      await client.sendText(message.conversation, renderWhatsAppSafeError(traceId));
+      await sendVisibleText(renderWhatsAppSafeError(traceId));
     } catch (sendErr) {
       logger.error({ err: sendErr }, 'whatsapp.safe_error_send_failed');
+      if (!messageWasVisible) throw sendErr;
     }
   }
 }
@@ -160,6 +172,43 @@ export async function answerWhatsAppQuestion(
   }
 
   const resolvedQuestion = clarification.resolved_question || input.question;
+  if (clarification.route !== 'data_query') {
+    const explanation = 'I can only answer warehouse data questions in this WhatsApp prototype.';
+    return answerOutcome({
+      input: pipelineInput,
+      traceId,
+      startTime,
+      resolvedQuestion,
+      assumptions: clarification.assumptions,
+      qualityResult: {
+        sqlResult: {
+          sql: '',
+          explanation,
+          headline: 'unsupported WhatsApp route',
+          tablesUsed: [],
+          confidence: 'low',
+          assumptions: [],
+          reasoningChain: clarification.reasoning,
+          groundingCitations: [],
+        },
+        verdict: 'exhausted',
+        supervisorNotes: `Unsupported route: ${clarification.route}`,
+        finalConfidence: 'low',
+        retryCount: 0,
+        failureHistory: [],
+        bytesProcessed: 0,
+      },
+      explanation,
+      rows: [],
+      columnNames: [],
+      totalRows: 0,
+      bytesProcessed: 0,
+      supervisorVerdict: 'exhausted',
+      confidence: 'low',
+      clarificationConfidence: clarification.confidence,
+    });
+  }
+
   const sampleRows = await loadSampleRows(tables, traceId);
   const negativeFeedback = await loadNegativeFeedback(input.conversationId, logger);
 

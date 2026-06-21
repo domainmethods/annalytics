@@ -252,6 +252,72 @@ describe('runWhatsAppPipeline', () => {
     );
     expect(saveResponseContext).not.toHaveBeenCalled();
   });
+
+  it('rethrows when no message was sent and safe error delivery also fails', async () => {
+    const client: ChannelClient = {
+      sendText: vi.fn()
+        .mockRejectedValueOnce(new Error('ack send failed'))
+        .mockRejectedValueOnce(new Error('safe error send failed')),
+    };
+    const answerQuestion = vi.fn();
+    const saveResponseContext = vi.fn().mockResolvedValue(undefined);
+
+    await expect(runWhatsAppPipeline({
+      message,
+      client,
+      answerQuestion,
+      saveResponseContext,
+    })).rejects.toThrow('safe error send failed');
+
+    expect(answerQuestion).not.toHaveBeenCalled();
+    expect(saveResponseContext).not.toHaveBeenCalled();
+    expect(client.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('resolves when ack was sent even if later safe error delivery fails', async () => {
+    const client: ChannelClient = {
+      sendText: vi.fn()
+        .mockResolvedValueOnce({ messageId: 'wamid.ack' })
+        .mockRejectedValueOnce(new Error('safe error send failed')),
+    };
+    const answerQuestion = vi.fn().mockRejectedValue(new Error('raw model failure'));
+    const saveResponseContext = vi.fn().mockResolvedValue(undefined);
+
+    await expect(runWhatsAppPipeline({
+      message,
+      client,
+      answerQuestion,
+      saveResponseContext,
+    })).resolves.toBeUndefined();
+
+    expect(saveResponseContext).not.toHaveBeenCalled();
+    expect(client.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs response context save failures after sending an answer without sending a safe error', async () => {
+    const client = createClient();
+    const answerQuestion = vi.fn().mockResolvedValue({
+      kind: 'answer',
+      explanation: 'Revenue was 123 yesterday.',
+      rows: [{ revenue: 123 }],
+      columnNames: ['revenue'],
+      totalRows: 1,
+      assumptions: [],
+      traceId: 'trace-answer',
+      responseContext: responseContext(),
+    });
+    const saveResponseContext = vi.fn().mockRejectedValue(new Error('firestore unavailable'));
+
+    await expect(runWhatsAppPipeline({
+      message,
+      client,
+      answerQuestion,
+      saveResponseContext,
+    })).resolves.toBeUndefined();
+
+    expect(saveResponseContext).toHaveBeenCalled();
+    expect(client.sendText).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('answerWhatsAppQuestion', () => {
@@ -352,5 +418,29 @@ describe('answerWhatsAppQuestion', () => {
     expect(outcome.kind).toBe('answer');
     if (outcome.kind !== 'answer') throw new Error('Expected answer outcome');
     expect(outcome.explanation).toContain('limit');
+  });
+
+  it('returns an unsupported answer without SQL generation for non-data-query routes', async () => {
+    mockClassifyQuestion.mockResolvedValue({
+      ...highClarification,
+      route: 'dbt_status',
+    });
+
+    const outcome = await answerWhatsAppQuestion({
+      question: 'Did the latest dbt run pass?',
+      conversationId: 'whatsapp:15551234567',
+      providerMessageId: 'wamid.inbound',
+      tables: [table],
+      config,
+    });
+
+    expect(mockQualityLoop).not.toHaveBeenCalled();
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(outcome.kind).toBe('answer');
+    if (outcome.kind !== 'answer') throw new Error('Expected answer outcome');
+    expect(outcome.explanation).toBe(
+      'I can only answer warehouse data questions in this WhatsApp prototype.',
+    );
+    expect(outcome.responseContext.surface).toBe('whatsapp');
   });
 });
