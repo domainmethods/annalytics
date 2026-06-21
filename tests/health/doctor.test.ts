@@ -157,6 +157,13 @@ describe('runDiagnostics', () => {
     expect(report.features.escalation.mode).toBe('dm');
     expect(report.features.escalation.targetConfigured).toBe(false);
     expect(report.features.escalation.onNegativeFeedback).toBe(false);
+    expect(report.features).toEqual(expect.objectContaining({
+      whatsapp: expect.objectContaining({
+        enabled: false,
+        configured: false,
+        allowlistSize: 0,
+      }),
+    }));
   });
 
   it('marks escalation target configured when the active mode has its target set', async () => {

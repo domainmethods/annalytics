@@ -38,6 +38,11 @@ export interface DiagnosticReport {
       targetConfigured: boolean;
       onNegativeFeedback: boolean;
     };
+    whatsapp: {
+      enabled: boolean;
+      configured: boolean;
+      allowlistSize: number;
+    };
   };
   limits: {
     costGateMaxBytes: number;
@@ -165,6 +170,11 @@ export async function runDiagnostics(deps: DoctorDeps): Promise<DiagnosticReport
         mode: config.escalation.mode,
         targetConfigured: escalationTargetConfigured(config.escalation),
         onNegativeFeedback: config.escalation.onNegativeFeedback,
+      },
+      whatsapp: {
+        enabled: config.whatsapp.enabled,
+        configured: config.whatsapp.enabled,
+        allowlistSize: config.whatsapp.allowedWaIds.length,
       },
     },
     limits: {

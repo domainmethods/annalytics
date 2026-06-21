@@ -23,6 +23,8 @@ import { FEEDBACK_REASON_PREFIX } from './slack/feedbackBlocks.js';
 import { OTHER_NOTE_CALLBACK_ID, OTHER_NOTE_BLOCK_ID, OTHER_NOTE_ACTION_ID } from './slack/feedbackModals.js';
 import { registerDbtRunIngestion } from './handlers/dbtRunIngestion.js';
 import { registerLifecycleSweep } from './handlers/lifecycleSweep.js';
+import { createWhatsAppClient } from './whatsapp/client.js';
+import { registerWhatsAppWebhook } from './whatsapp/webhook.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
 import { fetchAllSampleRows } from './dbt/sampleRows.js';
 import { saveSampleRows } from './dbt/sampleRowCache.js';
@@ -110,6 +112,24 @@ if (config.lifecycleSweepSecret) {
   registerLifecycleSweep(receiver.router, config.lifecycleSweepSecret, {
     getClient: () => app.client,
     getEscalationConfig: () => config.escalation,
+  });
+}
+
+if (config.whatsapp.enabled) {
+  const whatsappClient = createWhatsAppClient({
+    accessToken: config.whatsapp.accessToken,
+    phoneNumberId: config.whatsapp.phoneNumberId,
+    graphApiVersion: config.whatsapp.graphApiVersion,
+  });
+  registerWhatsAppWebhook(receiver.router, {
+    verifyToken: config.whatsapp.verifyToken,
+    appSecret: config.whatsapp.appSecret,
+    phoneNumberId: config.whatsapp.phoneNumberId,
+    client: whatsappClient,
+    tables,
+    config: toPipelineConfig(config),
+    rateLimitPerHour: config.limits.rateLimitPerHour,
+    allowedWaIds: config.whatsapp.allowedWaIds,
   });
 }
 
