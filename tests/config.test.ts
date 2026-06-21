@@ -90,3 +90,68 @@ describe('loadConfig fastPath', () => {
     expect(() => loadConfig()).toThrow(/FAST_PATH_ENABLED must be "true" or "false"/);
   });
 });
+
+describe('loadConfig whatsapp', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('leaves WhatsApp disabled by default without requiring WhatsApp secrets', async () => {
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'slack-secret');
+    vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
+    vi.stubEnv('GCP_PROJECT_ID', 'gcp-project');
+    vi.stubEnv('WHATSAPP_ENABLED', '');
+    vi.resetModules();
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig();
+
+    expect(config.whatsapp.enabled).toBe(false);
+    expect(config.whatsapp.allowedWaIds).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
+  it('requires WhatsApp secrets only when WhatsApp is enabled', async () => {
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'slack-secret');
+    vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
+    vi.stubEnv('GCP_PROJECT_ID', 'gcp-project');
+    vi.stubEnv('WHATSAPP_ENABLED', 'true');
+    vi.resetModules();
+
+    const { loadConfig } = await import('../src/config.js');
+
+    expect(() => loadConfig()).toThrow('Missing required env var: WHATSAPP_VERIFY_TOKEN');
+    vi.unstubAllEnvs();
+  });
+
+  it('parses enabled WhatsApp config and allowlist', async () => {
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'slack-secret');
+    vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
+    vi.stubEnv('GCP_PROJECT_ID', 'gcp-project');
+    vi.stubEnv('WHATSAPP_ENABLED', 'true');
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'verify-token');
+    vi.stubEnv('WHATSAPP_APP_SECRET', 'app-secret');
+    vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'access-token');
+    vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', 'phone-number-id');
+    vi.stubEnv('WHATSAPP_GRAPH_API_VERSION', 'v23.0');
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', '15551234567, 15557654321');
+    vi.resetModules();
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig();
+
+    expect(config.whatsapp).toEqual({
+      enabled: true,
+      verifyToken: 'verify-token',
+      appSecret: 'app-secret',
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-number-id',
+      graphApiVersion: 'v23.0',
+      allowedWaIds: ['15551234567', '15557654321'],
+    });
+    vi.unstubAllEnvs();
+  });
+});
