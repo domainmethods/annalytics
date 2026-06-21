@@ -55,6 +55,7 @@ export async function handleWhatsAppMessages(
           `You've hit the query limit (${deps.rateLimitPerHour}/hour). Resets in ${retryAfter} minutes.`,
         );
         visibleResponse = true;
+        await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
         continue;
       }
 
@@ -66,6 +67,7 @@ export async function handleWhatsAppMessages(
           "I'm still waiting for the data team on your previous question.",
         );
         visibleResponse = true;
+        await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
         continue;
       }
 

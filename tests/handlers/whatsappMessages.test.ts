@@ -220,7 +220,7 @@ describe('handleWhatsAppMessages', () => {
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
   });
 
-  it('sends rate-limit text and skips pipeline', async () => {
+  it('sends rate-limit text, marks the event visible, and skips pipeline', async () => {
     const dependencies = deps();
     mockCheckRateLimit.mockResolvedValue({ allowed: false, retryAfterMinutes: 12 });
 
@@ -230,6 +230,9 @@ describe('handleWhatsAppMessages', () => {
       conversation,
       "You've hit the query limit (30/hour). Resets in 12 minutes.",
     );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    expect(vi.mocked(dependencies.client.sendText).mock.invocationCallOrder[0])
+      .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
@@ -299,7 +302,7 @@ describe('handleWhatsAppMessages', () => {
     expect(mockReleaseWhatsAppEventClaim).toHaveBeenCalledWith('wamid.1');
   });
 
-  it('guards pending escalation and keeps dedupe claim after visible wait text', async () => {
+  it('guards pending escalation, marks the event visible, and keeps dedupe claim', async () => {
     const dependencies = deps();
     mockGetEscalationByThread.mockResolvedValue({
       status: 'pending',
@@ -313,6 +316,9 @@ describe('handleWhatsAppMessages', () => {
       conversation,
       "I'm still waiting for the data team on your previous question.",
     );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    expect(vi.mocked(dependencies.client.sendText).mock.invocationCallOrder[0])
+      .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
