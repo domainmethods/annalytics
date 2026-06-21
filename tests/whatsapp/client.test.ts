@@ -59,4 +59,59 @@ describe('createWhatsAppClient', () => {
       userId: '15551234567',
     }, 'Hello')).rejects.toThrow('WhatsApp send failed with status 400');
   });
+
+  it('throws a safe error when the Cloud API request fails before a response', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('raw network detail with access-token'));
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    let error: unknown;
+    try {
+      await client.sendText({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, 'Hello');
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('WhatsApp send failed before receiving a response');
+    expect((error as Error).message).not.toContain('raw network detail');
+  });
+
+  it('throws a safe error when a successful Graph API response is malformed', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new Error('Unexpected token < in provider HTML');
+      },
+    });
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    let error: unknown;
+    try {
+      await client.sendText({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, 'Hello');
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('WhatsApp send returned an unreadable response');
+    expect((error as Error).message).not.toContain('Unexpected token');
+  });
 });

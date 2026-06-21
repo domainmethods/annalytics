@@ -56,6 +56,49 @@ describe('WhatsApp renderer', () => {
     expect(text).not.toContain('email\npaid');
   });
 
+  it('transliterates common currency and math symbols to ASCII', () => {
+    const text = renderWhatsAppQueryAnswer({
+      explanation: 'Spend was €1,234, refunds were £99, and the threshold was ≥ 10.',
+      rows: [],
+      columnNames: ['metric'],
+      totalRows: 0,
+      assumptions: [],
+      traceId: 'trace-symbols',
+    });
+
+    expect(text).toContain('Spend was EUR 1,234, refunds were GBP 99, and the threshold was >= 10.');
+    expect(text).not.toMatch(/[€£≥]/);
+  });
+
+  it('preserves the trace footer when long messages are truncated', () => {
+    const text = renderWhatsAppQueryAnswer({
+      explanation: 'A'.repeat(4000),
+      rows: [],
+      columnNames: [],
+      totalRows: 0,
+      assumptions: [],
+      traceId: 'trace-long',
+    });
+
+    expect(text.length).toBeLessThanOrEqual(3500);
+    expect(text).toContain('[truncated]');
+    expect(text).toContain('(trace: trace-long)');
+  });
+
+  it('sanitizes pipes inside table cells', () => {
+    const text = renderWhatsAppQueryAnswer({
+      explanation: 'Top rows.',
+      rows: [{ source: 'email|paid', sessions: 10 }],
+      columnNames: ['source', 'sessions'],
+      totalRows: 1,
+      assumptions: [],
+      traceId: 'trace-pipe',
+    });
+
+    expect(text).toContain('email / paid | 10');
+    expect(text).not.toContain('email|paid');
+  });
+
   it('renders clarification text', () => {
     expect(renderWhatsAppClarification(['Which date range should I use?'], 'trace-3'))
       .toBe('I need one clarification before I query the warehouse:\n1. Which date range should I use?\n\nReply here with the answer. (trace: trace-3)');

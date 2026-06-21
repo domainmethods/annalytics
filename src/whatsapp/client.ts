@@ -36,26 +36,38 @@ export function createWhatsAppClient(config: WhatsAppClientConfig): ChannelClien
 
   return {
     async sendText(conversation, text) {
-      const response = await fetchImpl(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: conversation.userId,
-          type: 'text',
-          text: { body: text },
-        }),
-      });
+      let response: FetchResponse;
+      try {
+        response = await fetchImpl(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${config.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: conversation.userId,
+            type: 'text',
+            text: { body: text },
+          }),
+        });
+      } catch {
+        throw new Error('WhatsApp send failed before receiving a response');
+      }
 
       if (!response.ok) {
         throw new Error(`WhatsApp send failed with status ${response.status ?? 'unknown'}`);
       }
 
-      const messageId = firstMessageId(await response.json());
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new Error('WhatsApp send returned an unreadable response');
+      }
+
+      const messageId = firstMessageId(payload);
       if (!messageId) {
         throw new Error('WhatsApp send succeeded without a message id');
       }
