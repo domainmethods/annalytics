@@ -594,7 +594,7 @@ describe('parseWhatsAppWebhookPayload', () => {
         userId: '15551234567',
       },
     });
-    expect(result.messages[0].receivedAt.toISOString()).toBe('2026-05-29T04:26:40.000Z');
+    expect(result.messages[0].receivedAt.toISOString()).toBe('2026-05-28T20:26:40.000Z');
     expect(result.unsupported).toEqual([]);
   });
 
