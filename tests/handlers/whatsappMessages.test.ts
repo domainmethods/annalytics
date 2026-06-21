@@ -7,6 +7,7 @@ import type { EscalationState } from '../../src/types.js';
 
 vi.mock('../../src/state/whatsappEventDedupe.js', () => ({
   claimWhatsAppEvent: vi.fn(),
+  markWhatsAppEventVisible: vi.fn(),
   releaseWhatsAppEventClaim: vi.fn(),
 }));
 vi.mock('../../src/state/rateLimiter.js', () => ({ checkRateLimit: vi.fn() }));
@@ -25,11 +26,16 @@ import { checkRateLimit } from '../../src/state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { saveResponseContext } from '../../src/state/responseContext.js';
-import { claimWhatsAppEvent, releaseWhatsAppEventClaim } from '../../src/state/whatsappEventDedupe.js';
+import {
+  claimWhatsAppEvent,
+  markWhatsAppEventVisible,
+  releaseWhatsAppEventClaim,
+} from '../../src/state/whatsappEventDedupe.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../../src/whatsapp/pipeline.js';
 import { handleWhatsAppMessages } from '../../src/handlers/whatsappMessages.js';
 
 const mockClaimWhatsAppEvent = vi.mocked(claimWhatsAppEvent);
+const mockMarkWhatsAppEventVisible = vi.mocked(markWhatsAppEventVisible);
 const mockReleaseWhatsAppEventClaim = vi.mocked(releaseWhatsAppEventClaim);
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockGetClarificationState = vi.mocked(getClarificationState);
@@ -139,12 +145,13 @@ describe('handleWhatsAppMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockClaimWhatsAppEvent.mockResolvedValue(true);
+    mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
     mockGetClarificationState.mockResolvedValue(null);
     mockDeleteClarificationState.mockResolvedValue(undefined);
     mockGetEscalationByThread.mockResolvedValue(null);
-    mockRunWhatsAppPipeline.mockResolvedValue(undefined);
+    mockRunWhatsAppPipeline.mockResolvedValue({ visible: true, outcome: 'answer' });
     mockAnswerWhatsAppQuestion.mockResolvedValue({
       kind: 'clarification',
       questions: ['Which metric should I use?'],
@@ -166,9 +173,13 @@ describe('handleWhatsAppMessages', () => {
       client: dependencies.client,
       saveResponseContext,
       answerQuestion: expect.any(Function),
+      markVisible: expect.any(Function),
     }));
 
     const runInput = mockRunWhatsAppPipeline.mock.calls[0][0];
+    await runInput.markVisible?.();
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+
     await runInput.answerQuestion({
       question: 'What was revenue yesterday?',
       conversationId: 'whatsapp:15551234567',
@@ -229,9 +240,9 @@ describe('handleWhatsAppMessages', () => {
       clarificationId: 'clarify_1',
     });
     const inbound = message({ text: 'Use booked revenue.' });
-    let resolvePipeline!: () => void;
+    let resolvePipeline!: (result: { visible: boolean; outcome: 'answer' }) => void;
     mockGetClarificationState.mockResolvedValue(state);
-    mockRunWhatsAppPipeline.mockReturnValue(new Promise<void>((resolve) => {
+    mockRunWhatsAppPipeline.mockReturnValue(new Promise((resolve) => {
       resolvePipeline = resolve;
     }));
 
@@ -239,7 +250,7 @@ describe('handleWhatsAppMessages', () => {
     await vi.waitFor(() => expect(mockRunWhatsAppPipeline).toHaveBeenCalledOnce());
     expect(mockDeleteClarificationState).not.toHaveBeenCalled();
 
-    resolvePipeline();
+    resolvePipeline({ visible: true, outcome: 'answer' });
     await handling;
 
     expect(mockRunWhatsAppPipeline).toHaveBeenCalledWith(expect.objectContaining({
@@ -248,6 +259,22 @@ describe('handleWhatsAppMessages', () => {
       }),
     }));
     expect(mockDeleteClarificationState).toHaveBeenCalledWith('clarify_1');
+  });
+
+  it('keeps clarification state when a resumed pipeline asks another clarification', async () => {
+    mockGetClarificationState.mockResolvedValue(clarificationState({ clarificationId: 'clarify_1' }));
+    mockRunWhatsAppPipeline.mockResolvedValue({ visible: true, outcome: 'clarification' });
+
+    await handleWhatsAppMessages([
+      message({ text: 'Use booked revenue.' }),
+    ], deps());
+
+    expect(mockRunWhatsAppPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({
+        text: 'What was revenue? (Clarification: Use booked revenue.)',
+      }),
+    }));
+    expect(mockDeleteClarificationState).not.toHaveBeenCalled();
   });
 
   it('rethrows and releases dedupe claim when pipeline throws before visible response', async () => {

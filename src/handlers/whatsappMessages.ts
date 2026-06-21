@@ -7,6 +7,7 @@ import { getEscalationByThread } from '../state/escalationState.js';
 import { saveResponseContext } from '../state/responseContext.js';
 import {
   claimWhatsAppEvent,
+  markWhatsAppEventVisible,
   releaseWhatsAppEventClaim,
 } from '../state/whatsappEventDedupe.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../whatsapp/pipeline.js';
@@ -72,7 +73,7 @@ export async function handleWhatsAppMessages(
         ? clarifiedMessage(inbound, clarification.originalQuestion)
         : inbound;
 
-      await runWhatsAppPipeline({
+      const result = await runWhatsAppPipeline({
         message: messageForPipeline,
         client: deps.client,
         answerQuestion: input => answerWhatsAppQuestion({
@@ -81,10 +82,11 @@ export async function handleWhatsAppMessages(
           config: deps.config,
         }),
         saveResponseContext,
+        markVisible: () => markWhatsAppEventVisible(inbound.providerMessageId),
       });
-      visibleResponse = true;
+      visibleResponse = result.visible;
 
-      if (clarification) {
+      if (clarification && result.outcome !== 'clarification') {
         await deleteClarificationState(clarification.clarificationId);
       }
     } catch (err) {

@@ -51,20 +51,38 @@ export interface RunWhatsAppPipelineInput {
   client: ChannelClient;
   answerQuestion: (input: AnswerWhatsAppQuestionInput) => Promise<WhatsAppPipelineOutcome>;
   saveResponseContext: (ctx: ResponseContext) => Promise<void>;
+  markVisible?: () => Promise<void>;
   tables?: TableContext[];
   config?: PipelineConfig;
 }
 
-export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Promise<void> {
+export type RunWhatsAppPipelineResult = {
+  visible: boolean;
+  outcome: 'answer' | 'clarification' | 'safe_error';
+};
+
+export async function runWhatsAppPipeline(
+  input: RunWhatsAppPipelineInput,
+): Promise<RunWhatsAppPipelineResult> {
   const traceId = createTraceId();
   const logger = createLogger(traceId);
   const { message, client } = input;
   const conversationId = message.conversation.conversationId;
   let messageWasVisible = false;
+  let visibleMarked = false;
 
   const sendVisibleText = async (text: string) => {
     const sent = await client.sendText(message.conversation, text);
+    const isFirstVisibleMessage = !messageWasVisible;
     messageWasVisible = true;
+    if (isFirstVisibleMessage && input.markVisible && !visibleMarked) {
+      visibleMarked = true;
+      try {
+        await input.markVisible();
+      } catch (err) {
+        logger.error({ err }, 'whatsapp.event_mark_visible_failed');
+      }
+    }
     return sent;
   };
 
@@ -91,7 +109,7 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
         ambiguities: outcome.ambiguities ?? [],
         clarifyingMessageTs: sent.messageId,
       });
-      return;
+      return { visible: true, outcome: 'clarification' };
     }
 
     const rendered = renderWhatsAppQueryAnswer({
@@ -114,13 +132,16 @@ export async function runWhatsAppPipeline(input: RunWhatsAppPipelineInput): Prom
     } catch (err) {
       logger.error({ err }, 'whatsapp.response_context_save_failed');
     }
+    return { visible: true, outcome: 'answer' };
   } catch (err) {
     logger.error({ err }, 'whatsapp.pipeline_failed');
     try {
       await sendVisibleText(renderWhatsAppSafeError(traceId));
+      return { visible: true, outcome: 'safe_error' };
     } catch (sendErr) {
       logger.error({ err: sendErr }, 'whatsapp.safe_error_send_failed');
       if (!messageWasVisible) throw sendErr;
+      return { visible: true, outcome: 'safe_error' };
     }
   }
 }

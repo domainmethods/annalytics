@@ -163,19 +163,27 @@ describe('runWhatsAppPipeline', () => {
       responseContext: responseContext(),
     });
     const saveResponseContext = vi.fn().mockResolvedValue(undefined);
+    const markVisible = vi.fn().mockResolvedValue(undefined);
 
-    await runWhatsAppPipeline({
+    const result = await runWhatsAppPipeline({
       message,
       client,
       answerQuestion,
       saveResponseContext,
+      markVisible,
     });
 
+    expect(result).toEqual({ visible: true, outcome: 'answer' });
     expect(client.sendText).toHaveBeenNthCalledWith(
       1,
       conversation,
       'Got it. I am checking that now.',
     );
+    expect(markVisible).toHaveBeenCalledOnce();
+    expect(vi.mocked(client.sendText).mock.invocationCallOrder[0])
+      .toBeLessThan(markVisible.mock.invocationCallOrder[0]);
+    expect(markVisible.mock.invocationCallOrder[0])
+      .toBeLessThan(answerQuestion.mock.invocationCallOrder[0]);
     expect(answerQuestion).toHaveBeenCalledWith({
       question: 'What was revenue yesterday?',
       conversationId: 'whatsapp:15551234567',
@@ -210,13 +218,14 @@ describe('runWhatsAppPipeline', () => {
     });
     const saveResponseContext = vi.fn().mockResolvedValue(undefined);
 
-    await runWhatsAppPipeline({
+    const result = await runWhatsAppPipeline({
       message: messageWithDistinctUserId,
       client,
       answerQuestion,
       saveResponseContext,
     });
 
+    expect(result).toEqual({ visible: true, outcome: 'clarification' });
     expect(client.sendText).toHaveBeenNthCalledWith(
       2,
       messageWithDistinctUserId.conversation,
@@ -243,7 +252,7 @@ describe('runWhatsAppPipeline', () => {
       client,
       answerQuestion,
       saveResponseContext,
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({ visible: true, outcome: 'safe_error' });
 
     expect(client.sendText).toHaveBeenNthCalledWith(
       2,
@@ -288,7 +297,7 @@ describe('runWhatsAppPipeline', () => {
       client,
       answerQuestion,
       saveResponseContext,
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({ visible: true, outcome: 'safe_error' });
 
     expect(saveResponseContext).not.toHaveBeenCalled();
     expect(client.sendText).toHaveBeenCalledTimes(2);
@@ -313,7 +322,7 @@ describe('runWhatsAppPipeline', () => {
       client,
       answerQuestion,
       saveResponseContext,
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({ visible: true, outcome: 'answer' });
 
     expect(saveResponseContext).toHaveBeenCalled();
     expect(client.sendText).toHaveBeenCalledTimes(2);

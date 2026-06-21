@@ -3,7 +3,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const mockCreate = vi.fn();
 const mockGet = vi.fn();
 const mockDelete = vi.fn();
-const mockDoc = vi.fn(() => ({ create: mockCreate, get: mockGet, delete: mockDelete }));
+const mockSet = vi.fn();
+const mockDoc = vi.fn(() => ({
+  create: mockCreate,
+  get: mockGet,
+  delete: mockDelete,
+  set: mockSet,
+}));
 const mockCollection = vi.fn(() => ({ doc: mockDoc }));
 
 vi.mock('../../src/state/firestore.js', () => ({
@@ -11,7 +17,11 @@ vi.mock('../../src/state/firestore.js', () => ({
   getDb: () => ({ collection: mockCollection }),
 }));
 
-import { claimWhatsAppEvent, releaseWhatsAppEventClaim } from '../../src/state/whatsappEventDedupe.js';
+import {
+  claimWhatsAppEvent,
+  markWhatsAppEventVisible,
+  releaseWhatsAppEventClaim,
+} from '../../src/state/whatsappEventDedupe.js';
 
 describe('whatsappEventDedupe', () => {
   beforeEach(() => {
@@ -62,5 +72,22 @@ describe('whatsappEventDedupe', () => {
     mockDelete.mockResolvedValue(undefined);
     await releaseWhatsAppEventClaim('wamid.1');
     expect(mockDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks a WhatsApp message id visible with a durable surface-qualified doc id', async () => {
+    mockSet.mockResolvedValue(undefined);
+
+    await markWhatsAppEventVisible('wamid.A/B+C=');
+
+    expect(mockCollection).toHaveBeenCalledWith('whatsapp_event_dedupe');
+    expect(mockDoc).toHaveBeenCalledWith('whatsapp:wamid.A%2FB%2BC%3D');
+    expect(mockSet).toHaveBeenCalledWith(
+      {
+        state: 'visible',
+        visibleAt: 'server-ts',
+        expiresAt: expect.any(Date),
+      },
+      { merge: true },
+    );
   });
 });

@@ -1,6 +1,7 @@
 import { getDb, FieldValue } from './firestore.js';
 
 const PENDING_WHATSAPP_EVENT_TTL_MS = 30_000;
+const VISIBLE_WHATSAPP_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
 const ALREADY_EXISTS = 6;
 
 function eventDocId(eventId: string): string {
@@ -49,4 +50,12 @@ export async function claimWhatsAppEvent(eventId: string): Promise<boolean> {
 
 export async function releaseWhatsAppEventClaim(eventId: string): Promise<void> {
   await eventRef(eventId).delete();
+}
+
+export async function markWhatsAppEventVisible(eventId: string): Promise<void> {
+  await eventRef(eventId).set({
+    state: 'visible',
+    visibleAt: FieldValue.serverTimestamp(),
+    expiresAt: new Date(Date.now() + VISIBLE_WHATSAPP_EVENT_TTL_MS),
+  }, { merge: true });
 }
