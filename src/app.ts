@@ -90,8 +90,12 @@ receiver.router.get('/health', (_req, res) => {
 });
 
 receiver.router.post('/refresh-metadata', async (_req, res) => {
-  res.status(200).send('OK');
-  rootLogger.info('Metadata refresh triggered');
+  rootLogger.info('refresh-metadata called (no-op placeholder)');
+  res.status(501).json({
+    status: 'not_implemented',
+    message:
+      'Live metadata reload is not implemented; dbt metadata is loaded once at startup. Redeploy to pick up new artifacts.',
+  });
 });
 
 if (config.dbt.webhookSecret) {
