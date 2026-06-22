@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { BigQueryDate } from '@google-cloud/bigquery';
 import {
   saveSampleRows,
   getSampleRows,
@@ -37,6 +38,21 @@ describe('saveSampleRows', () => {
       expect.objectContaining({
         rows: [{ id: 1, amount: 100 }],
         fetchedAt: expect.any(Date),
+      }),
+    );
+  });
+
+  it('serializes BigQuery SDK date wrappers before writing rows to Firestore', async () => {
+    const result: SampleRowResult = {
+      tableName: 'analytics.sessions',
+      rows: [{ session_partition_date: new BigQueryDate('2026-06-21') }],
+    };
+
+    await saveSampleRows(result);
+
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: [{ session_partition_date: '2026-06-21' }],
       }),
     );
   });

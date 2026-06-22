@@ -11,11 +11,18 @@ const RETENTION_DAYS = (() => {
   return Number.isFinite(v) && v > 0 ? v : 90;
 })();
 
+function responseContextDocId(ctx: ResponseContext): string {
+  if (ctx.surface === 'whatsapp') {
+    return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
+  }
+  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
+}
+
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   const now = new Date();
   await getDb()
     .collection('response_context')
-    .doc(`${ctx.threadTs}_${ctx.statusMsgTs}`)
+    .doc(responseContextDocId(ctx))
     .set({
       ...ctx,
       createdAt: now,

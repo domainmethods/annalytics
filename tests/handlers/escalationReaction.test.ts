@@ -38,6 +38,11 @@ const baseConfig: AppConfig = {
     onNegativeFeedback: true,
   },
   fastPath: { enabled: false, maxBytesProcessed: 1e9, requireSupervisor: true },
+  whatsapp: {
+    enabled: false,
+    graphApiVersion: 'v23.0',
+    allowedWaIds: [],
+  },
   port: 3000,
 };
 

@@ -23,6 +23,11 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       timeoutHours: 4,
       onNegativeFeedback: true,
     },
+    whatsapp: {
+      enabled: false,
+      graphApiVersion: 'v23.0',
+      allowedWaIds: [],
+    },
     port: 3000,
     ...overrides,
   };
@@ -152,6 +157,13 @@ describe('runDiagnostics', () => {
     expect(report.features.escalation.mode).toBe('dm');
     expect(report.features.escalation.targetConfigured).toBe(false);
     expect(report.features.escalation.onNegativeFeedback).toBe(false);
+    expect(report.features).toEqual(expect.objectContaining({
+      whatsapp: expect.objectContaining({
+        enabled: false,
+        configured: false,
+        allowlistSize: 0,
+      }),
+    }));
   });
 
   it('marks escalation target configured when the active mode has its target set', async () => {

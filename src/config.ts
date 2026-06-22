@@ -1,5 +1,21 @@
 import { getProModel } from './agents/modelConfig.js';
 
+export type WhatsAppConfig =
+  | {
+      enabled: false;
+      graphApiVersion: string;
+      allowedWaIds: string[];
+    }
+  | {
+      enabled: true;
+      verifyToken: string;
+      appSecret: string;
+      accessToken: string;
+      phoneNumberId: string;
+      graphApiVersion: string;
+      allowedWaIds: string[];
+    };
+
 export interface AppConfig {
   slack: {
     botToken: string;
@@ -37,6 +53,7 @@ export interface AppConfig {
     maxBytesProcessed: number;
     requireSupervisor: boolean;
   };
+  whatsapp: WhatsAppConfig;
   port: number;
   lifecycleSweepSecret?: string;
 }
@@ -66,10 +83,40 @@ function parseEnvBool(name: string, defaultVal: boolean): boolean {
   throw new Error(`Invalid config: ${name} must be "true" or "false", got "${val}"`);
 }
 
+function parseEnvList(name: string): string[] {
+  const value = process.env[name];
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 function parseEscalationMode(val: string | undefined): 'channel' | 'dm' {
   if (!val || val === 'channel') return 'channel';
   if (val === 'dm') return 'dm';
   throw new Error(`Invalid config: ESCALATION_MODE must be "channel" or "dm", got "${val}"`);
+}
+
+function loadWhatsAppConfig(): AppConfig['whatsapp'] {
+  const enabled = parseEnvBool('WHATSAPP_ENABLED', false);
+  if (!enabled) {
+    return {
+      enabled: false,
+      graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v23.0',
+      allowedWaIds: parseEnvList('WHATSAPP_ALLOWED_WA_IDS'),
+    };
+  }
+
+  return {
+    enabled: true,
+    verifyToken: requireEnv('WHATSAPP_VERIFY_TOKEN'),
+    appSecret: requireEnv('WHATSAPP_APP_SECRET'),
+    accessToken: requireEnv('WHATSAPP_ACCESS_TOKEN'),
+    phoneNumberId: requireEnv('WHATSAPP_PHONE_NUMBER_ID'),
+    graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v23.0',
+    allowedWaIds: parseEnvList('WHATSAPP_ALLOWED_WA_IDS'),
+  };
 }
 
 export function loadConfig(): AppConfig {
@@ -110,6 +157,7 @@ export function loadConfig(): AppConfig {
       maxBytesProcessed: parseEnvInt('FAST_PATH_MAX_BYTES', 1_073_741_824),
       requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
     },
+    whatsapp: loadWhatsAppConfig(),
     port: parseEnvInt('PORT', 3000),
     lifecycleSweepSecret: process.env.LIFECYCLE_SWEEP_SECRET || undefined,
   };

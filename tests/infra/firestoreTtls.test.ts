@@ -28,6 +28,7 @@ describe('infra/firestore.ttls.json', () => {
 
     const expected = [
       { collectionGroup: 'slack_event_dedupe', field: 'expiresAt' },
+      { collectionGroup: 'whatsapp_event_dedupe', field: 'expiresAt' },
       { collectionGroup: 'processing_threads', field: 'expiresAt' },
       { collectionGroup: 'clarification_state', field: 'expiresAt' },
       { collectionGroup: 'information_schema_cache', field: 'expiresAt' },

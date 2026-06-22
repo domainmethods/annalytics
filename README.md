@@ -192,6 +192,32 @@ After deployment and app reinstall:
    nothing happens, recheck the `reactions:read` scope and the `reaction_added`
    event subscription, then reinstall the app.
 
+## WhatsApp Prototype Configuration
+
+WhatsApp support is a gated prototype and is disabled by default.
+
+Set these variables only in an implementation environment:
+
+```text
+WHATSAPP_ENABLED=true
+WHATSAPP_VERIFY_TOKEN=<meta-webhook-verify-token>
+WHATSAPP_APP_SECRET=<meta-app-secret>
+WHATSAPP_ACCESS_TOKEN=<system-user-access-token>
+WHATSAPP_PHONE_NUMBER_ID=<business-phone-number-id>
+WHATSAPP_GRAPH_API_VERSION=v23.0
+WHATSAPP_ALLOWED_WA_IDS=<comma-separated-test-wa-ids>
+```
+
+The webhook URL is:
+
+```text
+https://<your-cloud-run-url>/whatsapp/webhook
+```
+
+Keep `WHATSAPP_ALLOWED_WA_IDS` set during the prototype so only explicit test
+numbers can invoke the analytics pipeline. Do not commit WABA IDs, phone number
+IDs, tokens, phone numbers, or pilot transcripts to the template repo.
+
 ## Local Development
 
 Install dependencies and create a local env file:
