@@ -1,6 +1,6 @@
 import { getDb, FieldValue } from './firestore.js';
 
-const PENDING_WHATSAPP_EVENT_TTL_MS = 30_000;
+const PENDING_WHATSAPP_EVENT_TTL_MS = 5 * 60 * 1000;
 const VISIBLE_WHATSAPP_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
 const ALREADY_EXISTS = 6;
 

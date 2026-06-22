@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockCreate = vi.fn();
 const mockGet = vi.fn();
@@ -28,6 +28,10 @@ describe('whatsappEventDedupe', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('claims a new WhatsApp message id with a surface-qualified doc id', async () => {
     mockCreate.mockResolvedValue(undefined);
 
@@ -41,6 +45,18 @@ describe('whatsappEventDedupe', () => {
       seenAt: 'server-ts',
       expiresAt: expect.any(Date),
     }));
+  });
+
+  it('keeps pending claims long enough to suppress long-running webhook retries', async () => {
+    vi.useFakeTimers();
+    const now = new Date('2026-06-21T12:00:00.000Z');
+    vi.setSystemTime(now);
+    mockCreate.mockResolvedValue(undefined);
+
+    await expect(claimWhatsAppEvent('wamid.long-running')).resolves.toBe(true);
+
+    const payload = mockCreate.mock.calls[0][0] as { expiresAt: Date };
+    expect(payload.expiresAt.getTime() - now.getTime()).toBeGreaterThanOrEqual(5 * 60 * 1000);
   });
 
   it('returns false for an existing non-expired claim', async () => {

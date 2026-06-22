@@ -26,7 +26,7 @@
   - Plain-text renderer for Annalytics query results and control messages.
 - Create `src/whatsapp/pipeline.ts`
   - Narrow WhatsApp runner that produces outbound WhatsApp text.
-- Create `src/handlers/whatsappMessages.ts`
+- Create `src/whatsapp/messages.ts`
   - Inbound orchestration: allowlist, dedupe, rate limit, clarification resume, pending escalation guard, pipeline call.
 - Create `src/whatsapp/webhook.ts`
   - Express route registration for Meta GET verification and POST webhook events.
@@ -51,7 +51,7 @@
   - `tests/whatsapp/client.test.ts`
   - `tests/whatsapp/renderer.test.ts`
   - `tests/whatsapp/webhook.test.ts`
-  - `tests/handlers/whatsappMessages.test.ts`
+  - `tests/whatsapp/messages.test.ts`
   - `tests/config.test.ts`
   - `tests/whatsapp/pipeline.test.ts`
   - `tests/infra/firestoreTtls.test.ts`
@@ -1227,7 +1227,7 @@ Create `src/state/whatsappEventDedupe.ts`:
 ```typescript
 import { getDb, FieldValue } from './firestore.js';
 
-const PENDING_WHATSAPP_EVENT_TTL_MS = 30_000;
+const PENDING_WHATSAPP_EVENT_TTL_MS = 5 * 60 * 1000;
 const ALREADY_EXISTS = 6;
 
 function eventDocId(eventId: string): string {
@@ -2092,12 +2092,12 @@ git commit -m "feat: add WhatsApp pipeline runner"
 ### Task 6: Inbound WhatsApp Message Handler
 
 **Files:**
-- Create: `src/handlers/whatsappMessages.ts`
-- Create: `tests/handlers/whatsappMessages.test.ts`
+- Create: `src/whatsapp/messages.ts`
+- Create: `tests/whatsapp/messages.test.ts`
 
 - [ ] **Step 1: Write failing handler tests**
 
-Create `tests/handlers/whatsappMessages.test.ts`:
+Create `tests/whatsapp/messages.test.ts`:
 
 ```typescript
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -2123,7 +2123,7 @@ import { checkRateLimit } from '../../src/state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { runWhatsAppPipeline } from '../../src/whatsapp/pipeline.js';
-import { handleWhatsAppMessages } from '../../src/handlers/whatsappMessages.js';
+import { handleWhatsAppMessages } from '../../src/whatsapp/messages.js';
 
 const message = {
   surface: 'whatsapp' as const,
@@ -2252,14 +2252,14 @@ describe('handleWhatsAppMessages', () => {
 Run:
 
 ```bash
-npx vitest run tests/handlers/whatsappMessages.test.ts
+npx vitest run tests/whatsapp/messages.test.ts
 ```
 
-Expected: FAIL with an import error for `src/handlers/whatsappMessages.js`.
+Expected: FAIL with an import error for `src/whatsapp/messages.js`.
 
 - [ ] **Step 3: Implement inbound handler**
 
-Create `src/handlers/whatsappMessages.ts`:
+Create `src/whatsapp/messages.ts`:
 
 ```typescript
 import type { ChannelClient, ChannelMessage } from '../channels/types.js';
@@ -2351,7 +2351,7 @@ export async function handleWhatsAppMessages(
 Run:
 
 ```bash
-npx vitest run tests/handlers/whatsappMessages.test.ts
+npx vitest run tests/whatsapp/messages.test.ts
 npm run typecheck
 ```
 
@@ -2360,7 +2360,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit Task 6**
 
 ```bash
-git add src/handlers/whatsappMessages.ts tests/handlers/whatsappMessages.test.ts
+git add src/whatsapp/messages.ts tests/whatsapp/messages.test.ts
 git commit -m "feat: handle inbound WhatsApp messages"
 ```
 
@@ -2386,7 +2386,7 @@ import type { Request, Response, Router } from 'express';
 import { registerWhatsAppWebhook } from '../../src/whatsapp/webhook.js';
 
 const handleWhatsAppMessages = vi.fn();
-vi.mock('../../src/handlers/whatsappMessages.js', () => ({
+vi.mock('../../src/whatsapp/messages.js', () => ({
   handleWhatsAppMessages: (...args: unknown[]) => handleWhatsAppMessages(...args),
 }));
 
@@ -2589,7 +2589,7 @@ import type { PipelineConfig } from '../pipeline.js';
 import {
   handleUnsupportedWhatsAppMessages,
   handleWhatsAppMessages,
-} from '../handlers/whatsappMessages.js';
+} from './messages.js';
 import { rootLogger } from '../logging.js';
 import { verifyWhatsAppSignature } from './signature.js';
 import { parseWhatsAppWebhookPayload } from './payload.js';
@@ -2897,7 +2897,7 @@ git commit -m "docs: document WhatsApp prototype gate"
 Run:
 
 ```bash
-npx vitest run tests/whatsapp/keys.test.ts tests/whatsapp/signature.test.ts tests/whatsapp/payload.test.ts tests/whatsapp/client.test.ts tests/whatsapp/renderer.test.ts tests/whatsapp/pipeline.test.ts tests/whatsapp/webhook.test.ts tests/handlers/whatsappMessages.test.ts tests/state/whatsappEventDedupe.test.ts tests/infra/firestoreTtls.test.ts
+npx vitest run tests/whatsapp/keys.test.ts tests/whatsapp/signature.test.ts tests/whatsapp/payload.test.ts tests/whatsapp/client.test.ts tests/whatsapp/renderer.test.ts tests/whatsapp/pipeline.test.ts tests/whatsapp/webhook.test.ts tests/whatsapp/messages.test.ts tests/state/whatsappEventDedupe.test.ts tests/infra/firestoreTtls.test.ts
 ```
 
 Expected: PASS.

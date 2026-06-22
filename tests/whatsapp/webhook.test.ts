@@ -12,7 +12,7 @@ const mockValues = vi.hoisted(() => ({
   rawMiddleware: Symbol('express.raw.middleware'),
 }));
 
-vi.mock('../../src/handlers/whatsappMessages.js', () => ({
+vi.mock('../../src/whatsapp/messages.js', () => ({
   handleWhatsAppMessages: mockValues.handleWhatsAppMessages,
   handleUnsupportedWhatsAppMessages: mockValues.handleUnsupportedWhatsAppMessages,
 }));

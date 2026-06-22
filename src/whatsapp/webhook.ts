@@ -4,7 +4,7 @@ import type { TableContext } from '../dbt/types.js';
 import {
   handleUnsupportedWhatsAppMessages,
   handleWhatsAppMessages,
-} from '../handlers/whatsappMessages.js';
+} from './messages.js';
 import { rootLogger } from '../logging.js';
 import type { PipelineConfig } from '../pipeline.js';
 import { parseWhatsAppWebhookPayload } from './payload.js';

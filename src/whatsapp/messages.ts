@@ -10,9 +10,9 @@ import {
   markWhatsAppEventVisible,
   releaseWhatsAppEventClaim,
 } from '../state/whatsappEventDedupe.js';
-import type { UnsupportedWhatsAppMessage } from '../whatsapp/payload.js';
-import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../whatsapp/pipeline.js';
-import { renderWhatsAppUnsupported } from '../whatsapp/renderer.js';
+import type { UnsupportedWhatsAppMessage } from './payload.js';
+import { answerWhatsAppQuestion, runWhatsAppPipeline } from './pipeline.js';
+import { renderWhatsAppUnsupported } from './renderer.js';
 
 export interface HandleWhatsAppMessagesDeps {
   client: ChannelClient;

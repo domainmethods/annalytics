@@ -192,7 +192,7 @@ provider messages, and does not own SQL generation or validation.
   Converts Annalytics answer data into WhatsApp-safe plain text. The renderer
   caps rows and characters aggressively.
 
-- `src/handlers/whatsappMessages.ts`
+- `src/whatsapp/messages.ts`
   Orchestrates dedupe, allowlist checks, rate limiting, pending clarification
   and escalation guards, pipeline invocation, and safe failure behavior for
   WhatsApp inbound messages.

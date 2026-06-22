@@ -36,7 +36,7 @@ import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../../src/whatsapp/
 import {
   handleUnsupportedWhatsAppMessages,
   handleWhatsAppMessages,
-} from '../../src/handlers/whatsappMessages.js';
+} from '../../src/whatsapp/messages.js';
 
 const mockClaimWhatsAppEvent = vi.mocked(claimWhatsAppEvent);
 const mockMarkWhatsAppEventVisible = vi.mocked(markWhatsAppEventVisible);
