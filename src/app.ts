@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { App, ExpressReceiver } from '@slack/bolt';
 import { loadConfig } from './config.js';
 import type { TableContext } from './dbt/types.js';
-import { parseDbtArtifacts } from './dbt/parser.js';
+import { loadDbtArtifactsForStartup } from './dbt/startupArtifacts.js';
 import { initFirestore, getDb } from './state/firestore.js';
 import { initBigQuery } from './validation/dryRun.js';
 import { initBigQueryClient, getBigQueryClient } from './execution/runner.js';
@@ -55,11 +54,17 @@ let tables: TableContext[] = [];
 const getTables = () => tables;
 const getConfig = () => config;
 
-// Load dbt artifacts at startup — fail fast if missing
-const manifest = JSON.parse(readFileSync(config.dbt.manifestPath, 'utf-8'));
-const catalog = JSON.parse(readFileSync(config.dbt.catalogPath, 'utf-8'));
-tables = parseDbtArtifacts(manifest, catalog);
-rootLogger.info({ tableCount: tables.length }, 'Loaded dbt metadata');
+// Load dbt artifacts at startup. The helper logs a single fatal diagnostic
+// before this entry point exits on malformed or missing artifacts.
+try {
+  tables = loadDbtArtifactsForStartup({
+    manifestPath: config.dbt.manifestPath,
+    catalogPath: config.dbt.catalogPath,
+    logger: rootLogger,
+  });
+} catch {
+  process.exit(1);
+}
 
 // Start teaching summary refresh
 startSummaryRefresh();
