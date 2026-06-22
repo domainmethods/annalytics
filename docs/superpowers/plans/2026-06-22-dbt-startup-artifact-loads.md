@@ -110,7 +110,7 @@ describe('loadDbtArtifactsForStartup', () => {
   it('logs one fatal message and throws a startup error when artifact JSON is malformed', () => {
     const logger = makeLogger();
     const readFile = vi.fn((path: string) => (
-      path === manifestPath ? '{ not valid json' : '{"nodes":{}}'
+      path === manifestPath ? 'not json' : '{"nodes":{}}'
     ));
 
     expect(() => loadDbtArtifactsForStartup({
@@ -125,10 +125,12 @@ describe('loadDbtArtifactsForStartup', () => {
       expect.objectContaining({
         manifestPath,
         catalogPath,
-        error: expect.any(String),
+        error: 'Invalid JSON in manifest artifact',
       }),
       fatalMessage,
     );
+    const [[fatalMeta]] = vi.mocked(logger.fatal).mock.calls;
+    expect(String(fatalMeta.error)).not.toContain('not json');
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
   });
@@ -225,6 +227,7 @@ export interface StartupArtifactLogger {
 
 type ReadArtifactFile = (path: string) => string;
 type ParseArtifacts = typeof parseDbtArtifacts;
+type ArtifactKind = 'manifest' | 'catalog';
 
 export interface LoadDbtArtifactsInput {
   manifestPath: string;
@@ -241,8 +244,23 @@ export class DbtStartupArtifactLoadError extends Error {
   }
 }
 
+class DbtArtifactJsonParseError extends Error {
+  constructor(artifact: ArtifactKind, cause: unknown) {
+    super(`Invalid JSON in ${artifact} artifact`, { cause });
+    this.name = 'DbtArtifactJsonParseError';
+  }
+}
+
 function defaultReadFile(path: string): string {
   return readFileSync(path, 'utf-8');
+}
+
+function parseArtifactJson(contents: string, artifact: ArtifactKind): unknown {
+  try {
+    return JSON.parse(contents);
+  } catch (error) {
+    throw new DbtArtifactJsonParseError(artifact, error);
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -259,8 +277,8 @@ export function loadDbtArtifactsForStartup(input: LoadDbtArtifactsInput): TableC
   } = input;
 
   try {
-    const manifest = JSON.parse(readFile(manifestPath)) as Parameters<ParseArtifacts>[0];
-    const catalog = JSON.parse(readFile(catalogPath)) as Parameters<ParseArtifacts>[1];
+    const manifest = parseArtifactJson(readFile(manifestPath), 'manifest') as Parameters<ParseArtifacts>[0];
+    const catalog = parseArtifactJson(readFile(catalogPath), 'catalog') as Parameters<ParseArtifacts>[1];
     const tables = parseArtifacts(manifest, catalog);
 
     if (tables.length === 0) {

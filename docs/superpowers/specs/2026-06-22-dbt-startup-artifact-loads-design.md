@@ -146,7 +146,7 @@ Cover:
 - happy path with the existing fixtures: returns the same `TableContext[]` as
   `parseDbtArtifacts` and logs one info message;
 - malformed JSON or missing file: logs one fatal message, throws, and does not
-  log ordinary success;
+  log ordinary success; malformed JSON logs must not include artifact contents;
 - parser failure: logs one fatal message and throws the startup wrapper;
 - zero-model parse result: logs one warn message, returns `[]`, and does not
   log info as success.

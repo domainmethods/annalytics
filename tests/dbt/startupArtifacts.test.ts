@@ -74,7 +74,7 @@ describe('loadDbtArtifactsForStartup', () => {
   it('logs one fatal message and throws a startup error when artifact JSON is malformed', () => {
     const logger = makeLogger();
     const readFile = vi.fn((path: string) => (
-      path === manifestPath ? '{ not valid json' : '{"nodes":{}}'
+      path === manifestPath ? 'not json' : '{"nodes":{}}'
     ));
 
     expect(() => loadDbtArtifactsForStartup({
@@ -89,10 +89,12 @@ describe('loadDbtArtifactsForStartup', () => {
       expect.objectContaining({
         manifestPath,
         catalogPath,
-        error: expect.any(String),
+        error: 'Invalid JSON in manifest artifact',
       }),
       fatalMessage,
     );
+    const [[fatalMeta]] = vi.mocked(logger.fatal).mock.calls;
+    expect(String(fatalMeta.error)).not.toContain('not json');
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
   });
