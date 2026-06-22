@@ -241,6 +241,11 @@ const makeInput = () => ({
   config,
 });
 
+const makeInputForQuestion = (question: string) => ({
+  ...makeInput(),
+  question,
+});
+
 // ─── Fallback table fixture ──────────────────────────────────────
 const fallbackTable: TableContext = {
   name: 'raw_dataset.raw_events',
@@ -343,6 +348,136 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
     expect(qualityLoop).toHaveBeenCalled();
   });
 
+  it('right-aligns three-part BigQuery refs for fallback lookup', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse({
+        resolved_question: 'How many events are in other_project.raw_dataset.raw_events?',
+      }))
+      .mockResolvedValueOnce(sqlGenResponse())
+      .mockResolvedValueOnce(supervisorResponse());
+
+    mockGetSchemaFallback.mockResolvedValue(fallbackTable);
+
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ event_count: 100 }]));
+
+    vi.mocked(qualityLoop).mockImplementation(async () => ({
+      sqlResult: {
+        sql: VALID_SQL,
+        explanation: 'Counts events',
+        tablesUsed: ['raw_dataset.raw_events'],
+        confidence: 'high' as const,
+        assumptions: [],
+        reasoningChain: 'count query',
+        groundingCitations: [],
+      },
+      verdict: 'pass' as const,
+      supervisorNotes: '',
+      finalConfidence: 'high' as const,
+      retryCount: 0,
+      failureHistory: [],
+      bytesProcessed: 5000,
+    }));
+
+    await runPipeline(makeInputForQuestion('How many events are in other_project.raw_dataset.raw_events?'));
+
+    expect(mockGetSchemaFallback).toHaveBeenCalledTimes(1);
+    expect(mockGetSchemaFallback).toHaveBeenCalledWith(
+      'other_project',
+      'raw_dataset',
+      'raw_events',
+    );
+  });
+
+  it('does not treat explicit non-default project refs as covered by dbt metadata', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse({
+        resolved_question: 'How many rows are in other_project.analytics.fct_orders?',
+      }))
+      .mockResolvedValueOnce(sqlGenResponse())
+      .mockResolvedValueOnce(supervisorResponse());
+
+    mockGetSchemaFallback.mockResolvedValue({
+      ...fallbackTable,
+      name: 'analytics.fct_orders',
+      schema: 'analytics',
+    });
+
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ row_count: 100 }]));
+
+    vi.mocked(qualityLoop).mockImplementation(async () => ({
+      sqlResult: {
+        sql: VALID_SQL,
+        explanation: 'Counts rows',
+        tablesUsed: ['analytics.fct_orders'],
+        confidence: 'high' as const,
+        assumptions: [],
+        reasoningChain: 'count query',
+        groundingCitations: [],
+      },
+      verdict: 'pass' as const,
+      supervisorNotes: '',
+      finalConfidence: 'high' as const,
+      retryCount: 0,
+      failureHistory: [],
+      bytesProcessed: 5000,
+    }));
+
+    await runPipeline(makeInputForQuestion('How many rows are in other_project.analytics.fct_orders?'));
+
+    expect(mockGetSchemaFallback).toHaveBeenCalledTimes(1);
+    expect(mockGetSchemaFallback).toHaveBeenCalledWith(
+      'other_project',
+      'analytics',
+      'fct_orders',
+    );
+  });
+
+  it('supports hyphenated project IDs in three-part refs', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse({
+        resolved_question: 'How many events are in gcp-project-123.raw_dataset.raw_events?',
+      }))
+      .mockResolvedValueOnce(sqlGenResponse())
+      .mockResolvedValueOnce(supervisorResponse());
+
+    mockGetSchemaFallback.mockResolvedValue(fallbackTable);
+
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ event_count: 100 }]));
+
+    vi.mocked(qualityLoop).mockImplementation(async () => ({
+      sqlResult: {
+        sql: VALID_SQL,
+        explanation: 'Counts events',
+        tablesUsed: ['raw_dataset.raw_events'],
+        confidence: 'high' as const,
+        assumptions: [],
+        reasoningChain: 'count query',
+        groundingCitations: [],
+      },
+      verdict: 'pass' as const,
+      supervisorNotes: '',
+      finalConfidence: 'high' as const,
+      retryCount: 0,
+      failureHistory: [],
+      bytesProcessed: 5000,
+    }));
+
+    await runPipeline(makeInputForQuestion('How many events are in gcp-project-123.raw_dataset.raw_events?'));
+
+    expect(mockGetSchemaFallback).toHaveBeenCalledTimes(1);
+    expect(mockGetSchemaFallback).toHaveBeenCalledWith(
+      'gcp-project-123',
+      'raw_dataset',
+      'raw_events',
+    );
+  });
+
   it('ignores numeric-segment refs like v1.0 in question text', async () => {
     // Question contains "v1.0" which matches \w+\.\w+ but has a numeric segment
     mockGenerateContent
@@ -385,6 +520,49 @@ describe('Pipeline — INFORMATION_SCHEMA Fallback', () => {
     const datasets = calls.map((c: unknown[]) => `${c[1]}.${c[2]}`);
     expect(datasets).toContain('raw_dataset.raw_events');
     expect(datasets).not.toContain('v1.0');
+  });
+
+  it('does not fallback on prose false positives or partial four-part refs', async () => {
+    mockGenerateContent
+      .mockResolvedValueOnce(clarificationResponse({
+        resolved_question:
+          'Compare e.g and node.js notes with us.region.raw_dataset.raw_events, but use raw_dataset.raw_events for the count.',
+      }))
+      .mockResolvedValueOnce(sqlGenResponse())
+      .mockResolvedValueOnce(supervisorResponse());
+
+    mockGetSchemaFallback.mockResolvedValue(fallbackTable);
+
+    mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(executionResult([{ event_count: 50 }]));
+
+    vi.mocked(qualityLoop).mockImplementation(async () => ({
+      sqlResult: {
+        sql: VALID_SQL,
+        explanation: 'Counts events',
+        tablesUsed: ['raw_dataset.raw_events'],
+        confidence: 'high' as const,
+        assumptions: [],
+        reasoningChain: 'count query',
+        groundingCitations: [],
+      },
+      verdict: 'pass' as const,
+      supervisorNotes: '',
+      finalConfidence: 'high' as const,
+      retryCount: 0,
+      failureHistory: [],
+      bytesProcessed: 5000,
+    }));
+
+    await runPipeline(makeInputForQuestion('How many events are in raw_dataset.raw_events?'));
+
+    expect(mockGetSchemaFallback).toHaveBeenCalledTimes(1);
+    expect(mockGetSchemaFallback).toHaveBeenCalledWith(
+      'test-project',
+      'raw_dataset',
+      'raw_events',
+    );
   });
 
   it('continues without fallback when getSchemaFallback fails', async () => {

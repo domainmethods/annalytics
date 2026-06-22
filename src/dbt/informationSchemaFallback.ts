@@ -15,7 +15,8 @@ export async function getSchemaFallback(
     return null;
   }
 
-  const cacheKey = `${datasetId}.${tableId}`;
+  const displayName = `${datasetId}.${tableId}`;
+  const cacheKey = `${projectId}.${displayName}`;
 
   // Check cache first
   const cached = await getCachedSchema(cacheKey);
@@ -42,7 +43,7 @@ export async function getSchemaFallback(
     }));
 
     const tableContext: TableContext = {
-      name: cacheKey,
+      name: displayName,
       schema: datasetId,
       description: '',
       materialization: 'unknown',
