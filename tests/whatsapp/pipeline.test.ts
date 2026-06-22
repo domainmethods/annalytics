@@ -181,9 +181,11 @@ describe('runWhatsAppPipeline', () => {
     );
     expect(markVisible).toHaveBeenCalledOnce();
     expect(vi.mocked(client.sendText).mock.invocationCallOrder[0])
-      .toBeLessThan(markVisible.mock.invocationCallOrder[0]);
-    expect(markVisible.mock.invocationCallOrder[0])
       .toBeLessThan(answerQuestion.mock.invocationCallOrder[0]);
+    expect(answerQuestion.mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(client.sendText).mock.invocationCallOrder[1]);
+    expect(vi.mocked(client.sendText).mock.invocationCallOrder[1])
+      .toBeLessThan(markVisible.mock.invocationCallOrder[0]);
     expect(answerQuestion).toHaveBeenCalledWith({
       question: 'What was revenue yesterday?',
       conversationId: 'whatsapp:15551234567',
@@ -283,7 +285,7 @@ describe('runWhatsAppPipeline', () => {
     expect(client.sendText).toHaveBeenCalledTimes(2);
   });
 
-  it('resolves when ack was sent even if later safe error delivery fails', async () => {
+  it('rethrows when only the ack was sent and safe error delivery also fails', async () => {
     const client: ChannelClient = {
       sendText: vi.fn()
         .mockResolvedValueOnce({ messageId: 'wamid.ack' })
@@ -291,15 +293,18 @@ describe('runWhatsAppPipeline', () => {
     };
     const answerQuestion = vi.fn().mockRejectedValue(new Error('raw model failure'));
     const saveResponseContext = vi.fn().mockResolvedValue(undefined);
+    const markVisible = vi.fn().mockResolvedValue(undefined);
 
     await expect(runWhatsAppPipeline({
       message,
       client,
       answerQuestion,
       saveResponseContext,
-    })).resolves.toEqual({ visible: true, outcome: 'safe_error' });
+      markVisible,
+    })).rejects.toThrow('safe error send failed');
 
     expect(saveResponseContext).not.toHaveBeenCalled();
+    expect(markVisible).not.toHaveBeenCalled();
     expect(client.sendText).toHaveBeenCalledTimes(2);
   });
 

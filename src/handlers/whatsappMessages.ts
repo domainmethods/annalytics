@@ -10,7 +10,9 @@ import {
   markWhatsAppEventVisible,
   releaseWhatsAppEventClaim,
 } from '../state/whatsappEventDedupe.js';
+import type { UnsupportedWhatsAppMessage } from '../whatsapp/payload.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../whatsapp/pipeline.js';
+import { renderWhatsAppUnsupported } from '../whatsapp/renderer.js';
 
 export interface HandleWhatsAppMessagesDeps {
   client: ChannelClient;
@@ -91,6 +93,30 @@ export async function handleWhatsAppMessages(
       if (clarification && result.outcome !== 'clarification') {
         await deleteClarificationState(clarification.clarificationId);
       }
+    } catch (err) {
+      if (!visibleResponse) {
+        await releaseWhatsAppEventClaim(inbound.providerMessageId).catch(() => {});
+      }
+      throw err;
+    }
+  }
+}
+
+export async function handleUnsupportedWhatsAppMessages(
+  messages: UnsupportedWhatsAppMessage[],
+  deps: HandleWhatsAppMessagesDeps,
+): Promise<void> {
+  for (const inbound of messages) {
+    if (!isAllowed(inbound.conversation.userId, deps.allowedWaIds)) continue;
+
+    const claimed = await claimWhatsAppEvent(inbound.providerMessageId);
+    if (!claimed) continue;
+
+    let visibleResponse = false;
+    try {
+      await deps.client.sendText(inbound.conversation, renderWhatsAppUnsupported());
+      visibleResponse = true;
+      await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
     } catch (err) {
       if (!visibleResponse) {
         await releaseWhatsAppEventClaim(inbound.providerMessageId).catch(() => {});

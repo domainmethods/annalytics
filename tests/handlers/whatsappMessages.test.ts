@@ -4,6 +4,7 @@ import type { TableContext } from '../../src/dbt/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ClarificationState } from '../../src/state/clarificationState.js';
 import type { EscalationState } from '../../src/types.js';
+import type { UnsupportedWhatsAppMessage } from '../../src/whatsapp/payload.js';
 
 vi.mock('../../src/state/whatsappEventDedupe.js', () => ({
   claimWhatsAppEvent: vi.fn(),
@@ -32,7 +33,10 @@ import {
   releaseWhatsAppEventClaim,
 } from '../../src/state/whatsappEventDedupe.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from '../../src/whatsapp/pipeline.js';
-import { handleWhatsAppMessages } from '../../src/handlers/whatsappMessages.js';
+import {
+  handleUnsupportedWhatsAppMessages,
+  handleWhatsAppMessages,
+} from '../../src/handlers/whatsappMessages.js';
 
 const mockClaimWhatsAppEvent = vi.mocked(claimWhatsAppEvent);
 const mockMarkWhatsAppEventVisible = vi.mocked(markWhatsAppEventVisible);
@@ -81,6 +85,18 @@ function message(overrides: Partial<ChannelMessage> = {}): ChannelMessage {
     conversation,
     text: 'What was revenue yesterday?',
     receivedAt: new Date('2026-06-21T12:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function unsupportedMessage(
+  overrides: Partial<UnsupportedWhatsAppMessage> = {},
+): UnsupportedWhatsAppMessage {
+  return {
+    providerMessageId: 'wamid.image',
+    conversation,
+    receivedAt: new Date('2026-06-21T12:00:00.000Z'),
+    type: 'image',
     ...overrides,
   };
 }
@@ -317,6 +333,58 @@ describe('handleWhatsAppMessages', () => {
       "I'm still waiting for the data team on your previous question.",
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    expect(vi.mocked(dependencies.client.sendText).mock.invocationCallOrder[0])
+      .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleUnsupportedWhatsAppMessages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockClaimWhatsAppEvent.mockResolvedValue(true);
+    mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
+    mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
+  });
+
+  it('skips unsupported messages from unknown users when allowlist configured', async () => {
+    await handleUnsupportedWhatsAppMessages([
+      unsupportedMessage({
+        conversation: {
+          ...conversation,
+          conversationId: 'whatsapp:15557654321',
+          userId: '15557654321',
+        },
+      }),
+    ], deps());
+
+    expect(mockClaimWhatsAppEvent).not.toHaveBeenCalled();
+    expect(mockMarkWhatsAppEventVisible).not.toHaveBeenCalled();
+  });
+
+  it('does not send duplicate unsupported messages when claim returns false', async () => {
+    mockClaimWhatsAppEvent.mockResolvedValue(false);
+    const dependencies = deps();
+
+    await handleUnsupportedWhatsAppMessages([unsupportedMessage()], dependencies);
+
+    expect(mockClaimWhatsAppEvent).toHaveBeenCalledWith('wamid.image');
+    expect(dependencies.client.sendText).not.toHaveBeenCalled();
+    expect(mockMarkWhatsAppEventVisible).not.toHaveBeenCalled();
+  });
+
+  it('sends unsupported text, marks the event visible, and keeps dedupe claim', async () => {
+    const dependencies = deps();
+
+    await handleUnsupportedWhatsAppMessages([unsupportedMessage()], dependencies);
+
+    expect(mockClaimWhatsAppEvent).toHaveBeenCalledWith('wamid.image');
+    expect(dependencies.client.sendText).toHaveBeenCalledWith(
+      conversation,
+      'I can only answer text questions in this WhatsApp prototype.',
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.image');
     expect(vi.mocked(dependencies.client.sendText).mock.invocationCallOrder[0])
       .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();

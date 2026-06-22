@@ -68,14 +68,11 @@ export async function runWhatsAppPipeline(
   const logger = createLogger(traceId);
   const { message, client } = input;
   const conversationId = message.conversation.conversationId;
-  let messageWasVisible = false;
+  let terminalMessageWasVisible = false;
   let visibleMarked = false;
 
-  const sendVisibleText = async (text: string) => {
-    const sent = await client.sendText(message.conversation, text);
-    const isFirstVisibleMessage = !messageWasVisible;
-    messageWasVisible = true;
-    if (isFirstVisibleMessage && input.markVisible && !visibleMarked) {
+  const markTerminalVisible = async () => {
+    if (input.markVisible && !visibleMarked) {
       visibleMarked = true;
       try {
         await input.markVisible();
@@ -83,11 +80,17 @@ export async function runWhatsAppPipeline(
         logger.error({ err }, 'whatsapp.event_mark_visible_failed');
       }
     }
+  };
+
+  const sendTerminalText = async (text: string) => {
+    const sent = await client.sendText(message.conversation, text);
+    terminalMessageWasVisible = true;
+    await markTerminalVisible();
     return sent;
   };
 
   try {
-    await sendVisibleText(ACK_TEXT);
+    await client.sendText(message.conversation, ACK_TEXT);
 
     const outcome = await input.answerQuestion({
       question: message.text,
@@ -99,7 +102,7 @@ export async function runWhatsAppPipeline(
 
     if (outcome.kind === 'clarification') {
       const rendered = renderWhatsAppClarification(outcome.questions, outcome.traceId);
-      const sent = await sendVisibleText(rendered);
+      const sent = await sendTerminalText(rendered);
 
       await saveClarificationState({
         clarificationId: whatsappClarificationId(message.conversation.userId),
@@ -120,7 +123,7 @@ export async function runWhatsAppPipeline(
       assumptions: outcome.assumptions,
       traceId: outcome.traceId,
     });
-    const sent = await sendVisibleText(rendered);
+    const sent = await sendTerminalText(rendered);
 
     try {
       await input.saveResponseContext({
@@ -136,11 +139,11 @@ export async function runWhatsAppPipeline(
   } catch (err) {
     logger.error({ err }, 'whatsapp.pipeline_failed');
     try {
-      await sendVisibleText(renderWhatsAppSafeError(traceId));
+      await sendTerminalText(renderWhatsAppSafeError(traceId));
       return { visible: true, outcome: 'safe_error' };
     } catch (sendErr) {
       logger.error({ err: sendErr }, 'whatsapp.safe_error_send_failed');
-      if (!messageWasVisible) throw sendErr;
+      if (!terminalMessageWasVisible) throw sendErr;
       return { visible: true, outcome: 'safe_error' };
     }
   }

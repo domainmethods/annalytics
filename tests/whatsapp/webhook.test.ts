@@ -7,12 +7,14 @@ import type { PipelineConfig } from '../../src/pipeline.js';
 
 const mockValues = vi.hoisted(() => ({
   handleWhatsAppMessages: vi.fn(),
+  handleUnsupportedWhatsAppMessages: vi.fn(),
   loggerError: vi.fn(),
   rawMiddleware: Symbol('express.raw.middleware'),
 }));
 
 vi.mock('../../src/handlers/whatsappMessages.js', () => ({
   handleWhatsAppMessages: mockValues.handleWhatsAppMessages,
+  handleUnsupportedWhatsAppMessages: mockValues.handleUnsupportedWhatsAppMessages,
 }));
 
 vi.mock('../../src/logging.js', () => ({
@@ -130,6 +132,7 @@ describe('registerWhatsAppWebhook', () => {
       }),
     } as unknown as Router;
     mockValues.handleWhatsAppMessages.mockResolvedValue(undefined);
+    mockValues.handleUnsupportedWhatsAppMessages.mockResolvedValue(undefined);
     (client.sendText as ReturnType<typeof vi.fn>).mockResolvedValue({ messageId: 'outbound-1' });
 
     registerWhatsAppWebhook(router, deps);
@@ -234,6 +237,60 @@ describe('registerWhatsAppWebhook', () => {
       rateLimitPerHour: 30,
       allowedWaIds: ['15551234567'],
     });
+    expect(status).toHaveBeenCalledWith(200);
+    expect(send).toHaveBeenCalledWith('OK');
+  });
+
+  it('routes unsupported messages through the guarded handler', async () => {
+    const payload = whatsappPayload({
+      entry: [{
+        changes: [{
+          value: {
+            metadata: { phone_number_id: PHONE_NUMBER_ID },
+            messages: [{
+              from: '15551234567',
+              id: 'wamid.image',
+              timestamp: '1780000000',
+              type: 'image',
+              image: { id: 'media-1' },
+            }],
+          },
+        }],
+      }],
+    });
+    const rawBody = Buffer.from(JSON.stringify(payload));
+    const { response, status, send } = res();
+
+    await postHandler(req({
+      body: rawBody,
+      headers: { 'x-hub-signature-256': sign(rawBody) },
+    }), response);
+
+    expect(mockValues.handleUnsupportedWhatsAppMessages).toHaveBeenCalledWith([
+      expect.objectContaining({
+        providerMessageId: 'wamid.image',
+        conversation: {
+          surface: 'whatsapp',
+          conversationId: 'whatsapp:15551234567',
+          userId: '15551234567',
+        },
+        type: 'image',
+      }),
+    ], {
+      client,
+      tables: deps.tables,
+      config: deps.config,
+      rateLimitPerHour: 30,
+      allowedWaIds: ['15551234567'],
+    });
+    expect(mockValues.handleWhatsAppMessages).toHaveBeenCalledWith([], {
+      client,
+      tables: deps.tables,
+      config: deps.config,
+      rateLimitPerHour: 30,
+      allowedWaIds: ['15551234567'],
+    });
+    expect(client.sendText).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledWith(200);
     expect(send).toHaveBeenCalledWith('OK');
   });

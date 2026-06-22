@@ -67,6 +67,8 @@
 - Preserve the repo dependency boundary: `state/` remains a leaf dependency and must not import from `src/whatsapp/*`.
 - Use the repo's existing ESM import pattern: source imports end in `.js`.
 - Use TDD for each task: write failing tests first, run the target test, implement, rerun.
+- Treat the WhatsApp ACK as non-terminal for dedupe: mark an inbound event visible only after a terminal answer, clarification, safe error, rate-limit, pending-escalation, or unsupported-message reply is delivered.
+- Route unsupported-message replies through the handler allowlist and event-dedupe gate; the webhook must not send unsupported replies directly.
 
 ---
 
@@ -2584,7 +2586,10 @@ import type { Request, Response, Router } from 'express';
 import type { ChannelClient } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
-import { handleWhatsAppMessages } from '../handlers/whatsappMessages.js';
+import {
+  handleUnsupportedWhatsAppMessages,
+  handleWhatsAppMessages,
+} from '../handlers/whatsappMessages.js';
 import { rootLogger } from '../logging.js';
 import { verifyWhatsAppSignature } from './signature.js';
 import { parseWhatsAppWebhookPayload } from './payload.js';
@@ -2657,14 +2662,13 @@ export function registerWhatsAppWebhook(router: Router, deps: RegisterWhatsAppWe
       }
 
       const parsed = parseWhatsAppWebhookPayload(payload, deps.phoneNumberId);
-
-      for (const unsupported of parsed.unsupported) {
-        await deps.client.sendText(
-          unsupported.conversation,
-          'I can only answer text questions in this WhatsApp prototype.',
-        );
-      }
-
+      await handleUnsupportedWhatsAppMessages(parsed.unsupported, {
+        client: deps.client,
+        tables: deps.tables,
+        config: deps.config,
+        rateLimitPerHour: deps.rateLimitPerHour,
+        allowedWaIds: deps.allowedWaIds,
+      });
       await handleWhatsAppMessages(parsed.messages, {
         client: deps.client,
         tables: deps.tables,
