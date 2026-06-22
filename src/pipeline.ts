@@ -60,6 +60,20 @@ export interface PipelineConfig {
   };
 }
 
+interface FallbackTableRef {
+  projectId: string;
+  datasetId: string;
+  tableId: string;
+  displayName: string;
+}
+
+const BIGQUERY_IDENTIFIER_SEGMENT = '[A-Za-z_][A-Za-z0-9_-]*';
+const TABLE_REF_PATTERN = `${BIGQUERY_IDENTIFIER_SEGMENT}\\.${BIGQUERY_IDENTIFIER_SEGMENT}(?:\\.${BIGQUERY_IDENTIFIER_SEGMENT})?`;
+const TABLE_REF_RE = new RegExp(TABLE_REF_PATTERN, 'g');
+const IDENTIFIER_EDGE_RE = /[A-Za-z0-9_-]/;
+const IDENTIFIER_START_RE = /[A-Za-z_]/;
+const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
+
 export interface PipelineInput {
   question: string;
   channel: string;
@@ -89,6 +103,71 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
       onNegativeFeedback: config.escalation.onNegativeFeedback,
     },
   };
+}
+
+function isEmbeddedTableRef(source: string, start: number, end: number): boolean {
+  const before = source[start - 1];
+  const beforeBefore = source[start - 2];
+  if (before && IDENTIFIER_EDGE_RE.test(before)) return true;
+  if (before === '.' && beforeBefore && IDENTIFIER_EDGE_RE.test(beforeBefore)) {
+    return true;
+  }
+
+  const after = source[end];
+  const afterAfter = source[end + 1];
+  if (after && IDENTIFIER_EDGE_RE.test(after)) return true;
+  if (after === '.' && afterAfter && IDENTIFIER_START_RE.test(afterAfter)) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractFallbackTableRefs(
+  question: string,
+  defaultProjectId: string,
+  knownTables: TableContext[],
+): FallbackTableRef[] {
+  const refs: string[] = [];
+  for (const match of question.matchAll(TABLE_REF_RE)) {
+    const start = match.index;
+    if (start === undefined) continue;
+    const end = start + match[0].length;
+    if (!isEmbeddedTableRef(question, start, end)) {
+      refs.push(match[0]);
+    }
+  }
+
+  const seen = new Set<string>();
+  const parsed: FallbackTableRef[] = [];
+
+  for (const ref of refs) {
+    const normalized = ref.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    if (FALSE_POSITIVE_TABLE_REFS.has(normalized)) continue;
+
+    const parts = ref.split('.');
+    if (parts.length < 2 || parts.length > 3) continue;
+    if (parts.some((seg) => /^\d+$/.test(seg))) continue;
+
+    const tableId = parts[parts.length - 1];
+    const datasetId = parts[parts.length - 2];
+    const projectId = parts.length === 3 ? parts[0] : defaultProjectId;
+    const displayName = `${datasetId}.${tableId}`;
+    const canBeCoveredByKnownTables = parts.length === 2 || projectId.toLowerCase() === defaultProjectId.toLowerCase();
+
+    if (
+      canBeCoveredByKnownTables
+      && knownTables.some((t) => t.name === ref || t.name === displayName || t.name.endsWith(`.${displayName}`))
+    ) {
+      continue;
+    }
+
+    parsed.push({ projectId, datasetId, tableId, displayName });
+  }
+
+  return parsed;
 }
 
 export async function runPipeline(input: PipelineInput): Promise<void> {
@@ -235,18 +314,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     let pipelineTables: TableContext[] = [...tables];
     if (config.gcpProjectId) {
       try {
-        const sqlRefs = [...resolvedQuestion.matchAll(/(?:from|join|table)\s+`?(\w+\.\w+)`?/gi)].map(m => m[1]);
-        const bareRefs = [...resolvedQuestion.matchAll(/\b([a-zA-Z]\w*\.[a-zA-Z]\w*)\b/g)].map(m => m[1]);
-        const FALSE_POSITIVES = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
-        const refs = [...new Set([...sqlRefs, ...bareRefs])]
-          .filter((ref) => !FALSE_POSITIVES.has(ref.toLowerCase()));
-        const unknown = refs
-          .filter((ref) => !tables.some((t) => t.name === ref || t.name.endsWith(`.${ref}`)))
-          .filter((ref) => ref.includes('.'))
-          .filter((ref) => ref.split('.').every((seg) => !/^\d+$/.test(seg)));
+        const unknown = extractFallbackTableRefs(resolvedQuestion, config.gcpProjectId!, tables);
         const fallbacks = await Promise.all(unknown.map(async (ref) => {
-          const [dataset, table] = ref.split('.');
-          const result = await getSchemaFallback(config.gcpProjectId!, dataset, table);
+          const result = await getSchemaFallback(ref.projectId, ref.datasetId, ref.tableId);
           if (!result) return null;
           return { ...result, description: `${result.description} \u26a0\ufe0f minimal documentation \u2014 no dbt metadata`.trim() };
         }));

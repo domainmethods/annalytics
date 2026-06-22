@@ -51,7 +51,7 @@ describe('getSchemaFallback', () => {
     const result = await getSchemaFallback('my-project', 'raw_dataset', 'raw_events');
 
     expect(result).toEqual(cached);
-    expect(mockGetCachedSchema).toHaveBeenCalledWith('raw_dataset.raw_events');
+    expect(mockGetCachedSchema).toHaveBeenCalledWith('my-project.raw_dataset.raw_events');
     // BigQuery should not be queried on cache hit
     expect(mockQuery).not.toHaveBeenCalled();
     expect(mockCacheSchema).not.toHaveBeenCalled();
@@ -93,7 +93,7 @@ describe('getSchemaFallback', () => {
     });
 
     // Verify caching
-    expect(mockCacheSchema).toHaveBeenCalledWith('raw_dataset.raw_events', result);
+    expect(mockCacheSchema).toHaveBeenCalledWith('my-project.raw_dataset.raw_events', result);
   });
 
   it('returns null on BigQuery error', async () => {
