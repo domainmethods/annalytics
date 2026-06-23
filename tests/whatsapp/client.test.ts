@@ -390,6 +390,54 @@ describe('createWhatsAppClient', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('accepts interactive list messages with duplicate row titles as long as row ids differ', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: [{ id: 'wamid.list' }] }),
+    });
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    const result = await client.sendInteractive({
+      surface: 'whatsapp',
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+    }, {
+      kind: 'list',
+      body: 'What would you like to see?',
+      buttonText: 'Open actions',
+      sections: [{
+        title: 'Answer actions',
+        rows: [
+          { id: 'wa:v1:show_sql:ctx_1', title: 'Show SQL' },
+          { id: 'wa:v1:show_summary:ctx_2', title: 'Show SQL' },
+        ],
+      }],
+    });
+
+    expect(result).toEqual({ messageId: 'wamid.list' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        action: {
+          button: 'Open actions',
+          sections: [{
+            rows: [
+              { id: 'wa:v1:show_sql:ctx_1', title: 'Show SQL' },
+              { id: 'wa:v1:show_summary:ctx_2', title: 'Show SQL' },
+            ],
+          }],
+        },
+      },
+    });
+  });
+
   it('rejects interactive list messages with overlong row description', async () => {
     const fetchImpl = vi.fn();
     const client = createWhatsAppClient({

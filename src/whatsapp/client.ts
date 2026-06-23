@@ -112,10 +112,6 @@ function isInteractiveMessageInvalid(message: WhatsAppInteractiveMessage): strin
   if (hasAnyDuplicate(rowIds)) {
     return 'Invalid WhatsApp interactive message';
   }
-  const rowTitles = message.sections.flatMap((section) => section.rows.map((row) => row.title));
-  if (hasAnyDuplicate(rowTitles)) {
-    return 'Invalid WhatsApp interactive message';
-  }
   if (
     message.sections.some((section) =>
       section.rows.some((row) => row.description !== undefined && row.description.length > 72))
