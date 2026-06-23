@@ -85,7 +85,7 @@ export function parseWhatsAppWebhookPayload(
             const payload = asRecord(interactive?.[interactiveType]);
             const actionId = typeof payload?.id === 'string' ? payload.id : '';
             const actionTitle = typeof payload?.title === 'string' ? payload.title : '';
-            if (actionId && actionTitle) {
+            if (actionId) {
               parsed.actions.push({
                 providerMessageId: id,
                 conversation,

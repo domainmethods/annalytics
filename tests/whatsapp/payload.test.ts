@@ -137,6 +137,37 @@ describe('parseWhatsAppWebhookPayload', () => {
     }]);
   });
 
+  it('parses interactive button replies as actions when title is missing', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.button.no_title',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'button_reply',
+        button_reply: { id: 'wa:v1:ok:ctx_ok' },
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.unsupported).toEqual([]);
+    expect(result.actions).toEqual([{
+      providerMessageId: 'wamid.button.no_title',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      actionId: 'wa:v1:ok:ctx_ok',
+      actionTitle: '',
+      kind: 'button_reply',
+    }]);
+  });
+
   it('parses interactive list replies as actions', () => {
     const payload = structuredClone(textPayload);
     payload.entry[0].changes[0].value.messages[0] = {
