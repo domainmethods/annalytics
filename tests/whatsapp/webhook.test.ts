@@ -360,6 +360,12 @@ describe('registerWhatsAppWebhook', () => {
       allowedWaIds: ['15551234567'],
     });
     expect(mockValues.handleWhatsAppMessages).toHaveBeenCalledWith([], expect.any(Object));
+    const actionOrder = mockValues.handleWhatsAppActions.mock.invocationCallOrder[0];
+    const unsupportedOrder = mockValues.handleUnsupportedWhatsAppMessages.mock.invocationCallOrder[0];
+    const messageOrder = mockValues.handleWhatsAppMessages.mock.invocationCallOrder[0];
+    expect(actionOrder).toBeLessThan(unsupportedOrder);
+    expect(actionOrder).toBeLessThan(messageOrder);
+    expect(unsupportedOrder).toBeLessThan(messageOrder);
     expect(status).toHaveBeenCalledWith(200);
     expect(send).toHaveBeenCalledWith('OK');
   });

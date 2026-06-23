@@ -168,6 +168,118 @@ describe('parseWhatsAppWebhookPayload', () => {
     }]);
   });
 
+  it('parses unsupported interactive subtypes as interactive:<type>', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.interactive',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'unsupported_reply',
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(result.unsupported).toEqual([{
+      providerMessageId: 'wamid.interactive',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      type: 'interactive:unsupported_reply',
+    }]);
+  });
+
+  it('parses interactive replies without subtype as unsupported interactive', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.interactive',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {},
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(result.unsupported).toEqual([{
+      providerMessageId: 'wamid.interactive',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      type: 'interactive',
+    }]);
+  });
+
+  it('parses known interactive replies missing id as unsupported', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.interactive.missing_id',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'button_reply',
+        button_reply: { title: 'Looks right' },
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(result.unsupported).toEqual([{
+      providerMessageId: 'wamid.interactive.missing_id',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      type: 'interactive:button_reply',
+    }]);
+  });
+
+  it('parses known list replies missing id as unsupported', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.interactive.missing_id',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'list_reply',
+        list_reply: { title: 'Show SQL' },
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.actions).toEqual([]);
+    expect(result.unsupported).toEqual([{
+      providerMessageId: 'wamid.interactive.missing_id',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      type: 'interactive:list_reply',
+    }]);
+  });
+
   it('parses interactive list replies as actions', () => {
     const payload = structuredClone(textPayload);
     payload.entry[0].changes[0].value.messages[0] = {
