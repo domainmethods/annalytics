@@ -33,7 +33,10 @@ import {
   recordFeedbackByResponseContextKey,
 } from '../../src/state/responseContext.js';
 import { handleWhatsAppActions } from '../../src/whatsapp/actions.js';
-import { renderWhatsAppFeedbackAck } from '../../src/whatsapp/renderer.js';
+import {
+  renderWhatsAppExpiredAction,
+  renderWhatsAppFeedbackAck,
+} from '../../src/whatsapp/renderer.js';
 import type { WhatsAppActionKind } from '../../src/whatsapp/actionIds.js';
 
 const mockClaimWhatsAppEvent = vi.mocked(claimWhatsAppEvent);
@@ -166,6 +169,38 @@ describe('handleWhatsAppActions', () => {
       expect.stringContaining('cannot find that answer context'),
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it('sends expired-action copy when the action context is missing after claim', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:show_sql:ctx_missing')], deps(testClient));
+
+    expect(mockGetWhatsAppActionContext).toHaveBeenCalledWith('ctx_missing');
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
+  it('sends expired-action copy when the action context belongs to another user', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue({
+      ...storedAction('show_sql'),
+      userId: '15550000000',
+    });
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:show_sql:ctx_wrong_user')], deps(testClient));
+
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
 
   it('renders generated SQL from persisted response context without re-querying', async () => {
@@ -319,6 +354,23 @@ describe('handleWhatsAppActions', () => {
         })],
       }),
     );
+  });
+
+  it('sends expired-action copy and does not create child actions when actions context is missing', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('actions'));
+    mockGetResponseContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:actions:ctx_actions')], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockCreateWhatsAppActionContext).not.toHaveBeenCalled();
+    expect(testClient.sendInteractive).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
   });
 
   it('ignores disallowed users before claiming the action', async () => {

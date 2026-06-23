@@ -2,6 +2,7 @@ import type { WhatsAppClient } from './client.js';
 import type { WhatsAppInteractiveAction } from './payload.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
+import type { ResponseContext } from '../types.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
@@ -92,10 +93,10 @@ async function sendActionsList(
   action: WhatsAppInteractiveAction,
   deps: HandleWhatsAppActionsDeps,
   responseContextKey: string,
+  responseContext: ResponseContext,
 ): Promise<void> {
-  const responseContext = await getResponseContext(responseContextKey);
-  const rowCount = responseContext?.queryResults.rowCount ?? 0;
-  const columnCount = responseContext?.queryResults.columnNames.length ?? 0;
+  const rowCount = responseContext.queryResults.rowCount;
+  const columnCount = responseContext.queryResults.columnNames.length;
   const base = {
     responseContextKey,
     conversationId: action.conversation.conversationId,
@@ -137,7 +138,12 @@ export async function handleWhatsAppActions(
         action.conversation.conversationId,
         action.conversation.userId,
       );
-      if (!loaded) continue;
+      if (!loaded) {
+        await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+        visibleResponse = true;
+        await markWhatsAppEventVisible(action.providerMessageId).catch(() => {});
+        continue;
+      }
 
       const { responseContextKey } = loaded.context;
       switch (loaded.kind) {
@@ -152,10 +158,16 @@ export async function handleWhatsAppActions(
           visibleResponse = true;
           break;
 
-        case 'actions':
-          await sendActionsList(action, deps, responseContextKey);
+        case 'actions': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (responseContext) {
+            await sendActionsList(action, deps, responseContextKey, responseContext);
+          } else {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          }
           visibleResponse = true;
           break;
+        }
 
         case 'reason_wrong_number':
         case 'reason_wrong_data':
