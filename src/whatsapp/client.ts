@@ -38,8 +38,26 @@ function firstMessageId(payload: unknown): string | null {
   return typeof firstMessage?.id === 'string' ? firstMessage.id : null;
 }
 
+function isNonEmptyTruncated(value: string, maxLength: number): boolean {
+  return value.length > 0 && value.length <= maxLength;
+}
+
+function hasAnyDuplicate(values: string[]): boolean {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      return true;
+    }
+    seen.add(value);
+  }
+  return false;
+}
+
 function isInteractiveMessageInvalid(message: WhatsAppInteractiveMessage): string | null {
-  if (message.body.length === 0) {
+  if (!isNonEmptyTruncated(message.body, 1024)) {
+    return 'Invalid WhatsApp interactive message';
+  }
+  if (message.footer !== undefined && message.footer.length > 60) {
     return 'Invalid WhatsApp interactive message';
   }
 
@@ -48,17 +66,24 @@ function isInteractiveMessageInvalid(message: WhatsAppInteractiveMessage): strin
       return 'Invalid WhatsApp interactive message';
     }
     if (
-      message.buttons.some((button) => button.id.length === 0 || button.title.length === 0)
+      message.buttons.some((button) =>
+        !isNonEmptyTruncated(button.id, 256) || !isNonEmptyTruncated(button.title, 20))
     ) {
+      return 'Invalid WhatsApp interactive message';
+    }
+    if (hasAnyDuplicate(message.buttons.map((button) => button.id))) {
+      return 'Invalid WhatsApp interactive message';
+    }
+    if (hasAnyDuplicate(message.buttons.map((button) => button.title))) {
       return 'Invalid WhatsApp interactive message';
     }
     return null;
   }
 
-  if (message.sections.length < 1 || message.sections.length > 10) {
+  if (!isNonEmptyTruncated(message.buttonText, 20)) {
     return 'Invalid WhatsApp interactive message';
   }
-  if (message.buttonText.length === 0) {
+  if (message.sections.length < 1 || message.sections.length > 10) {
     return 'Invalid WhatsApp interactive message';
   }
 
@@ -67,12 +92,33 @@ function isInteractiveMessageInvalid(message: WhatsAppInteractiveMessage): strin
     return 'Invalid WhatsApp interactive message';
   }
 
-  if (message.sections.some((section) => section.title.length === 0)) {
+  if (
+    message.sections.some((section) =>
+      !isNonEmptyTruncated(section.title, 24) || section.rows.length < 1)
+  ) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  if (
+    message.sections.some((section) =>
+      section.rows.some((row) =>
+        !isNonEmptyTruncated(row.id, 200)
+        || !isNonEmptyTruncated(row.title, 24)))
+  ) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  const rowIds = message.sections.flatMap((section) => section.rows.map((row) => row.id));
+  if (hasAnyDuplicate(rowIds)) {
+    return 'Invalid WhatsApp interactive message';
+  }
+  const rowTitles = message.sections.flatMap((section) => section.rows.map((row) => row.title));
+  if (hasAnyDuplicate(rowTitles)) {
     return 'Invalid WhatsApp interactive message';
   }
   if (
     message.sections.some((section) =>
-      section.rows.some((row) => row.id.length === 0 || row.title.length === 0))
+      section.rows.some((row) => row.description !== undefined && row.description.length > 72))
   ) {
     return 'Invalid WhatsApp interactive message';
   }

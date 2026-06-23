@@ -310,4 +310,115 @@ describe('createWhatsAppClient', () => {
     ).rejects.toThrow('Invalid WhatsApp interactive message');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it('rejects interactive reply-button messages with overlong button titles', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [
+          { id: 'wa:v1:ok:ctx_ok', title: 'Looks right and extremely long' },
+          { id: 'wa:v1:problem:ctx_problem', title: 'Problem' },
+        ],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects interactive reply-button messages with duplicate titles', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [
+          { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+          { id: 'wa:v1:problem:ctx_problem', title: 'Looks right' },
+        ],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects interactive list messages with overlong row title', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'list',
+        body: 'What would you like to see?',
+        buttonText: 'Open actions',
+        sections: [{
+          title: 'Answer actions',
+          rows: [{ id: 'wa:v1:show_sql:ctx_1', title: 'A row title that is definitely too long' }],
+        }],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects interactive list messages with overlong row description', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'list',
+        body: 'What would you like to see?',
+        buttonText: 'Open actions',
+        sections: [{
+          title: 'Answer actions',
+          rows: [{
+            id: 'wa:v1:show_sql:ctx_1',
+            title: 'Show SQL',
+            description:
+              'This description is over the limit and should be considered invalid by the validator.',
+          }],
+        }],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });
