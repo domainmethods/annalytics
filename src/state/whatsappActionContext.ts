@@ -24,9 +24,24 @@ export interface StoredWhatsAppActionContext {
   expiresAt: Date;
 }
 
-function toDate(value: Date | FirestoreTimestamp | undefined): Date | undefined {
-  if (value === undefined) return undefined;
-  return value instanceof Date ? value : value.toDate();
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toDate' in value
+    && typeof (value as { toDate?: unknown }).toDate === 'function'
+  ) {
+    const candidate = (value as FirestoreTimestamp).toDate();
+    return candidate instanceof Date && Number.isFinite(candidate.getTime()) ? candidate : null;
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
 }
 
 export async function createWhatsAppActionContext(
@@ -55,15 +70,29 @@ export async function getWhatsAppActionContext(
   const doc = await getDb().collection(COLLECTION).doc(id).get();
   if (!doc.exists) return null;
 
-  const data = doc.data() as Record<string, unknown>;
+  const data = doc.data();
+  if (!isRecord(data)) return null;
+  if (
+    typeof data.kind !== 'string'
+    || typeof data.responseContextKey !== 'string'
+    || typeof data.conversationId !== 'string'
+    || typeof data.userId !== 'string'
+  ) {
+    return null;
+  }
+
+  const createdAt = toDate(data.createdAt);
+  const expiresAt = toDate(data.expiresAt);
+  if (createdAt === null || expiresAt === null) return null;
+  if (expiresAt.getTime() <= Date.now()) return null;
+
   return {
     id: doc.id,
-    kind: String(data.kind),
-    responseContextKey: String(data.responseContextKey),
-    conversationId: String(data.conversationId),
-    userId: String(data.userId),
-    createdAt: toDate(data.createdAt as Date | FirestoreTimestamp)!,
-    expiresAt: toDate(data.expiresAt as Date | FirestoreTimestamp)!,
+    kind: data.kind,
+    responseContextKey: data.responseContextKey,
+    conversationId: data.conversationId,
+    userId: data.userId,
+    createdAt,
+    expiresAt,
   };
 }
-

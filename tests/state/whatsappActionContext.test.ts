@@ -55,6 +55,40 @@ describe('whatsappActionContext', () => {
     await expect(getWhatsAppActionContext('ctx_missing')).resolves.toBeNull();
   });
 
+  it('returns null when action context is expired', async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      id: 'ctx_123',
+      data: () => ({
+        kind: 'show_sql',
+        responseContextKey: 'whatsapp:15551234567_wamid.1',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2026-01-02T00:00:00.000Z'),
+      }),
+    });
+
+    await expect(getWhatsAppActionContext('ctx_123')).resolves.toBeNull();
+  });
+
+  it('returns null for malformed action-context documents without throwing', async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      id: 'ctx_123',
+      data: () => ({
+        kind: 42,
+        responseContextKey: 'whatsapp:15551234567_wamid.1',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+        createdAt: { toDate: () => new Date('2026-01-01T00:00:00.000Z') },
+        expiresAt: { toDate: () => new Date('2026-01-02T00:00:00.000Z') },
+      }),
+    });
+
+    await expect(getWhatsAppActionContext('ctx_123')).resolves.toBeNull();
+  });
+
   it('loads stored action context and converts Firestore timestamps', async () => {
     const createdAt = new Date('2026-06-23T01:00:00.000Z');
     const expiresAt = new Date('2026-06-24T01:00:00.000Z');
