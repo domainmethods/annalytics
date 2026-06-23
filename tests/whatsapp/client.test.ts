@@ -114,4 +114,96 @@ describe('createWhatsAppClient', () => {
     expect((error as Error).message).toBe('WhatsApp send returned an unreadable response');
     expect((error as Error).message).not.toContain('Unexpected token');
   });
+
+  it('sends a Cloud API interactive reply-button message', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: [{ id: 'wamid.interactive' }] }),
+    });
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    const result = await client.sendInteractive({
+      surface: 'whatsapp',
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+    }, {
+      kind: 'reply_buttons',
+      body: 'Was this answer useful?',
+      buttons: [
+        { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+        { id: 'wa:v1:problem:ctx_problem', title: 'Problem' },
+      ],
+    });
+
+    expect(result).toEqual({ messageId: 'wamid.interactive' });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://graph.facebook.com/v23.0/phone-1/messages',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: '15551234567',
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            body: { text: 'Was this answer useful?' },
+            action: {
+              buttons: [
+                { type: 'reply', reply: { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' } },
+                { type: 'reply', reply: { id: 'wa:v1:problem:ctx_problem', title: 'Problem' } },
+              ],
+            },
+          },
+        }),
+      }),
+    );
+  });
+
+  it('sends a Cloud API interactive list message', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: [{ id: 'wamid.list' }] }),
+    });
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await client.sendInteractive({
+      surface: 'whatsapp',
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+    }, {
+      kind: 'list',
+      body: 'What would you like to see?',
+      buttonText: 'Open actions',
+      sections: [{
+        title: 'Answer actions',
+        rows: [{ id: 'wa:v1:show_sql:ctx_1', title: 'Show SQL' }],
+      }],
+    });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: 'What would you like to see?' },
+        action: {
+          button: 'Open actions',
+          sections: [{
+            title: 'Answer actions',
+            rows: [{ id: 'wa:v1:show_sql:ctx_1', title: 'Show SQL' }],
+          }],
+        },
+      },
+    });
+  });
 });

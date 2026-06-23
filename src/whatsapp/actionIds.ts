@@ -1,0 +1,33 @@
+export const WHATSAPP_ACTION_KINDS = [
+  'ok',
+  'problem',
+  'actions',
+  'reason_wrong_number',
+  'reason_wrong_data',
+  'reason_not_asked',
+  'reason_other',
+  'show_reasoning',
+  'show_sql',
+  'override_table',
+  'override_summary',
+] as const;
+
+export type WhatsAppActionKind = typeof WHATSAPP_ACTION_KINDS[number];
+
+const KIND_SET = new Set<string>(WHATSAPP_ACTION_KINDS);
+
+export function buildWhatsAppActionId(kind: WhatsAppActionKind, contextId: string): string {
+  return `wa:v1:${kind}:${contextId}`;
+}
+
+export function parseWhatsAppActionId(
+  value: string,
+): { kind: WhatsAppActionKind; contextId: string } | null {
+  const parts = value.split(':');
+  if (parts.length !== 4) return null;
+  const [prefix, version, rawKind, contextId] = parts;
+  if (prefix !== 'wa' || version !== 'v1' || !KIND_SET.has(rawKind) || !contextId) {
+    return null;
+  }
+  return { kind: rawKind as WhatsAppActionKind, contextId };
+}
