@@ -305,6 +305,83 @@ describe('handleWhatsAppMessages', () => {
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
   });
 
+  it('keeps the event claim when pending feedback ack fails after save and delete', async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.client.sendText).mockRejectedValue(new Error('ack failed'));
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await expect(handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies)).resolves.toBeUndefined();
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledOnce();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).toHaveBeenCalledWith(
+      conversation,
+      'Got it. I logged this feedback for review.',
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+  });
+
+  it('releases the event claim when pending feedback delete fails after save', async () => {
+    const dependencies = deps();
+    mockDeleteWhatsAppPendingFeedback.mockRejectedValue(new Error('delete failed'));
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await expect(handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies)).rejects.toThrow('delete failed');
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledOnce();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).not.toHaveBeenCalled();
+    expect(mockReleaseWhatsAppEventClaim).toHaveBeenCalledWith('wamid.1');
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+  });
+
+  it('ignores pending WhatsApp feedback for a different user and runs the pipeline', async () => {
+    const dependencies = deps();
+    const inbound = message();
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15557654321',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await handleWhatsAppMessages([inbound], dependencies);
+
+    expect(mockSaveFeedbackNote).not.toHaveBeenCalled();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(mockCheckRateLimit).toHaveBeenCalledWith('whatsapp:15551234567', 30);
+    expect(mockRunWhatsAppPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      message: inbound,
+      client: dependencies.client,
+    }));
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
   it('resumes pending clarification and deletes clarification state after pipeline resolves', async () => {
     const state = clarificationState({
       originalQuestion: 'What was revenue?',

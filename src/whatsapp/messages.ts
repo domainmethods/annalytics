@@ -53,21 +53,29 @@ export async function handleWhatsAppMessages(
     try {
       const pendingFeedback = await getWhatsAppPendingFeedback(inbound.conversation.conversationId);
       if (pendingFeedback) {
-        await saveFeedbackNote({
-          note: inbound.text,
-          userId: inbound.conversation.userId,
-          threadTs: inbound.conversation.conversationId,
-          channel: inbound.conversation.conversationId,
-          traceId: pendingFeedback.traceId,
-          ...(pendingFeedback.clarifiedQuestion
-            ? { clarifiedQuestion: pendingFeedback.clarifiedQuestion }
-            : {}),
-        });
-        await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId);
-        await deps.client.sendText(inbound.conversation, renderWhatsAppFeedbackAck('negative'));
-        visibleResponse = true;
-        await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
-        continue;
+        if (pendingFeedback.userId !== inbound.conversation.userId) {
+          if (pendingFeedback.conversationId === inbound.conversation.conversationId) {
+            await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId).catch(() => {});
+          }
+        } else {
+          await saveFeedbackNote({
+            note: inbound.text,
+            userId: inbound.conversation.userId,
+            threadTs: inbound.conversation.conversationId,
+            channel: inbound.conversation.conversationId,
+            traceId: pendingFeedback.traceId,
+            ...(pendingFeedback.clarifiedQuestion
+              ? { clarifiedQuestion: pendingFeedback.clarifiedQuestion }
+              : {}),
+          });
+          await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId);
+          visibleResponse = true;
+          await deps.client
+            .sendText(inbound.conversation, renderWhatsAppFeedbackAck('negative'))
+            .catch(() => {});
+          await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
+          continue;
+        }
       }
 
       const rateCheck = await checkRateLimit(
