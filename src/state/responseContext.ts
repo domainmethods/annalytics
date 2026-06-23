@@ -11,18 +11,11 @@ const RETENTION_DAYS = (() => {
   return Number.isFinite(v) && v > 0 ? v : 90;
 })();
 
-function responseContextDocId(ctx: ResponseContext): string {
-  if (ctx.surface === 'whatsapp') {
-    return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
-  }
-  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
-}
-
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   const now = new Date();
   await getDb()
     .collection('response_context')
-    .doc(responseContextDocId(ctx))
+    .doc(responseContextDocumentId(ctx))
     .set({
       ...ctx,
       createdAt: now,
@@ -56,6 +49,25 @@ export async function recordFeedback(
     // Doc may not exist if feedback is on an old/unknown message — log and skip
     console.warn(`Failed to record feedback for ${threadTs}_${messageTs}`);
   }
+}
+
+export async function recordFeedbackByResponseContextKey(
+  responseContextKey: string,
+  feedbackType: 'positive' | 'negative',
+): Promise<void> {
+  await getDb()
+    .collection('response_context')
+    .doc(responseContextKey)
+    .update({
+      negativeFeedback: feedbackType === 'negative',
+    });
+}
+
+export function responseContextDocumentId(ctx: ResponseContext): string {
+  if (ctx.surface === 'whatsapp') {
+    return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
+  }
+  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
 }
 
 export async function getResponseContext(

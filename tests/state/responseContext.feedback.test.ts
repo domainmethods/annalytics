@@ -24,7 +24,11 @@ function setupChain() {
   mockDoc.mockReturnValue({ update: mockUpdate });
 }
 
-import { recordFeedback, getLatestNegativeFeedback } from '../../src/state/responseContext.js';
+import { 
+  recordFeedback,
+  recordFeedbackByResponseContextKey,
+  getLatestNegativeFeedback,
+} from '../../src/state/responseContext.js';
 
 describe('recordFeedback', () => {
   beforeEach(() => {
@@ -38,6 +42,15 @@ describe('recordFeedback', () => {
     await recordFeedback('thread-1', 'msg-1', 'negative');
 
     expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+    expect(mockUpdate).toHaveBeenCalledWith({ negativeFeedback: true });
+  });
+
+  it('records feedback by persisted response context document key', async () => {
+    mockUpdate.mockResolvedValue(undefined);
+
+    await recordFeedbackByResponseContextKey('whatsapp:15551234567_wamid.outbound%2FA%2BB%3D', 'negative');
+
+    expect(mockDoc).toHaveBeenCalledWith('whatsapp:15551234567_wamid.outbound%2FA%2BB%3D');
     expect(mockUpdate).toHaveBeenCalledWith({ negativeFeedback: true });
   });
 });
