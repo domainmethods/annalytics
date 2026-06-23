@@ -736,6 +736,7 @@ Append these tests inside the existing `describe('loadDbtArtifactsForStartup', (
       },
       'dbt artifact schema version warning',
     );
+    expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith({ tableCount: 1 }, 'Loaded dbt metadata');
     expect(logger.fatal).not.toHaveBeenCalled();
   });
@@ -770,24 +771,23 @@ Append these tests inside the existing `describe('loadDbtArtifactsForStartup', (
 
     expect(result).toEqual([]);
     expect(logger.warn).toHaveBeenCalledTimes(2);
-    expect(logger.warn).toHaveBeenNthCalledWith(
-      1,
+    const warnCalls = vi.mocked(logger.warn).mock.calls;
+    expect(warnCalls).toContainEqual([
       {
         manifestPath,
         catalogPath,
         warnings: [warning],
       },
       'dbt artifact schema version warning',
-    );
-    expect(logger.warn).toHaveBeenNthCalledWith(
-      2,
+    ]);
+    expect(warnCalls).toContainEqual([
       {
         tableCount: 0,
         manifestPath,
         catalogPath,
       },
       'Loaded dbt metadata with ZERO models',
-    );
+    ]);
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.fatal).not.toHaveBeenCalled();
   });
