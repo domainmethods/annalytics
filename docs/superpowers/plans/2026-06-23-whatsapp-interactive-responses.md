@@ -2833,9 +2833,11 @@ After merge and deploy to the WhatsApp demo service:
 5. Tap `Actions`; verify a list with `Show reasoning`, `Show SQL`, `Table view`, and `Summary view`.
 6. Tap `Show SQL`; verify SQL is sent as a follow-up and no query re-executes.
 7. Tap `Show reasoning`; verify reasoning is sent as a follow-up and no Gemini call occurs.
-8. Tap `Problem`, then `Wrong number`; verify negative feedback is recorded and no Slack escalation is created.
-9. Tap `Problem`, then `Other`; send free text; verify a `feedback_notes` pending note is created.
-10. Replay one captured interactive webhook payload; verify dedupe prevents duplicate action effects.
+8. Tap `Table view`; verify a table-shaped WhatsApp follow-up is sent after validation and query re-execution.
+9. Tap `Summary view`; verify a summary WhatsApp follow-up is sent after validation, query re-execution, and summary generation.
+10. Tap `Problem`, then `Wrong number`; verify negative feedback is recorded and no Slack escalation is created.
+11. Tap `Problem`, then `Other`; send free text; verify a `feedback_notes` pending note is created.
+12. Replay one captured interactive webhook payload; verify dedupe prevents duplicate action effects.
 
 Record evidence outside the reusable template repo.
 

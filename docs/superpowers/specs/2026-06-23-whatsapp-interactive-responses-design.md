@@ -263,34 +263,37 @@ interactivity is provider-specific.
 Use compact, versioned action IDs. IDs should be stable backend contracts and
 must not rely on display text.
 
-Recommended shape:
+Recommended implementation shape:
 
 ```text
-wa:v1:<kind>:<responseContextKey>
+wa:v1:<kind>:<contextId>
 ```
 
 Examples:
 
 ```text
-wa:v1:ok:<key>
-wa:v1:problem:<key>
-wa:v1:actions:<key>
-wa:v1:reason_wrong_number:<key>
-wa:v1:show_reasoning:<key>
-wa:v1:show_sql:<key>
-wa:v1:override_table:<key>
-wa:v1:override_summary:<key>
+wa:v1:ok:<contextId>
+wa:v1:problem:<contextId>
+wa:v1:actions:<contextId>
+wa:v1:reason_wrong_number:<contextId>
+wa:v1:show_reasoning:<contextId>
+wa:v1:show_sql:<contextId>
+wa:v1:override_table:<contextId>
+wa:v1:override_summary:<contextId>
 ```
 
-The `<responseContextKey>` should be the Firestore document id format already
-used by `response_context`. Because WhatsApp outbound message IDs can contain
-characters that are unsafe in Firestore path segments, the existing
+The implementation plan resolves the Meta action-id length question by adding
+`whatsapp_action_context` from the start. The `<contextId>` is a short opaque
+document id. The context document stores the `responseContextKey`, action kind,
+conversation id, user id, and TTL. Do not embed full WhatsApp provider message
+ids in action IDs, and do not silently truncate IDs; truncation would make
+action routing unsafe.
+
+The stored `responseContextKey` should be the Firestore document id format
+already used by `response_context`. Because WhatsApp outbound message IDs can
+contain characters that are unsafe in Firestore path segments, the existing
 URL-encoding rule for WhatsApp `statusMsgTs` must remain the single source of
 truth for building the key.
-
-If Meta ID length limits make the full key too long, add a small
-`whatsapp_action_context` collection with short opaque IDs and a TTL. Do not
-silently truncate IDs; truncation would make action routing unsafe.
 
 ### Webhook Parsing
 
@@ -378,8 +381,8 @@ conversation model and avoids a brittle provider capability dependency.
 2. Existing WhatsApp message pipeline runs.
 3. Bot sends the compact text answer.
 4. Pipeline saves `response_context` using the outbound answer message id.
-5. Bot sends the interactive answer-control prompt with the response-context
-   key embedded in action IDs or referenced by a short action context.
+5. Bot creates short action-context records and sends the interactive
+   answer-control prompt with action IDs that reference those records.
 
 ### Interactive Action
 
@@ -408,12 +411,8 @@ Preferred first slice:
 
 - Reuse `response_context`.
 - Reuse WhatsApp event dedupe for interactive action message IDs.
-- Add `whatsapp_pending_feedback_notes` only if `Other` is included.
-
-Potential later slice:
-
-- Add `whatsapp_action_context` only if direct action IDs are too long for
-  Meta's documented ID constraints.
+- Add `whatsapp_action_context` for compact action IDs.
+- Add `whatsapp_pending_feedback_notes` because `Other` is included.
 
 TTL policy is required for any new collection with `expiresAt`. Add the
 collection to `infra/firestore.ttls.json` and parity tests in the same change.
@@ -496,6 +495,8 @@ The interactive WhatsApp slice is accepted when:
   - tap `Looks right` and receive an acknowledgement
   - tap `Actions` and then `Show SQL`
   - tap `Actions` and then `Show reasoning`
+  - tap `Actions` and then `Table view` on a table-shaped answer
+  - tap `Actions` and then `Summary view` on a table-shaped answer
   - tap `Problem` and record one negative-feedback reason
   - tap `Problem` -> `Other`, send free text, and see it captured
 - A replayed interactive webhook does not duplicate the action.
@@ -515,14 +516,13 @@ The interactive WhatsApp slice is accepted when:
    beyond gated demo behavior or if WhatsApp-origin escalation becomes active
    scope.
 
-## Open Questions For Implementation Planning
+## Implementation Planning Decisions
 
-- Are direct action IDs short enough in real Meta payloads when they include the
-  encoded response-context key, or do we need `whatsapp_action_context` from
-  the start?
-- Should `Table view` and `Summary view` re-execute the stored SQL immediately,
-  or should the first slice send only details/feedback and leave overrides for
-  a second implementation plan?
+- Use `whatsapp_action_context` from the start so Meta action IDs remain short
+  and never embed raw provider message IDs.
+- Include `Table view` and `Summary view` in the first implementation plan.
+  They re-execute the stored SQL through the existing validation/execution
+  contracts and send new WhatsApp text follow-ups.
 
 ## Design Decision
 
