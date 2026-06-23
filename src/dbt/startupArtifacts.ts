@@ -64,7 +64,14 @@ export function loadDbtArtifactsForStartup(input: LoadDbtArtifactsInput): TableC
   try {
     const manifest = parseArtifactJson(readFile(manifestPath), 'manifest') as Parameters<ParseArtifacts>[0];
     const catalog = parseArtifactJson(readFile(catalogPath), 'catalog') as Parameters<ParseArtifacts>[1];
-    const tables = parseArtifacts(manifest, catalog);
+    const tables = parseArtifacts(manifest, catalog, {
+      onWarnings: (warnings) => {
+        logger.warn(
+          { manifestPath, catalogPath, warnings },
+          'dbt artifact schema version warning',
+        );
+      },
+    });
 
     if (tables.length === 0) {
       logger.warn(

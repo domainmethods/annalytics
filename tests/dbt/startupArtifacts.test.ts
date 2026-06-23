@@ -22,6 +22,20 @@ function makeLogger(): StartupArtifactLogger {
   };
 }
 
+function makeTable(overrides: Partial<TableContext> = {}): TableContext {
+  return {
+    name: 'analytics.test_model',
+    schema: 'analytics',
+    description: '',
+    materialization: 'table',
+    columns: [],
+    sampleDDL: 'CREATE TABLE `analytics.test_model` (\n\n);',
+    dependsOn: [],
+    tags: [],
+    ...overrides,
+  };
+}
+
 describe('loadDbtArtifactsForStartup', () => {
   it('loads current fixtures and preserves the existing info log shape', () => {
     const logger = makeLogger();
@@ -150,6 +164,101 @@ describe('loadDbtArtifactsForStartup', () => {
       },
       'Loaded dbt metadata with ZERO models',
     );
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.fatal).not.toHaveBeenCalled();
+  });
+
+  it('logs parser schema-version warnings without suppressing successful info', () => {
+    const logger = makeLogger();
+    const warning = {
+      artifact: 'manifest',
+      schemaVersion: 'https://schemas.getdbt.com/dbt/manifest/v20.json',
+      reason: 'unsupported',
+      supportedRange: 'v10-v12',
+    } as const;
+    const table = makeTable();
+    const readFile = vi.fn(() => '{"nodes":{}}');
+    const parseArtifacts = vi.fn(
+      (
+        _manifest: Parameters<typeof parseDbtArtifacts>[0],
+        _catalog: Parameters<typeof parseDbtArtifacts>[1],
+        options?: Parameters<typeof parseDbtArtifacts>[2],
+      ): TableContext[] => {
+        options?.onWarnings?.([warning]);
+        return [table];
+      },
+    );
+
+    const result = loadDbtArtifactsForStartup({
+      manifestPath,
+      catalogPath,
+      logger,
+      readFile,
+      parseArtifacts,
+    });
+
+    expect(result).toEqual([table]);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        manifestPath,
+        catalogPath,
+        warnings: [warning],
+      },
+      'dbt artifact schema version warning',
+    );
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith({ tableCount: 1 }, 'Loaded dbt metadata');
+    expect(logger.fatal).not.toHaveBeenCalled();
+  });
+
+  it('logs parser schema-version warnings and zero-model warnings independently', () => {
+    const logger = makeLogger();
+    const warning = {
+      artifact: 'catalog',
+      schemaVersion: null,
+      reason: 'missing',
+      supportedRange: 'v1',
+    } as const;
+    const readFile = vi.fn(() => '{"nodes":{}}');
+    const parseArtifacts = vi.fn(
+      (
+        _manifest: Parameters<typeof parseDbtArtifacts>[0],
+        _catalog: Parameters<typeof parseDbtArtifacts>[1],
+        options?: Parameters<typeof parseDbtArtifacts>[2],
+      ): TableContext[] => {
+        options?.onWarnings?.([warning]);
+        return [];
+      },
+    );
+
+    const result = loadDbtArtifactsForStartup({
+      manifestPath,
+      catalogPath,
+      logger,
+      readFile,
+      parseArtifacts,
+    });
+
+    expect(result).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    const warnCalls = vi.mocked(logger.warn).mock.calls;
+    expect(warnCalls).toContainEqual([
+      {
+        manifestPath,
+        catalogPath,
+        warnings: [warning],
+      },
+      'dbt artifact schema version warning',
+    ]);
+    expect(warnCalls).toContainEqual([
+      {
+        tableCount: 0,
+        manifestPath,
+        catalogPath,
+      },
+      'Loaded dbt metadata with ZERO models',
+    ]);
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.fatal).not.toHaveBeenCalled();
   });

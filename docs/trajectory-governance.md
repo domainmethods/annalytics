@@ -414,3 +414,10 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 - Scope: one-to-one text-only inbound questions, compact text answers, safe no-answer handling for exhausted supervisor loops, allowlisted test numbers, and no business-initiated outreach.
 - Non-scope: OpenWA runtime dependency, WhatsApp group chats, Slack parity controls, WhatsApp-origin async escalation creation/resolution, production-default enablement, or committed live WhatsApp identifiers/evidence.
 - Evidence source: `docs/superpowers/specs/2026-06-21-whatsapp-cloud-api-prototype-design.md`.
+
+### As of 2026-06-23 (dbt parser hardening acceptance slice — verdict ACCEPTED)
+
+- **Decision: `ACCEPTED`.** The benchmark-gated parser maintenance change for issues #12 and #16 was rerun against the operator-local accepted slice and recorded a passing ReferenceCard acceptance decision.
+- **Scope:** the template parser now fails clearly when `manifest.nodes` is malformed, tolerates partial catalog/model column maps, coerces blank catalog-only types to `UNKNOWN`, and emits parser-owned dbt artifact schema-version warnings for startup logging. This is defect hardening and observability only; it does not promote a new product tranche.
+- **Evidence artifacts (operator-local, gitignored per the template boundary; names only):** `benchmarks/results/2026-06-23.json`, `2026-06-23-summary.md`, `2026-06-23-referencecard-acceptance.md`. Provenance: git SHA `5858f2b` for the code under test.
+- **Template boundary held:** live ReferenceCards, live corpus, dbt artifacts, raw benchmark results, project/store identifiers, and exact client content remain ignored and uncommitted. The tracked change set contains only template code, focused tests, and design/plan/governance docs.
