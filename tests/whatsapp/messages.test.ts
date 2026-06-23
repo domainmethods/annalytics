@@ -334,15 +334,14 @@ describe('handleWhatsAppMessages', () => {
       'Got it. I logged this feedback for review.',
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
-    expect(mockRootLoggerWarn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        err: expect.any(Error),
-        providerMessageId: 'wamid.1',
-        conversationId: 'whatsapp:15551234567',
-        traceId: 'trace-1',
-      }),
-      'whatsapp.pending_feedback_ack_failed',
-    );
+    const [logContext, logKey] = mockRootLoggerWarn.mock.calls[0];
+    expect(logContext).toEqual(expect.objectContaining({
+      err: expect.any(Error),
+      providerMessageId: 'wamid.1',
+      traceId: 'trace-1',
+    }));
+    expect(logContext).not.toHaveProperty('conversationId');
+    expect(logKey).toBe('whatsapp.pending_feedback_ack_failed');
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
   });

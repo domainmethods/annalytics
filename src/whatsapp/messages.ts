@@ -78,7 +78,6 @@ export async function handleWhatsAppMessages(
                 {
                   err,
                   providerMessageId: inbound.providerMessageId,
-                  conversationId: inbound.conversation.conversationId,
                   traceId: pendingFeedback.traceId,
                 },
                 'whatsapp.pending_feedback_ack_failed',
