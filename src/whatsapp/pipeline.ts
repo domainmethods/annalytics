@@ -138,19 +138,19 @@ export async function runWhatsAppPipeline(
 
     try {
       await input.saveResponseContext(savedContext);
+      if (input.sendAnswerControls) {
+        try {
+          await input.sendAnswerControls(
+            message.conversation,
+            responseContextDocumentId(savedContext),
+            savedContext,
+          );
+        } catch (err) {
+          logger.error({ err }, 'whatsapp.answer_controls_send_failed');
+        }
+      }
     } catch (err) {
       logger.error({ err }, 'whatsapp.response_context_save_failed');
-    }
-    if (input.sendAnswerControls) {
-      try {
-        await input.sendAnswerControls(
-          message.conversation,
-          responseContextDocumentId(savedContext),
-          savedContext,
-        );
-      } catch (err) {
-        logger.error({ err }, 'whatsapp.answer_controls_send_failed');
-      }
     }
     return { visible: true, outcome: 'answer' };
   } catch (err) {

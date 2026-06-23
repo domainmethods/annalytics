@@ -344,15 +344,18 @@ describe('runWhatsAppPipeline', () => {
       responseContext: responseContext(),
     });
     const saveResponseContext = vi.fn().mockRejectedValue(new Error('firestore unavailable'));
+    const sendAnswerControls = vi.fn().mockResolvedValue(undefined);
 
     await expect(runWhatsAppPipeline({
       message,
       client,
       answerQuestion,
       saveResponseContext,
+      sendAnswerControls,
     })).resolves.toEqual({ visible: true, outcome: 'answer' });
 
     expect(saveResponseContext).toHaveBeenCalled();
+    expect(sendAnswerControls).not.toHaveBeenCalled();
     expect(client.sendText).toHaveBeenCalledTimes(2);
   });
 
