@@ -1,10 +1,11 @@
 import express, { type Request, type Response, type Router } from 'express';
-import type { ChannelClient } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
+import type { WhatsAppClient } from './client.js';
 import {
   handleUnsupportedWhatsAppMessages,
   handleWhatsAppMessages,
 } from './messages.js';
+import { handleWhatsAppActions } from './actions.js';
 import { rootLogger } from '../logging.js';
 import type { PipelineConfig } from '../pipeline.js';
 import { parseWhatsAppWebhookPayload } from './payload.js';
@@ -14,7 +15,7 @@ interface RegisterWhatsAppWebhookDeps {
   verifyToken: string;
   appSecret: string;
   phoneNumberId: string;
-  client: ChannelClient;
+  client: WhatsAppClient;
   tables: TableContext[];
   config: PipelineConfig;
   rateLimitPerHour: number;
@@ -87,6 +88,13 @@ export function registerWhatsAppWebhook(
         }
 
         const parsed = parseWhatsAppWebhookPayload(payload, deps.phoneNumberId);
+        await handleWhatsAppActions(parsed.actions, {
+          client: deps.client,
+          tables: deps.tables,
+          config: deps.config,
+          rateLimitPerHour: deps.rateLimitPerHour,
+          allowedWaIds: deps.allowedWaIds,
+        });
         await handleUnsupportedWhatsAppMessages(parsed.unsupported, {
           client: deps.client,
           tables: deps.tables,

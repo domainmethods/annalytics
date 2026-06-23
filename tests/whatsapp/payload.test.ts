@@ -105,4 +105,58 @@ describe('parseWhatsAppWebhookPayload', () => {
       type: 'image',
     }]);
   });
+
+  it('parses interactive button replies as actions', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.button',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'button_reply',
+        button_reply: { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.messages).toEqual([]);
+    expect(result.unsupported).toEqual([]);
+    expect(result.actions).toEqual([{
+      providerMessageId: 'wamid.button',
+      conversation: {
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      },
+      receivedAt: new Date(1780000000 * 1000),
+      actionId: 'wa:v1:ok:ctx_ok',
+      actionTitle: 'Looks right',
+      kind: 'button_reply',
+    }]);
+  });
+
+  it('parses interactive list replies as actions', () => {
+    const payload = structuredClone(textPayload);
+    payload.entry[0].changes[0].value.messages[0] = {
+      from: '15551234567',
+      id: 'wamid.list',
+      timestamp: '1780000000',
+      type: 'interactive',
+      interactive: {
+        type: 'list_reply',
+        list_reply: { id: 'wa:v1:show_sql:ctx_sql', title: 'Show SQL' },
+      },
+    } as any;
+
+    const result = parseWhatsAppWebhookPayload(payload, 'phone-1');
+
+    expect(result.actions).toEqual([expect.objectContaining({
+      providerMessageId: 'wamid.list',
+      actionId: 'wa:v1:show_sql:ctx_sql',
+      actionTitle: 'Show SQL',
+      kind: 'list_reply',
+    })]);
+  });
 });

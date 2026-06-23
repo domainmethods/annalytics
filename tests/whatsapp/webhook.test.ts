@@ -7,6 +7,7 @@ import type { PipelineConfig } from '../../src/pipeline.js';
 
 const mockValues = vi.hoisted(() => ({
   handleWhatsAppMessages: vi.fn(),
+  handleWhatsAppActions: vi.fn(),
   handleUnsupportedWhatsAppMessages: vi.fn(),
   loggerError: vi.fn(),
   rawMiddleware: Symbol('express.raw.middleware'),
@@ -15,6 +16,9 @@ const mockValues = vi.hoisted(() => ({
 vi.mock('../../src/whatsapp/messages.js', () => ({
   handleWhatsAppMessages: mockValues.handleWhatsAppMessages,
   handleUnsupportedWhatsAppMessages: mockValues.handleUnsupportedWhatsAppMessages,
+}));
+vi.mock('../../src/whatsapp/actions.js', () => ({
+  handleWhatsAppActions: mockValues.handleWhatsAppActions,
 }));
 
 vi.mock('../../src/logging.js', () => ({
@@ -132,6 +136,7 @@ describe('registerWhatsAppWebhook', () => {
       }),
     } as unknown as Router;
     mockValues.handleWhatsAppMessages.mockResolvedValue(undefined);
+    mockValues.handleWhatsAppActions.mockResolvedValue(undefined);
     mockValues.handleUnsupportedWhatsAppMessages.mockResolvedValue(undefined);
     (client.sendText as ReturnType<typeof vi.fn>).mockResolvedValue({ messageId: 'outbound-1' });
 
@@ -311,5 +316,51 @@ describe('registerWhatsAppWebhook', () => {
     );
     expect(status).toHaveBeenCalledWith(500);
     expect(send).toHaveBeenCalledWith('Internal Server Error');
+  });
+
+  it('routes interactive actions before text messages', async () => {
+    const payload = whatsappPayload({
+      entry: [{
+        changes: [{
+          value: {
+            metadata: { phone_number_id: PHONE_NUMBER_ID },
+            messages: [{
+              from: '15551234567',
+              id: 'wamid.button',
+              timestamp: '1780000000',
+              type: 'interactive',
+              interactive: {
+                type: 'button_reply',
+                button_reply: { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+              },
+            }],
+          },
+        }],
+      }],
+    });
+    const rawBody = Buffer.from(JSON.stringify(payload));
+    const { response, status, send } = res();
+
+    await postHandler(req({
+      body: rawBody,
+      headers: { 'x-hub-signature-256': sign(rawBody) },
+    }), response);
+
+    expect(mockValues.handleWhatsAppActions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        providerMessageId: 'wamid.button',
+        actionId: 'wa:v1:ok:ctx_ok',
+        kind: 'button_reply',
+      }),
+    ], {
+      client,
+      tables: deps.tables,
+      config: deps.config,
+      rateLimitPerHour: 30,
+      allowedWaIds: ['15551234567'],
+    });
+    expect(mockValues.handleWhatsAppMessages).toHaveBeenCalledWith([], expect.any(Object));
+    expect(status).toHaveBeenCalledWith(200);
+    expect(send).toHaveBeenCalledWith('OK');
   });
 });
