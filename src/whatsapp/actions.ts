@@ -37,6 +37,15 @@ function isAllowed(userId: string, allowedWaIds: readonly string[]): boolean {
   return allowedWaIds.length === 0 || allowedWaIds.includes(userId);
 }
 
+function isFirestoreNotFoundError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return false;
+  }
+
+  const code = (err as { code?: unknown }).code;
+  return code === 5 || code === 'not-found';
+}
+
 async function createActionId(input: {
   kind: WhatsAppActionKind;
   responseContextKey: string;
@@ -121,6 +130,25 @@ async function sendActionsList(
   );
 }
 
+async function recordFeedbackAndSendText(input: {
+  action: WhatsAppInteractiveAction;
+  deps: HandleWhatsAppActionsDeps;
+  responseContextKey: string;
+  feedbackType: 'positive' | 'negative';
+  successText: string;
+}): Promise<void> {
+  try {
+    await recordFeedbackByResponseContextKey(input.responseContextKey, input.feedbackType);
+    await input.deps.client.sendText(input.action.conversation, input.successText);
+  } catch (err) {
+    if (!isFirestoreNotFoundError(err)) {
+      throw err;
+    }
+
+    await input.deps.client.sendText(input.action.conversation, renderWhatsAppExpiredAction());
+  }
+}
+
 export async function handleWhatsAppActions(
   actions: WhatsAppInteractiveAction[],
   deps: HandleWhatsAppActionsDeps,
@@ -148,8 +176,13 @@ export async function handleWhatsAppActions(
       const { responseContextKey } = loaded.context;
       switch (loaded.kind) {
         case 'ok':
-          await recordFeedbackByResponseContextKey(responseContextKey, 'positive');
-          await deps.client.sendText(action.conversation, renderWhatsAppFeedbackAck('positive'));
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'positive',
+            successText: renderWhatsAppFeedbackAck('positive'),
+          });
           visibleResponse = true;
           break;
 
@@ -171,17 +204,24 @@ export async function handleWhatsAppActions(
 
         case 'reason_wrong_number':
         case 'reason_wrong_data':
-          await recordFeedbackByResponseContextKey(responseContextKey, 'negative');
-          await deps.client.sendText(action.conversation, renderWhatsAppFeedbackAck('negative'));
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'negative',
+            successText: renderWhatsAppFeedbackAck('negative'),
+          });
           visibleResponse = true;
           break;
 
         case 'reason_not_asked':
-          await recordFeedbackByResponseContextKey(responseContextKey, 'negative');
-          await deps.client.sendText(
-            action.conversation,
-            'Got it. Reply with the question you meant to ask, and I will take another run at it.',
-          );
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'negative',
+            successText: 'Got it. Reply with the question you meant to ask, and I will take another run at it.',
+          });
           visibleResponse = true;
           break;
 

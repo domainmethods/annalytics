@@ -156,6 +156,23 @@ describe('handleWhatsAppActions', () => {
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
   });
 
+  it('treats missing response context during feedback write as an expired action', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('ok'));
+    mockRecordFeedbackByResponseContextKey.mockRejectedValue({ code: 5 });
+    const testClient = client();
+
+    await expect(handleWhatsAppActions([action('wa:v1:ok:ctx_ok')], deps(testClient)))
+      .resolves.toBeUndefined();
+
+    expect(mockRecordFeedbackByResponseContextKey).toHaveBeenCalledWith('response-key', 'positive');
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
   it('sends expired-action copy when a SQL action has no response context', async () => {
     mockGetWhatsAppActionContext.mockResolvedValue(storedAction('show_sql'));
     mockGetResponseContext.mockResolvedValue(null);
