@@ -38,6 +38,48 @@ function firstMessageId(payload: unknown): string | null {
   return typeof firstMessage?.id === 'string' ? firstMessage.id : null;
 }
 
+function isInteractiveMessageInvalid(message: WhatsAppInteractiveMessage): string | null {
+  if (message.body.length === 0) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  if (message.kind === 'reply_buttons') {
+    if (message.buttons.length < 1 || message.buttons.length > 3) {
+      return 'Invalid WhatsApp interactive message';
+    }
+    if (
+      message.buttons.some((button) => button.id.length === 0 || button.title.length === 0)
+    ) {
+      return 'Invalid WhatsApp interactive message';
+    }
+    return null;
+  }
+
+  if (message.sections.length < 1 || message.sections.length > 10) {
+    return 'Invalid WhatsApp interactive message';
+  }
+  if (message.buttonText.length === 0) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  const rowCount = message.sections.reduce((count, section) => count + section.rows.length, 0);
+  if (rowCount < 1 || rowCount > 10) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  if (message.sections.some((section) => section.title.length === 0)) {
+    return 'Invalid WhatsApp interactive message';
+  }
+  if (
+    message.sections.some((section) =>
+      section.rows.some((row) => row.id.length === 0 || row.title.length === 0))
+  ) {
+    return 'Invalid WhatsApp interactive message';
+  }
+
+  return null;
+}
+
 function interactivePayload(message: WhatsAppInteractiveMessage): Record<string, unknown> {
   if (message.kind === 'reply_buttons') {
     return {
@@ -71,40 +113,38 @@ function interactivePayload(message: WhatsAppInteractiveMessage): Record<string,
   };
 }
 
-function withErrorHandling(operation: () => Promise<FetchResponse>): Promise<{ messageId: string }> {
+async function sendWithErrorHandling(operation: () => Promise<FetchResponse>): Promise<{ messageId: string }> {
   let response: FetchResponse;
-  return operation()
-    .then(async (result) => {
-      response = result;
-      if (!response.ok) {
-        throw new Error(`WhatsApp send failed with status ${response.status ?? 'unknown'}`);
-      }
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        throw new Error('WhatsApp send returned an unreadable response');
-      }
+  try {
+    response = await operation();
+  } catch {
+    throw new Error('WhatsApp send failed before receiving a response');
+  }
 
-      const messageId = firstMessageId(payload);
-      if (!messageId) {
-        throw new Error('WhatsApp send succeeded without a message id');
-      }
+  if (!response.ok) {
+    throw new Error(`WhatsApp send failed with status ${response.status ?? 'unknown'}`);
+  }
 
-      return { messageId };
-    })
-    .catch((error) => {
-      if (error instanceof Error && error.message.startsWith('WhatsApp send failed with status')) {
-        throw error;
-      }
-      if (error instanceof Error && error.message.startsWith('WhatsApp send returned an unreadable response')) {
-        throw error;
-      }
-      if (error instanceof Error && error.message === 'WhatsApp send succeeded without a message id') {
-        throw error;
-      }
-      throw new Error('WhatsApp send failed before receiving a response');
-    });
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error('WhatsApp send returned an unreadable response');
+  }
+
+  const messageId = firstMessageId(payload);
+  if (!messageId) {
+    throw new Error('WhatsApp send succeeded without a message id');
+  }
+
+  return { messageId };
+}
+
+function validateInteractiveMessage(message: WhatsAppInteractiveMessage): void {
+  const validationMessage = isInteractiveMessageInvalid(message);
+  if (validationMessage) {
+    throw new Error(validationMessage);
+  }
 }
 
 export function createWhatsAppClient(config: WhatsAppClientConfig): WhatsAppClient {
@@ -113,7 +153,7 @@ export function createWhatsAppClient(config: WhatsAppClientConfig): WhatsAppClie
 
   return {
     async sendText(conversation, text) {
-      return withErrorHandling(() => fetchImpl(url, {
+      return sendWithErrorHandling(() => fetchImpl(url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.accessToken}`,
@@ -129,7 +169,8 @@ export function createWhatsAppClient(config: WhatsAppClientConfig): WhatsAppClie
       }));
     },
     async sendInteractive(conversation, message) {
-      return withErrorHandling(() => fetchImpl(url, {
+      validateInteractiveMessage(message);
+      return sendWithErrorHandling(() => fetchImpl(url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${config.accessToken}`,

@@ -206,4 +206,108 @@ describe('createWhatsAppClient', () => {
       },
     });
   });
+
+  it('maps interactive fetch failures to a pre-response error', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('network connection dropped'));
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [{ id: 'wa:v1:ok:ctx_ok', title: 'Looks right' }],
+      }),
+    ).rejects.toThrow('WhatsApp send failed before receiving a response');
+  });
+
+  it('maps malformed interactive payload responses to an unreadable-response error', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new Error('Unexpected token < in provider HTML');
+      },
+    });
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [{ id: 'wa:v1:ok:ctx_ok', title: 'Looks right' }],
+      }),
+    ).rejects.toThrow('WhatsApp send returned an unreadable response');
+  });
+
+  it('rejects interactive messages with invalid reply-button payloads without fetching', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [
+          { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+          { id: 'wa:v1:problem:ctx_problem', title: 'Problem' },
+          { id: 'wa:v1:actions:ctx_actions', title: 'Actions' },
+          { id: 'wa:v1:show_sql:ctx_sql', title: 'Show SQL' },
+        ],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects interactive list messages with no rows without fetching', async () => {
+    const fetchImpl = vi.fn();
+    const client = createWhatsAppClient({
+      accessToken: 'access-token',
+      phoneNumberId: 'phone-1',
+      graphApiVersion: 'v23.0',
+      fetchImpl,
+    });
+
+    await expect(
+      client.sendInteractive({
+        surface: 'whatsapp',
+        conversationId: 'whatsapp:15551234567',
+        userId: '15551234567',
+      }, {
+        kind: 'list',
+        body: 'What would you like to see?',
+        buttonText: 'Open actions',
+        sections: [{
+          title: 'Answer actions',
+          rows: [],
+        }],
+      }),
+    ).rejects.toThrow('Invalid WhatsApp interactive message');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 });

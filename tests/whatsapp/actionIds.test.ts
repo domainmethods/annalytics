@@ -22,4 +22,15 @@ describe('whatsapp action ids', () => {
     expect(parseWhatsAppActionId('wa:v2:show_sql:ctx_456')).toBeNull();
     expect(parseWhatsAppActionId('wa:v1:show_sql:')).toBeNull();
   });
+
+  it('rejects invalid action contexts when building ids', () => {
+    expect(() => buildWhatsAppActionId('show_sql', '')).toThrow('Invalid WhatsApp action context id');
+    expect(() => buildWhatsAppActionId('show_sql', 'ctx:456')).toThrow(
+      'Invalid WhatsApp action context id',
+    );
+  });
+
+  it('keeps parser behavior unchanged for malformed ids with embedded separators', () => {
+    expect(parseWhatsAppActionId('wa:v1:show_sql:ctx:456')).toBeNull();
+  });
 });

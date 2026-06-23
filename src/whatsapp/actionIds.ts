@@ -17,6 +17,9 @@ export type WhatsAppActionKind = typeof WHATSAPP_ACTION_KINDS[number];
 const KIND_SET = new Set<string>(WHATSAPP_ACTION_KINDS);
 
 export function buildWhatsAppActionId(kind: WhatsAppActionKind, contextId: string): string {
+  if (!contextId || contextId.includes(':')) {
+    throw new Error('Invalid WhatsApp action context id');
+  }
   return `wa:v1:${kind}:${contextId}`;
 }
 
