@@ -1,6 +1,7 @@
 import type { ChannelClient, ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
+import { saveFeedbackNote } from '../state/feedbackNotes.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
@@ -10,9 +11,13 @@ import {
   markWhatsAppEventVisible,
   releaseWhatsAppEventClaim,
 } from '../state/whatsappEventDedupe.js';
+import {
+  deleteWhatsAppPendingFeedback,
+  getWhatsAppPendingFeedback,
+} from '../state/whatsappPendingFeedback.js';
 import type { UnsupportedWhatsAppMessage } from './payload.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from './pipeline.js';
-import { renderWhatsAppUnsupported } from './renderer.js';
+import { renderWhatsAppFeedbackAck, renderWhatsAppUnsupported } from './renderer.js';
 
 export interface HandleWhatsAppMessagesDeps {
   client: ChannelClient;
@@ -46,6 +51,25 @@ export async function handleWhatsAppMessages(
     let visibleResponse = false;
 
     try {
+      const pendingFeedback = await getWhatsAppPendingFeedback(inbound.conversation.conversationId);
+      if (pendingFeedback) {
+        await saveFeedbackNote({
+          note: inbound.text,
+          userId: inbound.conversation.userId,
+          threadTs: inbound.conversation.conversationId,
+          channel: inbound.conversation.conversationId,
+          traceId: pendingFeedback.traceId,
+          ...(pendingFeedback.clarifiedQuestion
+            ? { clarifiedQuestion: pendingFeedback.clarifiedQuestion }
+            : {}),
+        });
+        await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId);
+        await deps.client.sendText(inbound.conversation, renderWhatsAppFeedbackAck('negative'));
+        visibleResponse = true;
+        await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
+        continue;
+      }
+
       const rateCheck = await checkRateLimit(
         inbound.conversation.conversationId,
         deps.rateLimitPerHour,

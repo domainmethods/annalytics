@@ -16,6 +16,7 @@ import {
   getResponseContext,
   recordFeedbackByResponseContextKey,
 } from '../state/responseContext.js';
+import { saveWhatsAppPendingFeedback } from '../state/whatsappPendingFeedback.js';
 import { buildWhatsAppActionId, parseWhatsAppActionId, type WhatsAppActionKind } from './actionIds.js';
 import { buildAnswerActionsList, buildProblemReasonPicker } from './interactive.js';
 import {
@@ -257,7 +258,27 @@ export async function handleWhatsAppActions(
           break;
         }
 
-        case 'reason_other':
+        case 'reason_other': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            await saveWhatsAppPendingFeedback({
+              conversationId: action.conversation.conversationId,
+              userId: action.conversation.userId,
+              responseContextKey,
+              traceId: responseContext.traceId,
+              clarifiedQuestion: responseContext.clarifiedQuestion,
+            });
+            await deps.client.sendText(
+              action.conversation,
+              'Reply with what was wrong, and I will attach it to this answer.',
+            );
+          }
+          visibleResponse = true;
+          break;
+        }
+
         case 'override_table':
         case 'override_summary':
           break;

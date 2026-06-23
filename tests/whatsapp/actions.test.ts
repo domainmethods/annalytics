@@ -17,6 +17,9 @@ vi.mock('../../src/state/responseContext.js', () => ({
   getResponseContext: vi.fn(),
   recordFeedbackByResponseContextKey: vi.fn(),
 }));
+vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
+  saveWhatsAppPendingFeedback: vi.fn(),
+}));
 
 import {
   claimWhatsAppEvent,
@@ -32,6 +35,7 @@ import {
   getResponseContext,
   recordFeedbackByResponseContextKey,
 } from '../../src/state/responseContext.js';
+import { saveWhatsAppPendingFeedback } from '../../src/state/whatsappPendingFeedback.js';
 import { handleWhatsAppActions } from '../../src/whatsapp/actions.js';
 import {
   renderWhatsAppExpiredAction,
@@ -46,6 +50,7 @@ const mockCreateWhatsAppActionContext = vi.mocked(createWhatsAppActionContext);
 const mockGetWhatsAppActionContext = vi.mocked(getWhatsAppActionContext);
 const mockGetResponseContext = vi.mocked(getResponseContext);
 const mockRecordFeedbackByResponseContextKey = vi.mocked(recordFeedbackByResponseContextKey);
+const mockSaveWhatsAppPendingFeedback = vi.mocked(saveWhatsAppPendingFeedback);
 
 const conversation = {
   surface: 'whatsapp' as const,
@@ -138,6 +143,7 @@ describe('handleWhatsAppActions', () => {
     mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
     mockRecordFeedbackByResponseContextKey.mockResolvedValue(undefined);
+    mockSaveWhatsAppPendingFeedback.mockResolvedValue(undefined);
   });
 
   it('records positive feedback and acknowledges the action', async () => {
@@ -285,6 +291,57 @@ describe('handleWhatsAppActions', () => {
       conversation,
       'Got it. Reply with the question you meant to ask, and I will take another run at it.',
     );
+  });
+
+  it('starts pending free-text feedback on reason_other', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue({
+      id: 'ctx_other',
+      kind: 'reason_other',
+      responseContextKey: 'response-key',
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    mockGetResponseContext.mockResolvedValue(ctx());
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:reason_other:ctx_other')], {
+      client: testClient,
+      tables: [],
+      config: {} as any,
+      rateLimitPerHour: 30,
+      allowedWaIds: ['15551234567'],
+    });
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockSaveWhatsAppPendingFeedback).toHaveBeenCalledWith({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+    });
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      'Reply with what was wrong, and I will attach it to this answer.',
+    );
+  });
+
+  it('sends expired-action copy when reason_other response context is missing', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('reason_other'));
+    mockGetResponseContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:reason_other:ctx_other')], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockSaveWhatsAppPendingFeedback).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
   });
 
   it('sends problem reason picker and creates child action contexts', async () => {

@@ -18,6 +18,13 @@ vi.mock('../../src/state/clarificationState.js', () => ({
 }));
 vi.mock('../../src/state/escalationState.js', () => ({ getEscalationByThread: vi.fn() }));
 vi.mock('../../src/state/responseContext.js', () => ({ saveResponseContext: vi.fn() }));
+vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
+  getWhatsAppPendingFeedback: vi.fn(),
+  deleteWhatsAppPendingFeedback: vi.fn(),
+}));
+vi.mock('../../src/state/feedbackNotes.js', () => ({
+  saveFeedbackNote: vi.fn(),
+}));
 vi.mock('../../src/whatsapp/pipeline.js', () => ({
   runWhatsAppPipeline: vi.fn(),
   answerWhatsAppQuestion: vi.fn(),
@@ -27,6 +34,11 @@ import { checkRateLimit } from '../../src/state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { saveResponseContext } from '../../src/state/responseContext.js';
+import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
+import {
+  deleteWhatsAppPendingFeedback,
+  getWhatsAppPendingFeedback,
+} from '../../src/state/whatsappPendingFeedback.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
@@ -47,6 +59,9 @@ const mockDeleteClarificationState = vi.mocked(deleteClarificationState);
 const mockGetEscalationByThread = vi.mocked(getEscalationByThread);
 const mockRunWhatsAppPipeline = vi.mocked(runWhatsAppPipeline);
 const mockAnswerWhatsAppQuestion = vi.mocked(answerWhatsAppQuestion);
+const mockGetWhatsAppPendingFeedback = vi.mocked(getWhatsAppPendingFeedback);
+const mockDeleteWhatsAppPendingFeedback = vi.mocked(deleteWhatsAppPendingFeedback);
+const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
 
 const conversation = {
   surface: 'whatsapp' as const,
@@ -164,6 +179,9 @@ describe('handleWhatsAppMessages', () => {
     mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockGetWhatsAppPendingFeedback.mockResolvedValue(null);
+    mockDeleteWhatsAppPendingFeedback.mockResolvedValue(undefined);
+    mockSaveFeedbackNote.mockResolvedValue(undefined);
     mockGetClarificationState.mockResolvedValue(null);
     mockDeleteClarificationState.mockResolvedValue(undefined);
     mockGetEscalationByThread.mockResolvedValue(null);
@@ -251,6 +269,40 @@ describe('handleWhatsAppMessages', () => {
       .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
+  it('captures pending WhatsApp free-text feedback before running the pipeline', async () => {
+    const dependencies = deps();
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies);
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledWith({
+      note: 'It included refunded orders.',
+      userId: '15551234567',
+      threadTs: 'whatsapp:15551234567',
+      channel: 'whatsapp:15551234567',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+    });
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).toHaveBeenCalledWith(
+      conversation,
+      'Got it. I logged this feedback for review.',
+    );
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
   });
 
   it('resumes pending clarification and deletes clarification state after pipeline resolves', async () => {
