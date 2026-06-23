@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseDbtArtifacts, DEFAULT_MAX_COLUMNS_PER_TABLE } from '../../src/dbt/parser.js';
@@ -6,6 +6,10 @@ import { parseDbtArtifacts, DEFAULT_MAX_COLUMNS_PER_TABLE } from '../../src/dbt/
 const fixturesDir = join(import.meta.dirname, '../fixtures');
 const manifest = JSON.parse(readFileSync(join(fixturesDir, 'manifest.json'), 'utf-8'));
 const catalog = JSON.parse(readFileSync(join(fixturesDir, 'catalog.json'), 'utf-8'));
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 describe('parseDbtArtifacts', () => {
   const tables = parseDbtArtifacts(manifest, catalog);
@@ -108,5 +112,286 @@ describe('catalog-only column union', () => {
       expect(dim.columns).toHaveLength(5);
       expect(dim.sampleDDL).not.toContain('additional undocumented columns');
     });
+  });
+});
+
+describe('artifact boundary guards', () => {
+  const clearParserError = 'dbt manifest has no nodes key - wrong or malformed manifest.json';
+  const manifestWithOneModel = {
+    metadata: { dbt_schema_version: 'https://schemas.getdbt.com/dbt/manifest/v11.json' },
+    nodes: {
+      'model.my_project.partial_model': {
+        resource_type: 'model',
+        name: 'partial_model',
+        schema: 'analytics',
+        description: 'Partial model',
+        columns: undefined as Record<string, { name: string; description?: string }> | undefined,
+        config: { materialized: 'table' },
+        depends_on: { nodes: [] },
+        tags: [],
+      },
+    },
+  };
+  const catalogWithOneColumn = {
+    metadata: { dbt_schema_version: 'https://schemas.getdbt.com/dbt/catalog/v1.json' },
+    nodes: {
+      'model.my_project.partial_model': {
+        columns: {
+          ID: { type: 'STRING', index: 1 },
+        },
+      },
+    },
+  };
+
+  it('throws a clear parser error when manifest nodes are missing', () => {
+    expect(() => parseDbtArtifacts({} as Parameters<typeof parseDbtArtifacts>[0], catalog)).toThrow(
+      clearParserError,
+    );
+  });
+
+  it('throws a clear parser error when manifest nodes are null', () => {
+    expect(() =>
+      parseDbtArtifacts({ nodes: null } as unknown as Parameters<typeof parseDbtArtifacts>[0], catalog),
+    ).toThrow(clearParserError);
+  });
+
+  it('throws a clear parser error when manifest nodes are an array', () => {
+    expect(() =>
+      parseDbtArtifacts({ nodes: [] } as unknown as Parameters<typeof parseDbtArtifacts>[0], catalog),
+    ).toThrow(clearParserError);
+  });
+
+  it('throws a clear parser error when manifest nodes are not an object', () => {
+    expect(() =>
+      parseDbtArtifacts({ nodes: 'not-a-node-map' } as unknown as Parameters<typeof parseDbtArtifacts>[0], catalog),
+    ).toThrow(clearParserError);
+  });
+
+  it('degrades gracefully when catalog nodes are missing', () => {
+    const manifestWithColumns = cloneJson(manifestWithOneModel);
+    manifestWithColumns.nodes['model.my_project.partial_model'].columns = {
+      id: { name: 'id', description: 'Primary key' },
+    };
+
+    const result = parseDbtArtifacts(
+      manifestWithColumns as unknown as Parameters<typeof parseDbtArtifacts>[0],
+      {} as unknown as Parameters<typeof parseDbtArtifacts>[1],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].columns).toEqual([
+      {
+        name: 'id',
+        description: 'Primary key',
+        dataType: 'UNKNOWN',
+        meta: {},
+      },
+    ]);
+    expect(result[0].sampleDDL).toContain('id UNKNOWN -- Primary key');
+  });
+
+  it('degrades gracefully when catalog nodes are null', () => {
+    const manifestWithColumns = cloneJson(manifestWithOneModel);
+    manifestWithColumns.nodes['model.my_project.partial_model'].columns = {
+      id: { name: 'id', description: 'Primary key' },
+    };
+
+    const result = parseDbtArtifacts(
+      manifestWithColumns as unknown as Parameters<typeof parseDbtArtifacts>[0],
+      { nodes: null } as unknown as Parameters<typeof parseDbtArtifacts>[1],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].columns).toEqual([
+      {
+        name: 'id',
+        description: 'Primary key',
+        dataType: 'UNKNOWN',
+        meta: {},
+      },
+    ]);
+    expect(result[0].sampleDDL).toContain('id UNKNOWN -- Primary key');
+  });
+
+  it('emits catalog-only columns when manifest model columns are missing', () => {
+    const result = parseDbtArtifacts(
+      manifestWithOneModel as unknown as Parameters<typeof parseDbtArtifacts>[0],
+      catalogWithOneColumn as unknown as Parameters<typeof parseDbtArtifacts>[1],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('analytics.partial_model');
+    expect(result[0].columns).toEqual([
+      {
+        name: 'id',
+        description: '',
+        dataType: 'STRING',
+        meta: {},
+      },
+    ]);
+    expect(result[0].sampleDDL).toContain('id STRING');
+  });
+
+  it('emits catalog-only columns when manifest model columns are wrong-shaped', () => {
+    const manifestWithWrongColumns = cloneJson(manifestWithOneModel);
+    manifestWithWrongColumns.nodes['model.my_project.partial_model'].columns = [] as unknown as Record<
+      string,
+      { name: string; description?: string }
+    >;
+
+    const result = parseDbtArtifacts(
+      manifestWithWrongColumns as unknown as Parameters<typeof parseDbtArtifacts>[0],
+      catalogWithOneColumn as unknown as Parameters<typeof parseDbtArtifacts>[1],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].columns).toEqual([
+      {
+        name: 'id',
+        description: '',
+        dataType: 'STRING',
+        meta: {},
+      },
+    ]);
+  });
+
+  it('coerces empty catalog-only column types to UNKNOWN', () => {
+    const catalogWithEmptyType = cloneJson(catalogWithOneColumn);
+    catalogWithEmptyType.nodes['model.my_project.partial_model'].columns.ID.type = '';
+
+    const result = parseDbtArtifacts(
+      manifestWithOneModel as unknown as Parameters<typeof parseDbtArtifacts>[0],
+      catalogWithEmptyType as unknown as Parameters<typeof parseDbtArtifacts>[1],
+    );
+
+    expect(result[0].columns).toEqual([
+      {
+        name: 'id',
+        description: '',
+        dataType: 'UNKNOWN',
+        meta: {},
+      },
+    ]);
+    expect(result[0].sampleDDL).toContain('id UNKNOWN');
+  });
+});
+
+describe('dbt artifact schema-version warnings', () => {
+  it('does not warn for current known fixture versions', () => {
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifest, catalog);
+
+    const result = parseDbtArtifacts(manifest, catalog, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).not.toHaveBeenCalled();
+  });
+
+  it('warns for missing schema-version metadata and still parses', () => {
+    const manifestWithoutMetadata = cloneJson(manifest);
+    const catalogWithoutMetadata = cloneJson(catalog);
+    delete manifestWithoutMetadata.metadata;
+    delete catalogWithoutMetadata.metadata;
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifestWithoutMetadata, catalogWithoutMetadata);
+
+    const result = parseDbtArtifacts(manifestWithoutMetadata, catalogWithoutMetadata, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).toHaveBeenCalledTimes(1);
+    expect(onWarnings).toHaveBeenCalledWith([
+      {
+        artifact: 'manifest',
+        schemaVersion: null,
+        reason: 'missing',
+        supportedRange: 'v10-v12',
+      },
+      {
+        artifact: 'catalog',
+        schemaVersion: null,
+        reason: 'missing',
+        supportedRange: 'v1',
+      },
+    ]);
+  });
+
+  it('warns for unparseable schema-version metadata and still parses', () => {
+    const manifestWithBadVersion = cloneJson(manifest);
+    manifestWithBadVersion.metadata.dbt_schema_version = 'manifest-vNext';
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifestWithBadVersion, catalog);
+
+    const result = parseDbtArtifacts(manifestWithBadVersion, catalog, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).toHaveBeenCalledTimes(1);
+    expect(onWarnings).toHaveBeenCalledWith([
+      {
+        artifact: 'manifest',
+        schemaVersion: 'manifest-vNext',
+        reason: 'unparseable',
+        supportedRange: 'v10-v12',
+      },
+    ]);
+  });
+
+  it('warns for future unsupported manifest schema versions and still parses', () => {
+    const manifestWithFutureVersion = cloneJson(manifest);
+    manifestWithFutureVersion.metadata.dbt_schema_version = 'https://schemas.getdbt.com/dbt/manifest/v20.json';
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifestWithFutureVersion, catalog);
+
+    const result = parseDbtArtifacts(manifestWithFutureVersion, catalog, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).toHaveBeenCalledTimes(1);
+    expect(onWarnings).toHaveBeenCalledWith([
+      {
+        artifact: 'manifest',
+        schemaVersion: 'https://schemas.getdbt.com/dbt/manifest/v20.json',
+        reason: 'unsupported',
+        supportedRange: 'v10-v12',
+      },
+    ]);
+  });
+
+  it('warns for blank schema-version strings as unparseable metadata and still parses', () => {
+    const manifestWithBlankVersion = cloneJson(manifest);
+    manifestWithBlankVersion.metadata.dbt_schema_version = '';
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifestWithBlankVersion, catalog);
+
+    const result = parseDbtArtifacts(manifestWithBlankVersion, catalog, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).toHaveBeenCalledTimes(1);
+    expect(onWarnings).toHaveBeenCalledWith([
+      {
+        artifact: 'manifest',
+        schemaVersion: '',
+        reason: 'unparseable',
+        supportedRange: 'v10-v12',
+      },
+    ]);
+  });
+
+  it('warns for schema-version URLs outside the expected dbt schema host', () => {
+    const manifestWithWrongHost = cloneJson(manifest);
+    manifestWithWrongHost.metadata.dbt_schema_version = 'https://example.com/dbt/manifest/v11.json';
+    const onWarnings = vi.fn();
+    const expected = parseDbtArtifacts(manifestWithWrongHost, catalog);
+
+    const result = parseDbtArtifacts(manifestWithWrongHost, catalog, { onWarnings });
+
+    expect(result).toEqual(expected);
+    expect(onWarnings).toHaveBeenCalledTimes(1);
+    expect(onWarnings).toHaveBeenCalledWith([
+      {
+        artifact: 'manifest',
+        schemaVersion: 'https://example.com/dbt/manifest/v11.json',
+        reason: 'unparseable',
+        supportedRange: 'v10-v12',
+      },
+    ]);
   });
 });
