@@ -1,5 +1,6 @@
 import type { ChannelClient, ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
+import { rootLogger } from '../logging.js';
 import type { PipelineConfig } from '../pipeline.js';
 import { saveFeedbackNote } from '../state/feedbackNotes.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
@@ -72,7 +73,17 @@ export async function handleWhatsAppMessages(
           visibleResponse = true;
           await deps.client
             .sendText(inbound.conversation, renderWhatsAppFeedbackAck('negative'))
-            .catch(() => {});
+            .catch((err: unknown) => {
+              rootLogger.warn(
+                {
+                  err,
+                  providerMessageId: inbound.providerMessageId,
+                  conversationId: inbound.conversation.conversationId,
+                  traceId: pendingFeedback.traceId,
+                },
+                'whatsapp.pending_feedback_ack_failed',
+              );
+            });
           await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
           continue;
         }

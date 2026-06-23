@@ -25,6 +25,9 @@ vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
 vi.mock('../../src/state/feedbackNotes.js', () => ({
   saveFeedbackNote: vi.fn(),
 }));
+vi.mock('../../src/logging.js', () => ({
+  rootLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 vi.mock('../../src/whatsapp/pipeline.js', () => ({
   runWhatsAppPipeline: vi.fn(),
   answerWhatsAppQuestion: vi.fn(),
@@ -35,6 +38,7 @@ import { getClarificationState, deleteClarificationState } from '../../src/state
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { saveResponseContext } from '../../src/state/responseContext.js';
 import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
+import { rootLogger } from '../../src/logging.js';
 import {
   deleteWhatsAppPendingFeedback,
   getWhatsAppPendingFeedback,
@@ -62,6 +66,7 @@ const mockAnswerWhatsAppQuestion = vi.mocked(answerWhatsAppQuestion);
 const mockGetWhatsAppPendingFeedback = vi.mocked(getWhatsAppPendingFeedback);
 const mockDeleteWhatsAppPendingFeedback = vi.mocked(deleteWhatsAppPendingFeedback);
 const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
+const mockRootLoggerWarn = vi.mocked(rootLogger.warn);
 
 const conversation = {
   surface: 'whatsapp' as const,
@@ -329,6 +334,15 @@ describe('handleWhatsAppMessages', () => {
       'Got it. I logged this feedback for review.',
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    expect(mockRootLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.any(Error),
+        providerMessageId: 'wamid.1',
+        conversationId: 'whatsapp:15551234567',
+        traceId: 'trace-1',
+      }),
+      'whatsapp.pending_feedback_ack_failed',
+    );
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
   });
