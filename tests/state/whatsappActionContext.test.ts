@@ -32,14 +32,21 @@ describe('whatsappActionContext', () => {
     expect(id).toBe('ctx_123');
     expect(mockCollection).toHaveBeenCalledWith('whatsapp_action_context');
     expect(mockDoc).toHaveBeenCalledWith('ctx_123');
+
+    const stored = mockSet.mock.calls[0][0];
     expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'show_sql',
       responseContextKey: 'whatsapp:15551234567_wamid.1',
       conversationId: 'whatsapp:15551234567',
       userId: '15551234567',
       createdAt: expect.any(Date),
-      expiresAt: expect.any(Date),
     }));
+    expect(stored).toMatchObject({
+      createdAt: expect.any(Date),
+      expiresAt: expect.any(Date),
+    });
+    expect(stored.expiresAt.getTime() - stored.createdAt.getTime())
+      .toBe(24 * 60 * 60 * 1000);
   });
 
   it('returns null when the action context doc is missing', async () => {
@@ -75,4 +82,3 @@ describe('whatsappActionContext', () => {
     });
   });
 });
-
