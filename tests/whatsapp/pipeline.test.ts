@@ -16,6 +16,16 @@ vi.mock('../../src/teachings/summaryMap.js', () => ({ getTeachingSummaries: vi.f
 vi.mock('../../src/dbt/sampleRowCache.js', () => ({ getSampleRows: vi.fn(() => null) }));
 vi.mock('../../src/state/responseContext.js', () => ({
   getLatestNegativeFeedback: vi.fn(() => null),
+  responseContextDocumentId: vi.fn((ctx: {
+    surface?: string;
+    threadTs: string;
+    statusMsgTs: string;
+  }) => {
+    if (ctx.surface === 'whatsapp') {
+      return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
+    }
+    return `${ctx.threadTs}_${ctx.statusMsgTs}`;
+  }),
   saveResponseContext: vi.fn(),
 }));
 vi.mock('../../src/logging.js', () => ({
@@ -164,6 +174,7 @@ describe('runWhatsAppPipeline', () => {
     });
     const saveResponseContext = vi.fn().mockResolvedValue(undefined);
     const markVisible = vi.fn().mockResolvedValue(undefined);
+    const sendAnswerControls = vi.fn().mockResolvedValue(undefined);
 
     const result = await runWhatsAppPipeline({
       message,
@@ -171,6 +182,7 @@ describe('runWhatsAppPipeline', () => {
       answerQuestion,
       saveResponseContext,
       markVisible,
+      sendAnswerControls,
     });
 
     expect(result).toEqual({ visible: true, outcome: 'answer' });
@@ -201,6 +213,17 @@ describe('runWhatsAppPipeline', () => {
       statusMsgTs: 'outbound/A+B=',
       surface: 'whatsapp',
     }));
+    expect(sendAnswerControls).toHaveBeenCalledWith(
+      conversation,
+      'whatsapp:15551234567_outbound%2FA%2BB%3D',
+      expect.objectContaining({
+        traceId: 'trace-answer',
+        statusMsgTs: 'outbound/A+B=',
+        surface: 'whatsapp',
+      }),
+    );
+    expect(saveResponseContext.mock.invocationCallOrder[0])
+      .toBeLessThan(sendAnswerControls.mock.invocationCallOrder[0]);
   });
 
   it('sends clarification text and stores WhatsApp clarification state', async () => {
@@ -330,6 +353,33 @@ describe('runWhatsAppPipeline', () => {
     })).resolves.toEqual({ visible: true, outcome: 'answer' });
 
     expect(saveResponseContext).toHaveBeenCalled();
+    expect(client.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs but does not fail the answer when answer controls fail', async () => {
+    const client = createClient();
+    const answerQuestion = vi.fn().mockResolvedValue({
+      kind: 'answer',
+      explanation: 'Revenue was 123 yesterday.',
+      rows: [{ revenue: 123 }],
+      columnNames: ['revenue'],
+      totalRows: 1,
+      assumptions: [],
+      traceId: 'trace-answer',
+      responseContext: responseContext(),
+    });
+    const saveResponseContext = vi.fn().mockResolvedValue(undefined);
+    const sendAnswerControls = vi.fn().mockRejectedValue(new Error('provider failed'));
+
+    await expect(runWhatsAppPipeline({
+      message,
+      client,
+      answerQuestion,
+      saveResponseContext,
+      sendAnswerControls,
+    })).resolves.toEqual({ visible: true, outcome: 'answer' });
+
+    expect(sendAnswerControls).toHaveBeenCalledOnce();
     expect(client.sendText).toHaveBeenCalledTimes(2);
   });
 });
