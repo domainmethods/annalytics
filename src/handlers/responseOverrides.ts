@@ -4,17 +4,11 @@ import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
+import type { OverrideConfig } from '../execution/overrideTypes.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
 import { generateForNode } from '../agents/modelGateway.js';
 import { rootLogger } from '../logging.js';
 export { formatValue };
-
-export interface OverrideConfig {
-  maxBytesProcessed: number;
-  queryTimeoutMs: number;
-  maxResultRows: number;
-  geminiApiKey: string;
-}
 
 function extractTraceId(err: unknown): string {
   if (err instanceof Error && 'traceId' in err) {

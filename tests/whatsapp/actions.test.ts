@@ -20,6 +20,10 @@ vi.mock('../../src/state/responseContext.js', () => ({
 vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
   saveWhatsAppPendingFeedback: vi.fn(),
 }));
+vi.mock('../../src/whatsapp/overrides.js', () => ({
+  renderWhatsAppTableOverride: vi.fn(),
+  renderWhatsAppSummaryOverride: vi.fn(),
+}));
 
 import {
   claimWhatsAppEvent,
@@ -36,6 +40,10 @@ import {
   recordFeedbackByResponseContextKey,
 } from '../../src/state/responseContext.js';
 import { saveWhatsAppPendingFeedback } from '../../src/state/whatsappPendingFeedback.js';
+import {
+  renderWhatsAppSummaryOverride,
+  renderWhatsAppTableOverride,
+} from '../../src/whatsapp/overrides.js';
 import { handleWhatsAppActions } from '../../src/whatsapp/actions.js';
 import {
   renderWhatsAppExpiredAction,
@@ -51,6 +59,8 @@ const mockGetWhatsAppActionContext = vi.mocked(getWhatsAppActionContext);
 const mockGetResponseContext = vi.mocked(getResponseContext);
 const mockRecordFeedbackByResponseContextKey = vi.mocked(recordFeedbackByResponseContextKey);
 const mockSaveWhatsAppPendingFeedback = vi.mocked(saveWhatsAppPendingFeedback);
+const mockRenderWhatsAppTableOverride = vi.mocked(renderWhatsAppTableOverride);
+const mockRenderWhatsAppSummaryOverride = vi.mocked(renderWhatsAppSummaryOverride);
 
 const conversation = {
   surface: 'whatsapp' as const,
@@ -440,6 +450,66 @@ describe('handleWhatsAppActions', () => {
     expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
     expect(mockCreateWhatsAppActionContext).not.toHaveBeenCalled();
     expect(testClient.sendInteractive).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it('dispatches table override actions', async () => {
+    const responseContext = ctx();
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('override_table'));
+    mockGetResponseContext.mockResolvedValue(responseContext);
+    mockRenderWhatsAppTableOverride.mockResolvedValue('table text');
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:override_table:ctx_table')], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockRenderWhatsAppTableOverride).toHaveBeenCalledWith(responseContext, {
+      geminiApiKey: 'gemini-key',
+      maxBytesProcessed: 1_000,
+      maxResultRows: 10,
+      queryTimeoutMs: 30_000,
+    });
+    expect(testClient.sendText).toHaveBeenCalledWith(conversation, 'table text');
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it('dispatches summary override actions', async () => {
+    const responseContext = ctx();
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('override_summary'));
+    mockGetResponseContext.mockResolvedValue(responseContext);
+    mockRenderWhatsAppSummaryOverride.mockResolvedValue('summary text');
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:override_summary:ctx_summary')], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockRenderWhatsAppSummaryOverride).toHaveBeenCalledWith(responseContext, {
+      geminiApiKey: 'gemini-key',
+      maxBytesProcessed: 1_000,
+      maxResultRows: 10,
+      queryTimeoutMs: 30_000,
+    });
+    expect(testClient.sendText).toHaveBeenCalledWith(conversation, 'summary text');
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it.each([
+    ['override_table', 'wa:v1:override_table:ctx_table'],
+    ['override_summary', 'wa:v1:override_summary:ctx_summary'],
+  ] as const)('sends expired-action copy when %s response context is missing', async (kind, actionId) => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction(kind));
+    mockGetResponseContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([action(actionId)], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockRenderWhatsAppTableOverride).not.toHaveBeenCalled();
+    expect(mockRenderWhatsAppSummaryOverride).not.toHaveBeenCalled();
     expect(testClient.sendText).toHaveBeenCalledWith(
       conversation,
       renderWhatsAppExpiredAction(),

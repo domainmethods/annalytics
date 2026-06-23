@@ -25,6 +25,10 @@ import {
   renderWhatsAppReasoning,
   renderWhatsAppSql,
 } from './renderer.js';
+import {
+  renderWhatsAppSummaryOverride,
+  renderWhatsAppTableOverride,
+} from './overrides.js';
 
 export interface HandleWhatsAppActionsDeps {
   client: WhatsAppClient;
@@ -279,9 +283,37 @@ export async function handleWhatsAppActions(
           break;
         }
 
-        case 'override_table':
-        case 'override_summary':
+        case 'override_table': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            await deps.client.sendText(action.conversation, await renderWhatsAppTableOverride(responseContext, {
+              geminiApiKey: deps.config.geminiApiKey,
+              maxBytesProcessed: deps.config.maxBytesProcessed,
+              maxResultRows: deps.config.maxResultRows,
+              queryTimeoutMs: deps.config.queryTimeoutMs,
+            }));
+          }
+          visibleResponse = true;
           break;
+        }
+
+        case 'override_summary': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            await deps.client.sendText(action.conversation, await renderWhatsAppSummaryOverride(responseContext, {
+              geminiApiKey: deps.config.geminiApiKey,
+              maxBytesProcessed: deps.config.maxBytesProcessed,
+              maxResultRows: deps.config.maxResultRows,
+              queryTimeoutMs: deps.config.queryTimeoutMs,
+            }));
+          }
+          visibleResponse = true;
+          break;
+        }
       }
 
       if (visibleResponse) {
