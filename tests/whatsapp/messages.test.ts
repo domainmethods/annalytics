@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChannelClient, ChannelMessage } from '../../src/channels/types.js';
+import type { ChannelMessage } from '../../src/channels/types.js';
 import type { TableContext } from '../../src/dbt/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ClarificationState } from '../../src/state/clarificationState.js';
+import type { ResponseContext } from '../../src/types.js';
+import type { WhatsAppClient } from '../../src/whatsapp/client.js';
 import type { EscalationState } from '../../src/types.js';
 import type { UnsupportedWhatsAppMessage } from '../../src/whatsapp/payload.js';
 
@@ -18,6 +20,9 @@ vi.mock('../../src/state/clarificationState.js', () => ({
 }));
 vi.mock('../../src/state/escalationState.js', () => ({ getEscalationByThread: vi.fn() }));
 vi.mock('../../src/state/responseContext.js', () => ({ saveResponseContext: vi.fn() }));
+vi.mock('../../src/state/whatsappActionContext.js', () => ({
+  createWhatsAppActionContext: vi.fn(),
+}));
 vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
   getWhatsAppPendingFeedback: vi.fn(),
   deleteWhatsAppPendingFeedback: vi.fn(),
@@ -38,6 +43,7 @@ import { getClarificationState, deleteClarificationState } from '../../src/state
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { saveResponseContext } from '../../src/state/responseContext.js';
 import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
+import { createWhatsAppActionContext } from '../../src/state/whatsappActionContext.js';
 import { rootLogger } from '../../src/logging.js';
 import {
   deleteWhatsAppPendingFeedback,
@@ -63,6 +69,7 @@ const mockDeleteClarificationState = vi.mocked(deleteClarificationState);
 const mockGetEscalationByThread = vi.mocked(getEscalationByThread);
 const mockRunWhatsAppPipeline = vi.mocked(runWhatsAppPipeline);
 const mockAnswerWhatsAppQuestion = vi.mocked(answerWhatsAppQuestion);
+const mockCreateWhatsAppActionContext = vi.mocked(createWhatsAppActionContext);
 const mockGetWhatsAppPendingFeedback = vi.mocked(getWhatsAppPendingFeedback);
 const mockDeleteWhatsAppPendingFeedback = vi.mocked(deleteWhatsAppPendingFeedback);
 const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
@@ -121,9 +128,10 @@ function unsupportedMessage(
   };
 }
 
-function client(): ChannelClient {
+function client(): WhatsAppClient {
   return {
     sendText: vi.fn().mockResolvedValue({ messageId: 'outbound.1' }),
+    sendInteractive: vi.fn().mockResolvedValue({ messageId: 'outbound.interactive' }),
   };
 }
 
@@ -196,6 +204,7 @@ describe('handleWhatsAppMessages', () => {
       questions: ['Which metric should I use?'],
       traceId: 'trace-answerer',
     });
+    mockCreateWhatsAppActionContext.mockResolvedValue('ctx_default');
   });
 
   it('runs the WhatsApp pipeline for allowed text message', async () => {
@@ -231,6 +240,58 @@ describe('handleWhatsAppMessages', () => {
       tables,
       config,
     });
+  });
+
+  it('wires answer controls into the pipeline and sends feedback buttons', async () => {
+    const inbound = message();
+    const dependencies = deps();
+    mockCreateWhatsAppActionContext
+      .mockResolvedValueOnce('ctx_ok')
+      .mockResolvedValueOnce('ctx_problem')
+      .mockResolvedValueOnce('ctx_actions');
+
+    await handleWhatsAppMessages([inbound], dependencies);
+
+    const runInput = mockRunWhatsAppPipeline.mock.calls[0][0];
+    expect(runInput.sendAnswerControls).toEqual(expect.any(Function));
+
+    await runInput.sendAnswerControls?.(
+      conversation,
+      'response-key',
+      {} as ResponseContext,
+    );
+
+    expect(mockCreateWhatsAppActionContext).toHaveBeenCalledTimes(3);
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(1, {
+      kind: 'ok',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(2, {
+      kind: 'problem',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(3, {
+      kind: 'actions',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(dependencies.client.sendInteractive).toHaveBeenCalledWith(
+      conversation,
+      {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [
+          { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+          { id: 'wa:v1:problem:ctx_problem', title: 'Problem' },
+          { id: 'wa:v1:actions:ctx_actions', title: 'Actions' },
+        ],
+      },
+    );
   });
 
   it('skips unknown users when allowlist configured', async () => {

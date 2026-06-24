@@ -224,6 +224,25 @@ describe('handleWhatsAppActions', () => {
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['empty context', 'wa:v1:show_sql:'],
+    ['slash context', 'wa:v1:show_sql:ctx/bad'],
+    ['colon context', 'wa:v1:show_sql:ctx:bad'],
+    ['overlong context', `wa:v1:show_sql:${'a'.repeat(81)}`],
+  ])('sends expired-action copy and skips context lookup for malformed %s', async (_label, actionId) => {
+    const testClient = client();
+
+    await handleWhatsAppActions([action(actionId)], deps(testClient));
+
+    expect(mockGetWhatsAppActionContext).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
   it('sends expired-action copy when the action context belongs to another user', async () => {
     mockGetWhatsAppActionContext.mockResolvedValue({
       ...storedAction('show_sql'),

@@ -21,16 +21,19 @@ describe('whatsapp action ids', () => {
     expect(parseWhatsAppActionId('show_sql:ctx_456')).toBeNull();
     expect(parseWhatsAppActionId('wa:v2:show_sql:ctx_456')).toBeNull();
     expect(parseWhatsAppActionId('wa:v1:show_sql:')).toBeNull();
+    expect(parseWhatsAppActionId('wa:v1:show_sql:ctx/456')).toBeNull();
+    expect(parseWhatsAppActionId('wa:v1:show_sql:ctx:456')).toBeNull();
+    expect(parseWhatsAppActionId(`wa:v1:show_sql:${'a'.repeat(81)}`)).toBeNull();
   });
 
-  it('rejects invalid action contexts when building ids', () => {
-    expect(() => buildWhatsAppActionId('show_sql', '')).toThrow('Invalid WhatsApp action context id');
-    expect(() => buildWhatsAppActionId('show_sql', 'ctx:456')).toThrow(
+  it.each([
+    ['empty', ''],
+    ['slash-containing', 'ctx/456'],
+    ['colon-containing', 'ctx:456'],
+    ['overlong', 'a'.repeat(81)],
+  ])('rejects %s action contexts when building ids', (_label, contextId) => {
+    expect(() => buildWhatsAppActionId('show_sql', contextId)).toThrow(
       'Invalid WhatsApp action context id',
     );
-  });
-
-  it('keeps parser behavior unchanged for malformed ids with embedded separators', () => {
-    expect(parseWhatsAppActionId('wa:v1:show_sql:ctx:456')).toBeNull();
   });
 });

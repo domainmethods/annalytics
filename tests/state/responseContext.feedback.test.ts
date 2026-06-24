@@ -24,7 +24,7 @@ function setupChain() {
   mockDoc.mockReturnValue({ update: mockUpdate });
 }
 
-import { 
+import {
   recordFeedback,
   recordFeedbackByResponseContextKey,
   getLatestNegativeFeedback,

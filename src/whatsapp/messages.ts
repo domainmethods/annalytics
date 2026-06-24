@@ -1,4 +1,4 @@
-import type { ChannelClient, ChannelMessage } from '../channels/types.js';
+import type { ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import { rootLogger } from '../logging.js';
 import type { PipelineConfig } from '../pipeline.js';
@@ -7,6 +7,7 @@ import { checkRateLimit } from '../state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
 import { saveResponseContext } from '../state/responseContext.js';
+import { createWhatsAppActionContext } from '../state/whatsappActionContext.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
@@ -17,11 +18,14 @@ import {
   getWhatsAppPendingFeedback,
 } from '../state/whatsappPendingFeedback.js';
 import type { UnsupportedWhatsAppMessage } from './payload.js';
+import { buildWhatsAppActionId } from './actionIds.js';
+import type { WhatsAppClient } from './client.js';
+import { buildAnswerFeedbackButtons } from './interactive.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from './pipeline.js';
 import { renderWhatsAppFeedbackAck, renderWhatsAppUnsupported } from './renderer.js';
 
 export interface HandleWhatsAppMessagesDeps {
-  client: ChannelClient;
+  client: WhatsAppClient;
   tables: TableContext[];
   config: PipelineConfig;
   rateLimitPerHour: number;
@@ -37,6 +41,35 @@ function clarifiedMessage(inbound: ChannelMessage, originalQuestion: string): Ch
     ...inbound,
     text: `${originalQuestion} (Clarification: ${inbound.text})`,
   };
+}
+
+async function sendWhatsAppAnswerControls(
+  client: WhatsAppClient,
+  conversation: ChannelMessage['conversation'],
+  responseContextKey: string,
+): Promise<void> {
+  const base = {
+    responseContextKey,
+    conversationId: conversation.conversationId,
+    userId: conversation.userId,
+  };
+  const okId = buildWhatsAppActionId(
+    'ok',
+    await createWhatsAppActionContext({ ...base, kind: 'ok' }),
+  );
+  const problemId = buildWhatsAppActionId(
+    'problem',
+    await createWhatsAppActionContext({ ...base, kind: 'problem' }),
+  );
+  const actionsId = buildWhatsAppActionId(
+    'actions',
+    await createWhatsAppActionContext({ ...base, kind: 'actions' }),
+  );
+
+  await client.sendInteractive(
+    conversation,
+    buildAnswerFeedbackButtons({ okId, problemId, actionsId }),
+  );
 }
 
 export async function handleWhatsAppMessages(
@@ -128,6 +161,8 @@ export async function handleWhatsAppMessages(
           config: deps.config,
         }),
         saveResponseContext,
+        sendAnswerControls: (conversation, responseContextKey) =>
+          sendWhatsAppAnswerControls(deps.client, conversation, responseContextKey),
         markVisible: () => markWhatsAppEventVisible(inbound.providerMessageId),
       });
       visibleResponse = result.visible;

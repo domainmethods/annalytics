@@ -1,6 +1,8 @@
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
 
+type FirestoreTimestamp = { toDate: () => Date };
+
 /** Retention window for response_context docs. The Firestore TTL policy (see
  *  `infra/firestore.ttls.json`) targets `expiresAt` to delete expired docs.
  *  Feedback aggregation windows (getResponseContextsSince) must not exceed
@@ -10,6 +12,32 @@ const RETENTION_DAYS = (() => {
   const v = Number(process.env.RESPONSE_CONTEXT_RETENTION_DAYS);
   return Number.isFinite(v) && v > 0 ? v : 90;
 })();
+
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toDate' in value
+    && typeof (value as { toDate?: unknown }).toDate === 'function'
+  ) {
+    try {
+      const candidate = (value as FirestoreTimestamp).toDate();
+      return candidate instanceof Date && Number.isFinite(candidate.getTime()) ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function isExpiredResponseContext(data: { expiresAt?: unknown }): boolean {
+  if (data.expiresAt === undefined) return false;
+  const expiresAt = toDate(data.expiresAt);
+  return expiresAt !== null && expiresAt.getTime() <= Date.now();
+}
 
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   const now = new Date();
@@ -79,7 +107,9 @@ export async function getResponseContext(
     .get();
 
   if (!doc.exists) return null;
-  return doc.data() as ResponseContext;
+  const data = doc.data() as (ResponseContext & { expiresAt?: unknown }) | undefined;
+  if (!data || isExpiredResponseContext(data)) return null;
+  return data;
 }
 
 export async function getLatestResponseContext(

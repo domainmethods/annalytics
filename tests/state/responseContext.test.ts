@@ -203,6 +203,42 @@ describe('getResponseContext', () => {
     expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
   });
 
+  it('returns null when the response context Date expiry has passed', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        responseId: 'r1',
+        threadTs: 'thread-1',
+        statusMsgTs: 'msg-1',
+        generatedSql: 'SELECT 1',
+        expiresAt: new Date(Date.now() - 60 * 60 * 1000),
+      }),
+    });
+
+    const result = await getResponseContext('thread-1_msg-1');
+
+    expect(result).toBeNull();
+    expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+  });
+
+  it('returns context when the response context Firestore timestamp expiry is still valid', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        responseId: 'r1',
+        threadTs: 'thread-1',
+        statusMsgTs: 'msg-1',
+        generatedSql: 'SELECT 1',
+        expiresAt: { toDate: () => new Date(Date.now() + 60 * 60 * 1000) },
+      }),
+    });
+
+    const result = await getResponseContext('thread-1_msg-1');
+
+    expect(result).not.toBeNull();
+    expect(result!.responseId).toBe('r1');
+  });
+
   it('returns null when doc does not exist', async () => {
     mockDocGet.mockResolvedValue({ exists: false });
 
