@@ -194,6 +194,14 @@ async function checkReadme(
   requireText(readme, 'slack-signing-secret', 'README lists the Slack signing Secret Manager name', add);
   requireText(readme, 'gemini-api-key', 'README lists the Gemini Secret Manager name', add);
   requireText(readme, 'us-west1', 'README documents us-west1 as the standard region', add);
+  requireText(
+    readme,
+    'Template pushes do not deploy by default',
+    'README states template pushes do not deploy by default',
+    add,
+  );
+  requireText(readme, 'workflow_dispatch', 'README documents manual GitHub Actions deploy dispatch', add);
+  requireText(readme, 'ANNALYTICS_AUTO_DEPLOY', 'README documents opt-in automatic deploy variable', add);
 
   if (readme.includes('npx tsx scripts/sync-teachings.ts')) {
     add('error', 'README still documents sync-teachings.ts as the manual knowledge sync command');
@@ -207,17 +215,30 @@ async function checkDeployWorkflow(
   add: (status: SetupCheckStatus, message: string) => void,
 ): Promise<void> {
   const deploy = await readText(rootDir, '.github/workflows/deploy.yml');
-  for (const token of [
-    'REGION: us-west1',
-    '--project',
-    '--region',
-    '--service-account',
-    '--set-env-vars',
-    '--set-secrets',
-    '--port',
-    '--allow-unauthenticated',
-  ]) {
-    requireText(deploy, token, `Deploy workflow includes ${token}`, add);
+  const deployWorkflowTokens: Array<[string, string]> = [
+    ['name: Build, Test & Optional Deploy', 'Deploy workflow uses optional-deploy name'],
+    ['workflow_dispatch:', 'Deploy workflow supports manual dispatch'],
+    ['deploy-decision', 'Deploy workflow includes deploy-decision job'],
+    ['ANNALYTICS_AUTO_DEPLOY', 'Deploy workflow reads ANNALYTICS_AUTO_DEPLOY variable'],
+    ['WIF_PROVIDER', 'Deploy workflow validates WIF_PROVIDER before auth'],
+    ['WIF_SERVICE_ACCOUNT', 'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth'],
+    ['should_deploy', 'Deploy workflow records deploy decision output'],
+    [
+      "needs.deploy-decision.outputs.should_deploy == 'true'",
+      'Deploy workflow gates deploy job on deploy decision output',
+    ],
+    ['REGION: us-west1', 'Deploy workflow includes REGION: us-west1'],
+    ['--project', 'Deploy workflow includes --project'],
+    ['--region', 'Deploy workflow includes --region'],
+    ['--service-account', 'Deploy workflow includes --service-account'],
+    ['--set-env-vars', 'Deploy workflow includes --set-env-vars'],
+    ['--set-secrets', 'Deploy workflow includes --set-secrets'],
+    ['--port', 'Deploy workflow includes --port'],
+    ['--allow-unauthenticated', 'Deploy workflow includes --allow-unauthenticated'],
+  ];
+
+  for (const [token, label] of deployWorkflowTokens) {
+    requireText(deploy, token, label, add);
   }
 }
 
