@@ -185,6 +185,10 @@ describe('runSetupCheck', () => {
     });
     expect(result.findings).toContainEqual({
       status: 'error',
+      message: 'Deploy workflow includes deploy-decision job (missing deploy-decision)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
       message: 'Deploy workflow reads ANNALYTICS_AUTO_DEPLOY variable (missing ANNALYTICS_AUTO_DEPLOY)',
     });
     expect(result.findings).toContainEqual({
