@@ -214,14 +214,6 @@ Do not let direction live only in dated entries — that is how this document de
 
 Dated decision history, preserved verbatim. Read the head sections above for current direction.
 
-### 2026-06-24 - Template CI/deploy boundary
-
-- Decision: treat the red `main` deploy caused by absent gitignored dbt artifacts as an operational trust signal defect, not as a product tranche or a reason to commit implementation artifacts.
-- Change: `.github/workflows/deploy.yml` now runs validation by default and makes Cloud Run deploy opt-in through `workflow_dispatch` or `ANNALYTICS_AUTO_DEPLOY=true`; deploy still fails fast when requested without required secrets or dbt artifacts.
-- Documentation: README now describes CI and optional deploy behavior, including the implementation-repo variable for restoring push-to-main deploy.
-- Guardrail: `scripts/setup-check.ts` and `tests/scripts/setup-check.test.ts` now require the optional-deploy workflow and README tokens so the boundary cannot silently regress.
-- Template boundary held: no live dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, benchmark evidence, or Cloud Run URLs were committed.
-
 ### As of 2026-06-04
 
 - The `ReferenceCard v1 Trust Tranche` is implemented with starter sample content.
@@ -431,3 +423,11 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 - **Scope:** the template parser now fails clearly when `manifest.nodes` is malformed, tolerates partial catalog/model column maps, coerces blank catalog-only types to `UNKNOWN`, and emits parser-owned dbt artifact schema-version warnings for startup logging. This is defect hardening and observability only; it does not promote a new product tranche.
 - **Evidence artifacts (operator-local, gitignored per the template boundary; names only):** `benchmarks/results/2026-06-23.json`, `2026-06-23-summary.md`, `2026-06-23-referencecard-acceptance.md`. Provenance: git SHA `5858f2b` for the code under test.
 - **Template boundary held:** live ReferenceCards, live corpus, dbt artifacts, raw benchmark results, project/store identifiers, and exact client content remain ignored and uncommitted. The tracked change set contains only template code, focused tests, and design/plan/governance docs.
+
+### 2026-06-24 - Template CI/deploy boundary
+
+- Decision: treat the red `main` deploy caused by absent gitignored dbt artifacts as an operational trust signal defect, not as a product tranche or a reason to commit implementation artifacts.
+- Change: `.github/workflows/deploy.yml` now runs validation by default and makes Cloud Run deploy opt-in through `workflow_dispatch` or `ANNALYTICS_AUTO_DEPLOY=true`; deploy still fails fast when requested without required secrets or dbt artifacts.
+- Documentation: README now describes CI and optional deploy behavior, including the implementation-repo variable for restoring push-to-main deploy.
+- Guardrail: `scripts/setup-check.ts` and `tests/scripts/setup-check.test.ts` now require the optional-deploy workflow and README tokens so the boundary cannot silently regress.
+- Template boundary held: no live dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, benchmark evidence, or Cloud Run URLs were committed.
