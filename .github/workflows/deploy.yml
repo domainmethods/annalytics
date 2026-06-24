@@ -1,16 +1,19 @@
-name: Build, Test & Deploy
+name: Build, Test & Optional Deploy
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-west1
   SERVICE_NAME: anna-lytics
   FILE_SEARCH_STORE_ID: ${{ secrets.FILE_SEARCH_STORE_ID }}
+  WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+  WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
 jobs:
   test:
@@ -27,9 +30,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
-  deploy:
+  deploy-decision:
     needs: test
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.decision.outputs.should_deploy }}
+    steps:
+      - id: decision
+        env:
+          ANNALYTICS_AUTO_DEPLOY: ${{ vars.ANNALYTICS_AUTO_DEPLOY }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" || "${ANNALYTICS_AUTO_DEPLOY}" == "true" ]]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "Deploy requested. The deploy job will validate secrets and dbt artifacts before publishing." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Deploy skipped. Template pushes do not deploy by default because dbt artifacts are implementation-specific and gitignored." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    needs: [test, deploy-decision]
+    if: github.ref == 'refs/heads/main' && needs.deploy-decision.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,21 +60,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
       - name: Validate deploy configuration
         run: |
           test -n "${PROJECT_ID}" || (echo "Missing GCP_PROJECT_ID secret" && exit 1)
           test -n "${FILE_SEARCH_STORE_ID}" || (echo "Missing FILE_SEARCH_STORE_ID secret" && exit 1)
+          test -n "${WIF_PROVIDER}" || (echo "Missing WIF_PROVIDER secret" && exit 1)
+          test -n "${WIF_SERVICE_ACCOUNT}" || (echo "Missing WIF_SERVICE_ACCOUNT secret" && exit 1)
           test -f dbt/manifest.json || (echo "Missing dbt/manifest.json; provide implementation-specific dbt artifacts before deploy" && exit 1)
           test -f dbt/catalog.json || (echo "Missing dbt/catalog.json; provide implementation-specific dbt artifacts before deploy" && exit 1)
-          gcloud config set project "${PROJECT_ID}"
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set gcloud project
+        run: gcloud config set project "${PROJECT_ID}"
 
       - name: Build and push Docker image
         run: |
@@ -70,7 +96,7 @@ jobs:
             --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}" \
             --region "${REGION}" \
             --service-account "${SERVICE_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID},GEMINI_MODEL=gemini-pro-latest,GEMINI_FLASH_MODEL=gemini-flash-latest,GEMINI_JUDGE_MODEL=gemini-pro-latest" \
+            --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID},GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
             --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
             --port 3000 \
             --allow-unauthenticated
