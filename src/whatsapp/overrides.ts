@@ -78,5 +78,6 @@ export async function renderWhatsAppSummaryOverride(
     totalRows: 0,
     assumptions: ctx.assumptions,
     traceId: ctx.traceId,
+    includeRows: false,
   });
 }

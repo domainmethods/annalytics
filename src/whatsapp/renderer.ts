@@ -29,6 +29,7 @@ export interface RenderWhatsAppQueryAnswerInput {
   totalRows: number;
   assumptions: string[];
   traceId: string;
+  includeRows?: boolean;
 }
 
 function toAscii(value: string): string {
@@ -107,7 +108,7 @@ function capMessageWithFooter(body: string, footer: string, separator = '\n\n'):
 export function renderWhatsAppQueryAnswer(input: RenderWhatsAppQueryAnswerInput): string {
   const sections = [
     input.explanation.trim(),
-    renderRows(input),
+    ...(input.includeRows === false ? [] : [renderRows(input)]),
   ];
 
   if (input.assumptions.length > 0) {

@@ -117,5 +117,28 @@ describe('WhatsApp override renderers', () => {
     );
     expect(text).toContain('Paid channel revenue was the largest');
     expect(text).toContain('(trace: trace-wa-1)');
+    expect(text).not.toContain('No rows returned.');
+  });
+
+  it('falls back to table-style output when summary generation returns blank', async () => {
+    mockGenerateForNode.mockResolvedValue({
+      text: '   ',
+    } as Awaited<ReturnType<typeof generateForNode>>);
+
+    const text = await renderWhatsAppSummaryOverride(responseContext, config);
+
+    expect(text).toContain("I couldn't generate a summary. Here's the raw data:");
+    expect(text).toContain('paid');
+    expect(text).toContain('(trace: trace-wa-1)');
+  });
+
+  it('falls back to table-style output when summary generation throws', async () => {
+    mockGenerateForNode.mockRejectedValue(new Error('model unavailable'));
+
+    const text = await renderWhatsAppSummaryOverride(responseContext, config);
+
+    expect(text).toContain("I couldn't generate a summary. Here's the raw data:");
+    expect(text).toContain('paid');
+    expect(text).toContain('(trace: trace-wa-1)');
   });
 });

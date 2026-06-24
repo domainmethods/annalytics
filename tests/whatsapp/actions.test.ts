@@ -20,6 +20,9 @@ vi.mock('../../src/state/responseContext.js', () => ({
 vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
   saveWhatsAppPendingFeedback: vi.fn(),
 }));
+vi.mock('../../src/logging.js', () => ({
+  rootLogger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+}));
 vi.mock('../../src/whatsapp/overrides.js', () => ({
   renderWhatsAppTableOverride: vi.fn(),
   renderWhatsAppSummaryOverride: vi.fn(),
@@ -44,10 +47,12 @@ import {
   renderWhatsAppSummaryOverride,
   renderWhatsAppTableOverride,
 } from '../../src/whatsapp/overrides.js';
+import { rootLogger } from '../../src/logging.js';
 import { handleWhatsAppActions } from '../../src/whatsapp/actions.js';
 import {
   renderWhatsAppExpiredAction,
   renderWhatsAppFeedbackAck,
+  renderWhatsAppSafeError,
 } from '../../src/whatsapp/renderer.js';
 import type { WhatsAppActionKind } from '../../src/whatsapp/actionIds.js';
 
@@ -515,6 +520,53 @@ describe('handleWhatsAppActions', () => {
       renderWhatsAppExpiredAction(),
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it.each([
+    ['override_table', 'wa:v1:override_table:ctx_table', mockRenderWhatsAppTableOverride],
+    ['override_summary', 'wa:v1:override_summary:ctx_summary', mockRenderWhatsAppSummaryOverride],
+  ] as const)('sends a safe visible error when %s rendering fails', async (_kind, actionId, helper) => {
+    const responseContext = ctx({ traceId: 'trace-safe-error' });
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction(_kind));
+    mockGetResponseContext.mockResolvedValue(responseContext);
+    helper.mockRejectedValue(new Error('BigQuery timeout'));
+    const testClient = client();
+
+    await expect(handleWhatsAppActions([action(actionId)], deps(testClient)))
+      .resolves.toBeUndefined();
+
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppSafeError('trace-safe-error'),
+    );
+    expect(vi.mocked(rootLogger.error)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceId: 'trace-safe-error',
+        error: 'BigQuery timeout',
+        actionKind: _kind,
+      }),
+      'whatsapp.override_action_failed',
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
+  it('releases the event claim when a rendered override response cannot be sent', async () => {
+    const responseContext = ctx({ traceId: 'trace-send-failed' });
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('override_table'));
+    mockGetResponseContext.mockResolvedValue(responseContext);
+    mockRenderWhatsAppTableOverride.mockResolvedValue('table text');
+    const testClient = client();
+    vi.mocked(testClient.sendText)
+      .mockRejectedValueOnce(new Error('WhatsApp send failed'))
+      .mockResolvedValueOnce({ messageId: 'safe-error' });
+
+    await expect(handleWhatsAppActions([action('wa:v1:override_table:ctx_table')], deps(testClient)))
+      .rejects.toThrow('WhatsApp send failed');
+
+    expect(testClient.sendText).toHaveBeenCalledTimes(1);
+    expect(mockReleaseWhatsAppEventClaim).toHaveBeenCalledWith('wamid.action');
+    expect(mockMarkWhatsAppEventVisible).not.toHaveBeenCalled();
   });
 
   it('ignores disallowed users before claiming the action', async () => {

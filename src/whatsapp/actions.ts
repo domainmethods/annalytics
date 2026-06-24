@@ -3,6 +3,7 @@ import type { WhatsAppInteractiveAction } from './payload.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
 import type { ResponseContext } from '../types.js';
+import { rootLogger } from '../logging.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
@@ -23,6 +24,7 @@ import {
   renderWhatsAppExpiredAction,
   renderWhatsAppFeedbackAck,
   renderWhatsAppReasoning,
+  renderWhatsAppSafeError,
   renderWhatsAppSql,
 } from './renderer.js';
 import {
@@ -49,6 +51,31 @@ function isFirestoreNotFoundError(err: unknown): boolean {
 
   const code = (err as { code?: unknown }).code;
   return code === 5 || code === 'not-found';
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function sendOverrideFailure(input: {
+  action: WhatsAppInteractiveAction;
+  deps: HandleWhatsAppActionsDeps;
+  responseContext: ResponseContext;
+  actionKind: 'override_table' | 'override_summary';
+  err: unknown;
+}): Promise<void> {
+  rootLogger.error(
+    {
+      error: errorMessage(input.err),
+      traceId: input.responseContext.traceId,
+      actionKind: input.actionKind,
+    },
+    'whatsapp.override_action_failed',
+  );
+  await input.deps.client.sendText(
+    input.action.conversation,
+    renderWhatsAppSafeError(input.responseContext.traceId),
+  );
 }
 
 async function createActionId(input: {
@@ -288,12 +315,26 @@ export async function handleWhatsAppActions(
           if (!responseContext) {
             await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
           } else {
-            await deps.client.sendText(action.conversation, await renderWhatsAppTableOverride(responseContext, {
-              geminiApiKey: deps.config.geminiApiKey,
-              maxBytesProcessed: deps.config.maxBytesProcessed,
-              maxResultRows: deps.config.maxResultRows,
-              queryTimeoutMs: deps.config.queryTimeoutMs,
-            }));
+            let text: string;
+            try {
+              text = await renderWhatsAppTableOverride(responseContext, {
+                geminiApiKey: deps.config.geminiApiKey,
+                maxBytesProcessed: deps.config.maxBytesProcessed,
+                maxResultRows: deps.config.maxResultRows,
+                queryTimeoutMs: deps.config.queryTimeoutMs,
+              });
+            } catch (err) {
+              await sendOverrideFailure({
+                action,
+                deps,
+                responseContext,
+                actionKind: 'override_table',
+                err,
+              });
+              visibleResponse = true;
+              break;
+            }
+            await deps.client.sendText(action.conversation, text);
           }
           visibleResponse = true;
           break;
@@ -304,12 +345,26 @@ export async function handleWhatsAppActions(
           if (!responseContext) {
             await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
           } else {
-            await deps.client.sendText(action.conversation, await renderWhatsAppSummaryOverride(responseContext, {
-              geminiApiKey: deps.config.geminiApiKey,
-              maxBytesProcessed: deps.config.maxBytesProcessed,
-              maxResultRows: deps.config.maxResultRows,
-              queryTimeoutMs: deps.config.queryTimeoutMs,
-            }));
+            let text: string;
+            try {
+              text = await renderWhatsAppSummaryOverride(responseContext, {
+                geminiApiKey: deps.config.geminiApiKey,
+                maxBytesProcessed: deps.config.maxBytesProcessed,
+                maxResultRows: deps.config.maxResultRows,
+                queryTimeoutMs: deps.config.queryTimeoutMs,
+              });
+            } catch (err) {
+              await sendOverrideFailure({
+                action,
+                deps,
+                responseContext,
+                actionKind: 'override_summary',
+                err,
+              });
+              visibleResponse = true;
+              break;
+            }
+            await deps.client.sendText(action.conversation, text);
           }
           visibleResponse = true;
           break;
