@@ -157,6 +157,7 @@ describe('handleWhatsAppActions', () => {
     mockClaimWhatsAppEvent.mockResolvedValue(true);
     mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
+    mockGetResponseContext.mockResolvedValue(ctx());
     mockRecordFeedbackByResponseContextKey.mockResolvedValue(undefined);
     mockSaveWhatsAppPendingFeedback.mockResolvedValue(undefined);
   });
@@ -175,6 +176,23 @@ describe('handleWhatsAppActions', () => {
       renderWhatsAppFeedbackAck('positive'),
     );
     expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+  });
+
+  it('sends expired-action copy for ok feedback when response context is expired', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('ok'));
+    mockGetResponseContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([action('wa:v1:ok:ctx_ok')], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockRecordFeedbackByResponseContextKey).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
 
   it('treats missing response context during feedback write as an expired action', async () => {
@@ -312,6 +330,25 @@ describe('handleWhatsAppActions', () => {
       conversation,
       renderWhatsAppFeedbackAck('negative'),
     );
+  });
+
+  it('sends expired-action copy for negative feedback when response context is expired', async () => {
+    mockGetWhatsAppActionContext.mockResolvedValue(storedAction('reason_wrong_number'));
+    mockGetResponseContext.mockResolvedValue(null);
+    const testClient = client();
+
+    await handleWhatsAppActions([
+      action('wa:v1:reason_wrong_number:ctx_reason_wrong_number'),
+    ], deps(testClient));
+
+    expect(mockGetResponseContext).toHaveBeenCalledWith('response-key');
+    expect(mockRecordFeedbackByResponseContextKey).not.toHaveBeenCalled();
+    expect(testClient.sendText).toHaveBeenCalledWith(
+      conversation,
+      renderWhatsAppExpiredAction(),
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.action');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
 
   it('records negative feedback and asks for the intended question', async () => {

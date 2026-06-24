@@ -169,6 +169,12 @@ async function recordFeedbackAndSendText(input: {
   feedbackType: 'positive' | 'negative';
   successText: string;
 }): Promise<void> {
+  const responseContext = await getResponseContext(input.responseContextKey);
+  if (!responseContext) {
+    await input.deps.client.sendText(input.action.conversation, renderWhatsAppExpiredAction());
+    return;
+  }
+
   try {
     await recordFeedbackByResponseContextKey(input.responseContextKey, input.feedbackType);
     await input.deps.client.sendText(input.action.conversation, input.successText);
