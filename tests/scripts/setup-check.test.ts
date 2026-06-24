@@ -70,6 +70,8 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       'deploy:',
       "  if: github.ref == 'refs/heads/main' && needs.deploy-decision.outputs.should_deploy == 'true'",
       'run: |',
+      '  test -n "${WIF_PROVIDER}"',
+      '  test -n "${WIF_SERVICE_ACCOUNT}"',
       '  gcloud run deploy anna-lytics \\',
       '    --project "${PROJECT_ID}" \\',
       '    --region "${REGION}" \\',
@@ -195,11 +197,12 @@ describe('runSetupCheck', () => {
     });
     expect(result.findings).toContainEqual({
       status: 'error',
-      message: 'Deploy workflow validates WIF_PROVIDER before auth (missing WIF_PROVIDER)',
+      message: 'Deploy workflow validates WIF_PROVIDER before auth (missing test -n "${WIF_PROVIDER}")',
     });
     expect(result.findings).toContainEqual({
       status: 'error',
-      message: 'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth (missing WIF_SERVICE_ACCOUNT)',
+      message:
+        'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth (missing test -n "${WIF_SERVICE_ACCOUNT}")',
     });
   });
 

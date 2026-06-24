@@ -220,8 +220,8 @@ async function checkDeployWorkflow(
     ['workflow_dispatch:', 'Deploy workflow supports manual dispatch'],
     ['deploy-decision', 'Deploy workflow includes deploy-decision job'],
     ['ANNALYTICS_AUTO_DEPLOY', 'Deploy workflow reads ANNALYTICS_AUTO_DEPLOY variable'],
-    ['WIF_PROVIDER', 'Deploy workflow validates WIF_PROVIDER before auth'],
-    ['WIF_SERVICE_ACCOUNT', 'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth'],
+    ['test -n "${WIF_PROVIDER}"', 'Deploy workflow validates WIF_PROVIDER before auth'],
+    ['test -n "${WIF_SERVICE_ACCOUNT}"', 'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth'],
     ['should_deploy', 'Deploy workflow records deploy decision output'],
     [
       "needs.deploy-decision.outputs.should_deploy == 'true'",
