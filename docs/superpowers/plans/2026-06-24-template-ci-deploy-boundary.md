@@ -544,7 +544,7 @@ Add this numbered item to the end of `## Current Decision`:
 
 - [ ] **Step 3: Add Evidence Log entry**
 
-Add this entry immediately after `## Evidence Log`:
+Append this entry to the chronological tail of the Evidence Log:
 
 ```markdown
 ### 2026-06-24 - Template CI/deploy boundary
