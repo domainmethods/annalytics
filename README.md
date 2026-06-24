@@ -476,25 +476,43 @@ shell when running the backfill so backfilled deadlines match new writes:
 npx tsx scripts/backfill-retention-fields.ts --project "$GCP_PROJECT_ID"
 ```
 
-### Automatic
+### CI and Optional Deploy
 
-Pushing to `main` triggers `.github/workflows/deploy.yml`:
+Pull requests and pushes to `main` trigger `.github/workflows/deploy.yml`.
+The default template path validates code but does not deploy:
 
-1. Validates knowledge, setup docs/workflows, TypeScript, and tests.
-2. Builds and pushes the Docker image to Artifact Registry.
-3. Deploys Cloud Run with explicit project, region, service account, env vars, Secret Manager bindings, port, and unauthenticated Slack endpoint access.
+1. Installs dependencies.
+2. Validates knowledge, setup docs/workflows, TypeScript, and tests.
+3. Records that deploy was skipped unless it was explicitly requested.
 
-Deployment requires `dbt/manifest.json` and `dbt/catalog.json` to be present in the build workspace. The template workflow fails fast with a clear message if an implementation has not provided those artifacts.
+Template pushes do not deploy by default because `dbt/manifest.json` and
+`dbt/catalog.json` are implementation-specific and gitignored. A deploy can be
+requested in either of two ways:
 
-Required GitHub secrets:
+1. Run the workflow manually on `main` with GitHub Actions `workflow_dispatch`.
+2. In an implementation repository that intentionally provides dbt artifacts in
+   the build workspace, set repository variable
+   `ANNALYTICS_AUTO_DEPLOY=true` to restore push-to-main deploy.
 
-| Secret | Description |
-|--------|-------------|
-| `GCP_PROJECT_ID` | Target GCP project ID |
-| `WIF_PROVIDER` | Workload Identity Federation provider resource name |
-| `WIF_SERVICE_ACCOUNT` | GitHub Actions deploy service account |
-| `GEMINI_API_KEY_CI` | Gemini API key used by Sync Knowledge |
-| `FILE_SEARCH_STORE_ID` | Gemini File Search store ID used by sync, deploy, and benchmark runs |
+When deploy is requested, the workflow builds and pushes the Docker image to
+Artifact Registry, then deploys Cloud Run with explicit project, region,
+service account, env vars, Secret Manager bindings, port, and unauthenticated
+Slack endpoint access.
+
+Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
+present in the build workspace. The deploy job fails fast with a clear message
+if an implementation has not provided those artifacts.
+
+GitHub configuration for CI and optional deploy workflows:
+
+| Name | Type | Description |
+|------|------|-------------|
+| `GCP_PROJECT_ID` | Secret | Target GCP project ID for deploy |
+| `WIF_PROVIDER` | Secret | Workload Identity Federation provider resource name for deploy |
+| `WIF_SERVICE_ACCOUNT` | Secret | GitHub Actions deploy service account |
+| `GEMINI_API_KEY_CI` | Secret | Gemini API key used by Sync Knowledge |
+| `FILE_SEARCH_STORE_ID` | Secret | Gemini File Search store ID used by sync, deploy, and benchmark runs |
+| `ANNALYTICS_AUTO_DEPLOY` | Repository variable | Optional. Set to `true` only in implementation repos that provide dbt artifacts in the build workspace and want push-to-main deploys. |
 
 ### Manual
 

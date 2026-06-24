@@ -30,6 +30,9 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       'Models default to gemini-3.1-pro-preview and gemini-3-flash-preview.',
       'GitHub secrets include GCP_PROJECT_ID, WIF_PROVIDER, WIF_SERVICE_ACCOUNT, GEMINI_API_KEY_CI, FILE_SEARCH_STORE_ID.',
       'Cloud Run uses us-west1 and Secret Manager secrets slack-bot-token, slack-signing-secret, gemini-api-key.',
+      'Template pushes do not deploy by default.',
+      'Manual GitHub Actions deploys use workflow_dispatch.',
+      'Implementation repos may set ANNALYTICS_AUTO_DEPLOY=true when dbt artifacts are available in the build workspace.',
     ].join('\n'),
     '.env.example': [
       'GEMINI_MODEL=gemini-3.1-pro-preview',
@@ -38,9 +41,37 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
     ].join('\n'),
     'docs/trajectory-governance.md': 'Setup simplification records gcloud primary deployment and optional Terraform infrastructure.',
     '.github/workflows/deploy.yml': [
+      'name: Build, Test & Optional Deploy',
+      'on:',
+      '  push:',
+      '    branches: [main]',
+      '  pull_request:',
+      '    branches: [main]',
+      '  workflow_dispatch:',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '  deploy-decision:',
+      '    needs: test',
+      "    if: github.ref == 'refs/heads/main'",
+      '    outputs:',
+      '      should_deploy: ${{ steps.decision.outputs.should_deploy }}',
+      '    steps:',
+      '      - id: decision',
+      '        env:',
+      '          ANNALYTICS_AUTO_DEPLOY: ${{ vars.ANNALYTICS_AUTO_DEPLOY }}',
+      '        run: |',
+      '          echo "should_deploy=false" >> "$GITHUB_OUTPUT"',
+      '          echo "Deploy skipped" >> "$GITHUB_STEP_SUMMARY"',
       'env:',
       '  REGION: us-west1',
+      '  WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}',
+      '  WIF_SERVICE_ACCOUNT: ${{ secrets.WIF_SERVICE_ACCOUNT }}',
+      'deploy:',
+      "  if: github.ref == 'refs/heads/main' && needs.deploy-decision.outputs.should_deploy == 'true'",
       'run: |',
+      '  test -n "${WIF_PROVIDER}"',
+      '  test -n "${WIF_SERVICE_ACCOUNT}"',
       '  gcloud run deploy anna-lytics \\',
       '    --project "${PROJECT_ID}" \\',
       '    --region "${REGION}" \\',
@@ -94,6 +125,88 @@ describe('runSetupCheck', () => {
     expect(result.findings).toContainEqual({
       status: 'warn',
       message: 'dbt artifacts missing; table-reference validation will be skipped until dbt/manifest.json and dbt/catalog.json are present',
+    });
+  });
+
+  it('requires README to document optional deploy controls', async () => {
+    const root = await createRepoFixture({
+      'README.md': [
+        'Use references/ as the primary knowledge authoring surface.',
+        'Run npx tsx scripts/sync-knowledge.ts for manual sync.',
+        'Models default to gemini-3.1-pro-preview and gemini-3-flash-preview.',
+        'GitHub secrets include GCP_PROJECT_ID, WIF_PROVIDER, WIF_SERVICE_ACCOUNT, GEMINI_API_KEY_CI, FILE_SEARCH_STORE_ID.',
+        'Cloud Run uses us-west1 and Secret Manager secrets slack-bot-token, slack-signing-secret, gemini-api-key.',
+      ].join('\n'),
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'README states template pushes do not deploy by default (missing Template pushes do not deploy by default)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'README documents manual GitHub Actions deploy dispatch (missing workflow_dispatch)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'README documents opt-in automatic deploy variable (missing ANNALYTICS_AUTO_DEPLOY)',
+    });
+  });
+
+  it('requires deploy workflow to keep deployment opt-in', async () => {
+    const root = await createRepoFixture({
+      '.github/workflows/deploy.yml': [
+        'name: Build, Test & Deploy',
+        'env:',
+        '  REGION: us-west1',
+        'run: |',
+        '  gcloud run deploy anna-lytics \\',
+        '    --project "${PROJECT_ID}" \\',
+        '    --region "${REGION}" \\',
+        '    --service-account "anna-lytics@${PROJECT_ID}.iam.gserviceaccount.com" \\',
+        '    --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
+        '    --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
+        '    --port 3000 \\',
+        '    --allow-unauthenticated',
+      ].join('\n'),
+    });
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow uses optional-deploy name (missing name: Build, Test & Optional Deploy)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow supports manual dispatch (missing workflow_dispatch:)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow includes deploy-decision job (missing deploy-decision)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow reads ANNALYTICS_AUTO_DEPLOY variable (missing ANNALYTICS_AUTO_DEPLOY)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow records deploy decision output (missing should_deploy)',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: "Deploy workflow gates deploy job on deploy decision output (missing needs.deploy-decision.outputs.should_deploy == 'true')",
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message: 'Deploy workflow validates WIF_PROVIDER before auth (missing test -n "${WIF_PROVIDER}")',
+    });
+    expect(result.findings).toContainEqual({
+      status: 'error',
+      message:
+        'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth (missing test -n "${WIF_SERVICE_ACCOUNT}")',
     });
   });
 

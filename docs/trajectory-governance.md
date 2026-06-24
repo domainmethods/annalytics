@@ -9,9 +9,9 @@ This document records the current development trajectory for Anna Lytics. Read *
 
 Update this document whenever a major product direction, feature deferral, benchmark result, or adversarial audit changes the trajectory — and when you do, update the head sections (Current State, Current Decision, Deferred Work) rather than only appending a dated entry. Dated entries go in the Evidence Log.
 
-## Current State (as of 2026-06-12)
+## Current State (as of 2026-06-24)
 
-The codebase is healthy: ~9.5K source lines, 914 tests passing, typecheck clean, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships.
+The codebase is healthy: typecheck clean, the test suite passing, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships.
 
 | Area | Status |
 |---|---|
@@ -26,6 +26,7 @@ The codebase is healthy: ~9.5K source lines, 914 tests passing, typecheck clean,
 | Latency evidence slice | Not yet run (requires implementation corpus) |
 | Operational trust (Firestore retention, telemetry sink, escalation timers, ✅-reaction promise) | **Completed 2026-06-09** — all four Tranche B items shipped; acceptance criteria satisfied (Evidence Log) |
 | UX-trust surfaces (feedback-loop closure, help/App Home, clarification cancel) | **Completed 2026-06-10** — all three sanctioned items shipped and deployed live the same date (operator rollout amendment, Evidence Log); second-domain-selection precondition satisfied |
+| Template CI/deploy signal | Normal PR and `main` CI validate code without implementation-specific dbt artifacts; Cloud Run deploy is opt-in via `workflow_dispatch` or `ANNALYTICS_AUTO_DEPLOY=true` and still fails fast when requested without artifacts |
 
 ## Current Decision
 
@@ -34,6 +35,7 @@ The codebase is healthy: ~9.5K source lines, 914 tests passing, typecheck clean,
 3. **Operational trust maintenance (Tranche B) is complete** (2026-06-09 Evidence Log). It was maintenance under guardrail #1, not feature expansion, and did not gate on the acceptance run. A system that silently accumulates state forever, collects telemetry nobody can read, or freezes on user-facing promises erodes trust as surely as a wrong answer does. With Tranche B closed, **Tranche A's ReferenceCard repair branch is the sole active tranche.**
 4. **The item-(3) contradiction is resolved.** Teaching impact measurement was listed as a "sanctioned investment" (2026-06-07 entry) and simultaneously as deferred (2026-06-08 entry) with no explanation. Resolution: it is **deferred**, with an explicit blocking condition — it cannot be built meaningfully before a real implementation has promoted teachings to measure against benchmark slices. The 2026-06-07 "sanctioned" framing is withdrawn.
 5. **WhatsApp Cloud API prototype is approved only as a gated channel experiment.** It stays behind `WHATSAPP_ENABLED=false` by default, uses allowlisted test numbers, and does not count as production product surface until manual acceptance evidence is recorded. Slack remains the analyst surface; WhatsApp-origin async escalation creation and resolution routing remain out of scope. OpenWA remains out of product runtime.
+6. **Template CI/deploy signal maintenance is approved as trust maintenance.** The active product queue is unchanged: second-domain selection still waits on real production feedback, and WhatsApp remains a gated prototype. The deploy workflow is allowed to change so the reusable template's `main` signal is not red merely because implementation-specific dbt artifacts are absent. Requested deploys still validate those artifacts strictly.
 
 ## Tranche Horizon
 
@@ -421,3 +423,11 @@ Dated decision history, preserved verbatim. Read the head sections above for cur
 - **Scope:** the template parser now fails clearly when `manifest.nodes` is malformed, tolerates partial catalog/model column maps, coerces blank catalog-only types to `UNKNOWN`, and emits parser-owned dbt artifact schema-version warnings for startup logging. This is defect hardening and observability only; it does not promote a new product tranche.
 - **Evidence artifacts (operator-local, gitignored per the template boundary; names only):** `benchmarks/results/2026-06-23.json`, `2026-06-23-summary.md`, `2026-06-23-referencecard-acceptance.md`. Provenance: git SHA `5858f2b` for the code under test.
 - **Template boundary held:** live ReferenceCards, live corpus, dbt artifacts, raw benchmark results, project/store identifiers, and exact client content remain ignored and uncommitted. The tracked change set contains only template code, focused tests, and design/plan/governance docs.
+
+### 2026-06-24 - Template CI/deploy boundary
+
+- Decision: treat the red `main` deploy caused by absent gitignored dbt artifacts as an operational trust signal defect, not as a product tranche or a reason to commit implementation artifacts.
+- Change: `.github/workflows/deploy.yml` now runs validation by default and makes Cloud Run deploy opt-in through `workflow_dispatch` or `ANNALYTICS_AUTO_DEPLOY=true`; deploy still fails fast when requested without required secrets or dbt artifacts.
+- Documentation: README now describes CI and optional deploy behavior, including the implementation-repo variable for restoring push-to-main deploy.
+- Guardrail: `scripts/setup-check.ts` and `tests/scripts/setup-check.test.ts` now require the optional-deploy workflow and README tokens so the boundary cannot silently regress.
+- Template boundary held: no live dbt artifacts, project IDs, File Search store IDs, ReferenceCards, corpus retargets, benchmark evidence, or Cloud Run URLs were committed.
