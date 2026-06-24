@@ -1,6 +1,8 @@
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
 
+type FirestoreTimestamp = { toDate: () => Date };
+
 /** Retention window for response_context docs. The Firestore TTL policy (see
  *  `infra/firestore.ttls.json`) targets `expiresAt` to delete expired docs.
  *  Feedback aggregation windows (getResponseContextsSince) must not exceed
@@ -11,18 +13,37 @@ const RETENTION_DAYS = (() => {
   return Number.isFinite(v) && v > 0 ? v : 90;
 })();
 
-function responseContextDocId(ctx: ResponseContext): string {
-  if (ctx.surface === 'whatsapp') {
-    return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
   }
-  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
+  if (
+    typeof value === 'object'
+    && value !== null
+    && 'toDate' in value
+    && typeof (value as { toDate?: unknown }).toDate === 'function'
+  ) {
+    try {
+      const candidate = (value as FirestoreTimestamp).toDate();
+      return candidate instanceof Date && Number.isFinite(candidate.getTime()) ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function isExpiredResponseContext(data: { expiresAt?: unknown }): boolean {
+  if (data.expiresAt === undefined) return false;
+  const expiresAt = toDate(data.expiresAt);
+  return expiresAt !== null && expiresAt.getTime() <= Date.now();
 }
 
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   const now = new Date();
   await getDb()
     .collection('response_context')
-    .doc(responseContextDocId(ctx))
+    .doc(responseContextDocumentId(ctx))
     .set({
       ...ctx,
       createdAt: now,
@@ -58,6 +79,25 @@ export async function recordFeedback(
   }
 }
 
+export async function recordFeedbackByResponseContextKey(
+  responseContextKey: string,
+  feedbackType: 'positive' | 'negative',
+): Promise<void> {
+  await getDb()
+    .collection('response_context')
+    .doc(responseContextKey)
+    .update({
+      negativeFeedback: feedbackType === 'negative',
+    });
+}
+
+export function responseContextDocumentId(ctx: ResponseContext): string {
+  if (ctx.surface === 'whatsapp') {
+    return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
+  }
+  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
+}
+
 export async function getResponseContext(
   compoundKey: string,
 ): Promise<ResponseContext | null> {
@@ -67,7 +107,9 @@ export async function getResponseContext(
     .get();
 
   if (!doc.exists) return null;
-  return doc.data() as ResponseContext;
+  const data = doc.data() as (ResponseContext & { expiresAt?: unknown }) | undefined;
+  if (!data || isExpiredResponseContext(data)) return null;
+  return data;
 }
 
 export async function getLatestResponseContext(

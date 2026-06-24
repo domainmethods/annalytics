@@ -28,6 +28,7 @@ import {
   getResponseContext,
   getLatestResponseContext,
   getResponseContextsSince,
+  responseContextDocumentId,
 } from '../../src/state/responseContext.js';
 
 const sampleContext = () => ({
@@ -73,6 +74,34 @@ describe('saveResponseContext', () => {
 
     expect(mockDoc).toHaveBeenCalledWith('whatsapp:15551234567_outbound%2FA%2BB%3D');
     expect(mockSet).toHaveBeenCalled();
+  });
+
+  it('exports the encoded WhatsApp response context document id', () => {
+    expect(responseContextDocumentId({
+      surface: 'whatsapp',
+      responseId: 'trace-1',
+      threadTs: 'whatsapp:15551234567',
+      statusMsgTs: 'wamid.outbound/A+B=',
+      clarifiedQuestion: 'What was revenue?',
+      assumptions: [],
+      reasoningChain: '',
+      generatedSql: 'SELECT 1',
+      explanation: 'Revenue was 1.',
+      tablesUsed: [],
+      confidence: 'high',
+      clarificationConfidence: 'high',
+      primaryAgentConfidence: 'high',
+      queryResults: { rowCount: 1, columnNames: ['revenue'], bytesProcessed: 0 },
+      pipelineDurationMs: 10,
+      traceId: 'trace-1',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      groundingCitations: [],
+      teachingsUsed: [],
+      supervisorNotes: '',
+      supervisorConfidence: 'high',
+      supervisorDecision: 'required',
+      pipelineMode: 'full_quality_loop',
+    })).toBe('whatsapp:15551234567_wamid.outbound%2FA%2BB%3D');
   });
 
   it('writes expiresAt as a Date 90 days after createdAt by default', async () => {
@@ -172,6 +201,42 @@ describe('getResponseContext', () => {
     expect(result).not.toBeNull();
     expect(result!.responseId).toBe('r1');
     expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+  });
+
+  it('returns null when the response context Date expiry has passed', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        responseId: 'r1',
+        threadTs: 'thread-1',
+        statusMsgTs: 'msg-1',
+        generatedSql: 'SELECT 1',
+        expiresAt: new Date(Date.now() - 60 * 60 * 1000),
+      }),
+    });
+
+    const result = await getResponseContext('thread-1_msg-1');
+
+    expect(result).toBeNull();
+    expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+  });
+
+  it('returns context when the response context Firestore timestamp expiry is still valid', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        responseId: 'r1',
+        threadTs: 'thread-1',
+        statusMsgTs: 'msg-1',
+        generatedSql: 'SELECT 1',
+        expiresAt: { toDate: () => new Date(Date.now() + 60 * 60 * 1000) },
+      }),
+    });
+
+    const result = await getResponseContext('thread-1_msg-1');
+
+    expect(result).not.toBeNull();
+    expect(result!.responseId).toBe('r1');
   });
 
   it('returns null when doc does not exist', async () => {

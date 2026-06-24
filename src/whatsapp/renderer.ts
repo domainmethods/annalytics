@@ -29,6 +29,7 @@ export interface RenderWhatsAppQueryAnswerInput {
   totalRows: number;
   assumptions: string[];
   traceId: string;
+  includeRows?: boolean;
 }
 
 function toAscii(value: string): string {
@@ -107,7 +108,7 @@ function capMessageWithFooter(body: string, footer: string, separator = '\n\n'):
 export function renderWhatsAppQueryAnswer(input: RenderWhatsAppQueryAnswerInput): string {
   const sections = [
     input.explanation.trim(),
-    renderRows(input),
+    ...(input.includeRows === false ? [] : [renderRows(input)]),
   ];
 
   if (input.assumptions.length > 0) {
@@ -142,4 +143,56 @@ export function renderWhatsAppSafeError(traceId: string): string {
     `(trace: ${traceId})`,
     ' ',
   );
+}
+
+export function renderWhatsAppFeedbackAck(kind: 'positive' | 'negative'): string {
+  return kind === 'positive'
+    ? 'Got it. I marked this answer as useful.'
+    : 'Got it. I logged this feedback for review.';
+}
+
+export function renderWhatsAppExpiredAction(): string {
+  return 'I cannot find that answer context anymore. Ask the question again if you want me to re-check it.';
+}
+
+export function renderWhatsAppSql(sql: string, traceId: string): string {
+  return capMessageWithFooter(`SQL:\n${sql}`, `(trace: ${traceId})`);
+}
+
+export function renderWhatsAppReasoning(input: {
+  explanation: string;
+  assumptions: string[];
+  reasoningChain: string;
+  supervisorNotes?: string;
+  groundingCitations: Array<{ sourceFile: string; quote?: string }>;
+  traceId: string;
+}): string {
+  const sections = [
+    'Reasoning',
+    input.explanation.trim(),
+  ];
+
+  if (input.reasoningChain.trim()) {
+    sections.push(`Steps:\n${input.reasoningChain.trim()}`);
+  }
+
+  if (input.assumptions.length > 0) {
+    sections.push([
+      'Assumptions:',
+      ...input.assumptions.map((assumption) => `- ${assumption}`),
+    ].join('\n'));
+  }
+
+  if (input.supervisorNotes?.trim()) {
+    sections.push(`Review:\n${input.supervisorNotes.trim()}`);
+  }
+
+  if (input.groundingCitations.length > 0) {
+    sections.push([
+      'Sources:',
+      ...input.groundingCitations.map((citation) => `- ${citation.sourceFile}`),
+    ].join('\n'));
+  }
+
+  return capMessageWithFooter(sections.join('\n\n'), `(trace: ${input.traceId})`);
 }

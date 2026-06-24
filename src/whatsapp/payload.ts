@@ -8,9 +8,19 @@ export interface UnsupportedWhatsAppMessage {
   type: string;
 }
 
+export interface WhatsAppInteractiveAction {
+  providerMessageId: string;
+  conversation: ConversationRef;
+  receivedAt: Date;
+  actionId: string;
+  actionTitle: string;
+  kind: 'button_reply' | 'list_reply';
+}
+
 export interface ParsedWhatsAppWebhook {
   messages: ChannelMessage[];
   unsupported: UnsupportedWhatsAppMessage[];
+  actions: WhatsAppInteractiveAction[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -48,7 +58,7 @@ export function parseWhatsAppWebhookPayload(
   payload: unknown,
   configuredPhoneNumberId: string,
 ): ParsedWhatsAppWebhook {
-  const parsed: ParsedWhatsAppWebhook = { messages: [], unsupported: [] };
+  const parsed: ParsedWhatsAppWebhook = { messages: [], unsupported: [], actions: [] };
 
   for (const entry of getEntries(payload)) {
     for (const change of getChanges(entry)) {
@@ -68,6 +78,41 @@ export function parseWhatsAppWebhookPayload(
 
         const conversation = conversationForWaId(from);
         const receivedAt = toReceivedAt(message.timestamp);
+        if (type === 'interactive') {
+          const interactive = asRecord(message.interactive);
+          const interactiveType = typeof interactive?.type === 'string' ? interactive.type : '';
+          if (interactiveType === 'button_reply' || interactiveType === 'list_reply') {
+            const payload = asRecord(interactive?.[interactiveType]);
+            const actionId = typeof payload?.id === 'string' ? payload.id : '';
+            const actionTitle = typeof payload?.title === 'string' ? payload.title : '';
+            if (actionId) {
+              parsed.actions.push({
+                providerMessageId: id,
+                conversation,
+                receivedAt,
+                actionId,
+                actionTitle,
+                kind: interactiveType,
+              });
+            } else {
+              parsed.unsupported.push({
+                providerMessageId: id,
+                conversation,
+                receivedAt,
+                type: `interactive:${interactiveType}`,
+              });
+            }
+          } else {
+            parsed.unsupported.push({
+              providerMessageId: id,
+              conversation,
+              receivedAt,
+              type: interactiveType ? `interactive:${interactiveType}` : 'interactive',
+            });
+          }
+          continue;
+        }
+
         if (type !== 'text') {
           parsed.unsupported.push({ providerMessageId: id, conversation, receivedAt, type });
           continue;

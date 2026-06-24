@@ -1,0 +1,390 @@
+import type { WhatsAppClient } from './client.js';
+import type { WhatsAppInteractiveAction } from './payload.js';
+import type { TableContext } from '../dbt/types.js';
+import type { PipelineConfig } from '../pipeline.js';
+import type { ResponseContext } from '../types.js';
+import { rootLogger } from '../logging.js';
+import {
+  claimWhatsAppEvent,
+  markWhatsAppEventVisible,
+  releaseWhatsAppEventClaim,
+} from '../state/whatsappEventDedupe.js';
+import {
+  createWhatsAppActionContext,
+  getWhatsAppActionContext,
+} from '../state/whatsappActionContext.js';
+import {
+  getResponseContext,
+  recordFeedbackByResponseContextKey,
+} from '../state/responseContext.js';
+import { saveWhatsAppPendingFeedback } from '../state/whatsappPendingFeedback.js';
+import { buildWhatsAppActionId, parseWhatsAppActionId, type WhatsAppActionKind } from './actionIds.js';
+import { buildAnswerActionsList, buildProblemReasonPicker } from './interactive.js';
+import {
+  renderWhatsAppExpiredAction,
+  renderWhatsAppFeedbackAck,
+  renderWhatsAppReasoning,
+  renderWhatsAppSafeError,
+  renderWhatsAppSql,
+} from './renderer.js';
+import {
+  renderWhatsAppSummaryOverride,
+  renderWhatsAppTableOverride,
+} from './overrides.js';
+
+export interface HandleWhatsAppActionsDeps {
+  client: WhatsAppClient;
+  tables: TableContext[];
+  config: PipelineConfig;
+  rateLimitPerHour: number;
+  allowedWaIds: string[];
+}
+
+function isAllowed(userId: string, allowedWaIds: readonly string[]): boolean {
+  return allowedWaIds.length === 0 || allowedWaIds.includes(userId);
+}
+
+function isFirestoreNotFoundError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return false;
+  }
+
+  const code = (err as { code?: unknown }).code;
+  return code === 5 || code === 'not-found';
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function sendOverrideFailure(input: {
+  action: WhatsAppInteractiveAction;
+  deps: HandleWhatsAppActionsDeps;
+  responseContext: ResponseContext;
+  actionKind: 'override_table' | 'override_summary';
+  err: unknown;
+}): Promise<void> {
+  rootLogger.error(
+    {
+      error: errorMessage(input.err),
+      traceId: input.responseContext.traceId,
+      actionKind: input.actionKind,
+    },
+    'whatsapp.override_action_failed',
+  );
+  await input.deps.client.sendText(
+    input.action.conversation,
+    renderWhatsAppSafeError(input.responseContext.traceId),
+  );
+}
+
+async function createActionId(input: {
+  kind: WhatsAppActionKind;
+  responseContextKey: string;
+  conversationId: string;
+  userId: string;
+}): Promise<string> {
+  const contextId = await createWhatsAppActionContext(input);
+  return buildWhatsAppActionId(input.kind, contextId);
+}
+
+async function loadAction(
+  actionId: string,
+  actionConversationId: string,
+  actionUserId: string,
+) {
+  const parsed = parseWhatsAppActionId(actionId);
+  if (!parsed) return null;
+  const stored = await getWhatsAppActionContext(parsed.contextId);
+  if (!stored) return null;
+  if (stored.kind !== parsed.kind) return null;
+  if (stored.conversationId !== actionConversationId) return null;
+  if (stored.userId !== actionUserId) return null;
+  return { kind: parsed.kind, context: stored };
+}
+
+async function sendProblemPicker(
+  action: WhatsAppInteractiveAction,
+  deps: HandleWhatsAppActionsDeps,
+  responseContextKey: string,
+): Promise<void> {
+  const base = {
+    responseContextKey,
+    conversationId: action.conversation.conversationId,
+    userId: action.conversation.userId,
+  };
+
+  const wrongNumberId = await createActionId({ ...base, kind: 'reason_wrong_number' });
+  const wrongDataId = await createActionId({ ...base, kind: 'reason_wrong_data' });
+  const notAskedId = await createActionId({ ...base, kind: 'reason_not_asked' });
+  const otherId = await createActionId({ ...base, kind: 'reason_other' });
+
+  await deps.client.sendInteractive(
+    action.conversation,
+    buildProblemReasonPicker({
+      wrongNumberId,
+      wrongDataId,
+      notAskedId,
+      otherId,
+    }),
+  );
+}
+
+async function sendActionsList(
+  action: WhatsAppInteractiveAction,
+  deps: HandleWhatsAppActionsDeps,
+  responseContextKey: string,
+  responseContext: ResponseContext,
+): Promise<void> {
+  const rowCount = responseContext.queryResults.rowCount;
+  const columnCount = responseContext.queryResults.columnNames.length;
+  const base = {
+    responseContextKey,
+    conversationId: action.conversation.conversationId,
+    userId: action.conversation.userId,
+  };
+
+  const showReasoningId = await createActionId({ ...base, kind: 'show_reasoning' });
+  const showSqlId = await createActionId({ ...base, kind: 'show_sql' });
+  const tableId = await createActionId({ ...base, kind: 'override_table' });
+  const summaryId = await createActionId({ ...base, kind: 'override_summary' });
+
+  await deps.client.sendInteractive(
+    action.conversation,
+    buildAnswerActionsList({
+      showReasoningId,
+      showSqlId,
+      tableId,
+      summaryId,
+      rowCount,
+      columnCount,
+    }),
+  );
+}
+
+async function recordFeedbackAndSendText(input: {
+  action: WhatsAppInteractiveAction;
+  deps: HandleWhatsAppActionsDeps;
+  responseContextKey: string;
+  feedbackType: 'positive' | 'negative';
+  successText: string;
+}): Promise<void> {
+  const responseContext = await getResponseContext(input.responseContextKey);
+  if (!responseContext) {
+    await input.deps.client.sendText(input.action.conversation, renderWhatsAppExpiredAction());
+    return;
+  }
+
+  try {
+    await recordFeedbackByResponseContextKey(input.responseContextKey, input.feedbackType);
+    await input.deps.client.sendText(input.action.conversation, input.successText);
+  } catch (err) {
+    if (!isFirestoreNotFoundError(err)) {
+      throw err;
+    }
+
+    await input.deps.client.sendText(input.action.conversation, renderWhatsAppExpiredAction());
+  }
+}
+
+export async function handleWhatsAppActions(
+  actions: WhatsAppInteractiveAction[],
+  deps: HandleWhatsAppActionsDeps,
+): Promise<void> {
+  for (const action of actions) {
+    if (!isAllowed(action.conversation.userId, deps.allowedWaIds)) continue;
+
+    const claimed = await claimWhatsAppEvent(action.providerMessageId);
+    if (!claimed) continue;
+
+    let visibleResponse = false;
+    try {
+      const loaded = await loadAction(
+        action.actionId,
+        action.conversation.conversationId,
+        action.conversation.userId,
+      );
+      if (!loaded) {
+        await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+        visibleResponse = true;
+        await markWhatsAppEventVisible(action.providerMessageId).catch(() => {});
+        continue;
+      }
+
+      const { responseContextKey } = loaded.context;
+      switch (loaded.kind) {
+        case 'ok':
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'positive',
+            successText: renderWhatsAppFeedbackAck('positive'),
+          });
+          visibleResponse = true;
+          break;
+
+        case 'problem':
+          await sendProblemPicker(action, deps, responseContextKey);
+          visibleResponse = true;
+          break;
+
+        case 'actions': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (responseContext) {
+            await sendActionsList(action, deps, responseContextKey, responseContext);
+          } else {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          }
+          visibleResponse = true;
+          break;
+        }
+
+        case 'reason_wrong_number':
+        case 'reason_wrong_data':
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'negative',
+            successText: renderWhatsAppFeedbackAck('negative'),
+          });
+          visibleResponse = true;
+          break;
+
+        case 'reason_not_asked':
+          await recordFeedbackAndSendText({
+            action,
+            deps,
+            responseContextKey,
+            feedbackType: 'negative',
+            successText: 'Got it. Reply with the question you meant to ask, and I will take another run at it.',
+          });
+          visibleResponse = true;
+          break;
+
+        case 'show_sql': {
+          const responseContext = await getResponseContext(responseContextKey);
+          await deps.client.sendText(
+            action.conversation,
+            responseContext
+              ? renderWhatsAppSql(responseContext.generatedSql, responseContext.traceId)
+              : renderWhatsAppExpiredAction(),
+          );
+          visibleResponse = true;
+          break;
+        }
+
+        case 'show_reasoning': {
+          const responseContext = await getResponseContext(responseContextKey);
+          await deps.client.sendText(
+            action.conversation,
+            responseContext
+              ? renderWhatsAppReasoning({
+                explanation: responseContext.explanation,
+                assumptions: responseContext.assumptions,
+                reasoningChain: responseContext.reasoningChain,
+                supervisorNotes: responseContext.supervisorNotes,
+                groundingCitations: responseContext.groundingCitations
+                  .map(citation => ({ sourceFile: citation.sourceFile })),
+                traceId: responseContext.traceId,
+              })
+              : renderWhatsAppExpiredAction(),
+          );
+          visibleResponse = true;
+          break;
+        }
+
+        case 'reason_other': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            await saveWhatsAppPendingFeedback({
+              conversationId: action.conversation.conversationId,
+              userId: action.conversation.userId,
+              responseContextKey,
+              traceId: responseContext.traceId,
+              clarifiedQuestion: responseContext.clarifiedQuestion,
+            });
+            await deps.client.sendText(
+              action.conversation,
+              'Reply with what was wrong, and I will attach it to this answer.',
+            );
+          }
+          visibleResponse = true;
+          break;
+        }
+
+        case 'override_table': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            let text: string;
+            try {
+              text = await renderWhatsAppTableOverride(responseContext, {
+                geminiApiKey: deps.config.geminiApiKey,
+                maxBytesProcessed: deps.config.maxBytesProcessed,
+                maxResultRows: deps.config.maxResultRows,
+                queryTimeoutMs: deps.config.queryTimeoutMs,
+              });
+            } catch (err) {
+              await sendOverrideFailure({
+                action,
+                deps,
+                responseContext,
+                actionKind: 'override_table',
+                err,
+              });
+              visibleResponse = true;
+              break;
+            }
+            await deps.client.sendText(action.conversation, text);
+          }
+          visibleResponse = true;
+          break;
+        }
+
+        case 'override_summary': {
+          const responseContext = await getResponseContext(responseContextKey);
+          if (!responseContext) {
+            await deps.client.sendText(action.conversation, renderWhatsAppExpiredAction());
+          } else {
+            let text: string;
+            try {
+              text = await renderWhatsAppSummaryOverride(responseContext, {
+                geminiApiKey: deps.config.geminiApiKey,
+                maxBytesProcessed: deps.config.maxBytesProcessed,
+                maxResultRows: deps.config.maxResultRows,
+                queryTimeoutMs: deps.config.queryTimeoutMs,
+              });
+            } catch (err) {
+              await sendOverrideFailure({
+                action,
+                deps,
+                responseContext,
+                actionKind: 'override_summary',
+                err,
+              });
+              visibleResponse = true;
+              break;
+            }
+            await deps.client.sendText(action.conversation, text);
+          }
+          visibleResponse = true;
+          break;
+        }
+      }
+
+      if (visibleResponse) {
+        await markWhatsAppEventVisible(action.providerMessageId).catch(() => {});
+      }
+    } catch (err) {
+      if (!visibleResponse) {
+        await releaseWhatsAppEventClaim(action.providerMessageId).catch(() => {});
+      }
+      throw err;
+    }
+  }
+}

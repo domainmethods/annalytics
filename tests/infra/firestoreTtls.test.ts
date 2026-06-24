@@ -35,6 +35,8 @@ describe('infra/firestore.ttls.json', () => {
       { collectionGroup: 'dbt_run_history', field: 'expiresAt' },
       { collectionGroup: 'escalation_state', field: 'retainUntil' },
       { collectionGroup: 'response_context', field: 'expiresAt' },
+      { collectionGroup: 'whatsapp_action_context', field: 'expiresAt' },
+      { collectionGroup: 'whatsapp_pending_feedback_notes', field: 'expiresAt' },
       { collectionGroup: 'pending_notifications', field: 'expiresAt' },
     ];
 

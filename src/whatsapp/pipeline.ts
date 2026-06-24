@@ -8,7 +8,7 @@ import { executeQuery } from '../execution/runner.js';
 import { createLogger, createTraceId, logStage, rootLogger } from '../logging.js';
 import { qualityLoop, type QualityResult } from '../qualityLoop.js';
 import { saveClarificationState } from '../state/clarificationState.js';
-import { getLatestNegativeFeedback } from '../state/responseContext.js';
+import { getLatestNegativeFeedback, responseContextDocumentId } from '../state/responseContext.js';
 import { getSampleRows } from '../dbt/sampleRowCache.js';
 import { getTeachingSummaries } from '../teachings/summaryMap.js';
 import {
@@ -51,6 +51,11 @@ export interface RunWhatsAppPipelineInput {
   client: ChannelClient;
   answerQuestion: (input: AnswerWhatsAppQuestionInput) => Promise<WhatsAppPipelineOutcome>;
   saveResponseContext: (ctx: ResponseContext) => Promise<void>;
+  sendAnswerControls?: (
+    conversation: ChannelMessage['conversation'],
+    responseContextKey: string,
+    ctx: ResponseContext,
+  ) => Promise<void>;
   markVisible?: () => Promise<void>;
   tables?: TableContext[];
   config?: PipelineConfig;
@@ -124,14 +129,26 @@ export async function runWhatsAppPipeline(
       traceId: outcome.traceId,
     });
     const sent = await sendTerminalText(rendered);
+    const savedContext: ResponseContext = {
+      ...outcome.responseContext,
+      threadTs: conversationId,
+      statusMsgTs: sent.messageId,
+      surface: 'whatsapp',
+    };
 
     try {
-      await input.saveResponseContext({
-        ...outcome.responseContext,
-        threadTs: conversationId,
-        statusMsgTs: sent.messageId,
-        surface: 'whatsapp',
-      });
+      await input.saveResponseContext(savedContext);
+      if (input.sendAnswerControls) {
+        try {
+          await input.sendAnswerControls(
+            message.conversation,
+            responseContextDocumentId(savedContext),
+            savedContext,
+          );
+        } catch (err) {
+          logger.error({ err }, 'whatsapp.answer_controls_send_failed');
+        }
+      }
     } catch (err) {
       logger.error({ err }, 'whatsapp.response_context_save_failed');
     }

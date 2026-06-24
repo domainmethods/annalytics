@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChannelClient, ChannelMessage } from '../../src/channels/types.js';
+import type { ChannelMessage } from '../../src/channels/types.js';
 import type { TableContext } from '../../src/dbt/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ClarificationState } from '../../src/state/clarificationState.js';
+import type { ResponseContext } from '../../src/types.js';
+import type { WhatsAppClient } from '../../src/whatsapp/client.js';
 import type { EscalationState } from '../../src/types.js';
 import type { UnsupportedWhatsAppMessage } from '../../src/whatsapp/payload.js';
 
@@ -18,6 +20,19 @@ vi.mock('../../src/state/clarificationState.js', () => ({
 }));
 vi.mock('../../src/state/escalationState.js', () => ({ getEscalationByThread: vi.fn() }));
 vi.mock('../../src/state/responseContext.js', () => ({ saveResponseContext: vi.fn() }));
+vi.mock('../../src/state/whatsappActionContext.js', () => ({
+  createWhatsAppActionContext: vi.fn(),
+}));
+vi.mock('../../src/state/whatsappPendingFeedback.js', () => ({
+  getWhatsAppPendingFeedback: vi.fn(),
+  deleteWhatsAppPendingFeedback: vi.fn(),
+}));
+vi.mock('../../src/state/feedbackNotes.js', () => ({
+  saveFeedbackNote: vi.fn(),
+}));
+vi.mock('../../src/logging.js', () => ({
+  rootLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
 vi.mock('../../src/whatsapp/pipeline.js', () => ({
   runWhatsAppPipeline: vi.fn(),
   answerWhatsAppQuestion: vi.fn(),
@@ -27,6 +42,13 @@ import { checkRateLimit } from '../../src/state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
 import { getEscalationByThread } from '../../src/state/escalationState.js';
 import { saveResponseContext } from '../../src/state/responseContext.js';
+import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
+import { createWhatsAppActionContext } from '../../src/state/whatsappActionContext.js';
+import { rootLogger } from '../../src/logging.js';
+import {
+  deleteWhatsAppPendingFeedback,
+  getWhatsAppPendingFeedback,
+} from '../../src/state/whatsappPendingFeedback.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
@@ -47,6 +69,11 @@ const mockDeleteClarificationState = vi.mocked(deleteClarificationState);
 const mockGetEscalationByThread = vi.mocked(getEscalationByThread);
 const mockRunWhatsAppPipeline = vi.mocked(runWhatsAppPipeline);
 const mockAnswerWhatsAppQuestion = vi.mocked(answerWhatsAppQuestion);
+const mockCreateWhatsAppActionContext = vi.mocked(createWhatsAppActionContext);
+const mockGetWhatsAppPendingFeedback = vi.mocked(getWhatsAppPendingFeedback);
+const mockDeleteWhatsAppPendingFeedback = vi.mocked(deleteWhatsAppPendingFeedback);
+const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
+const mockRootLoggerWarn = vi.mocked(rootLogger.warn);
 
 const conversation = {
   surface: 'whatsapp' as const,
@@ -101,9 +128,10 @@ function unsupportedMessage(
   };
 }
 
-function client(): ChannelClient {
+function client(): WhatsAppClient {
   return {
     sendText: vi.fn().mockResolvedValue({ messageId: 'outbound.1' }),
+    sendInteractive: vi.fn().mockResolvedValue({ messageId: 'outbound.interactive' }),
   };
 }
 
@@ -164,6 +192,9 @@ describe('handleWhatsAppMessages', () => {
     mockMarkWhatsAppEventVisible.mockResolvedValue(undefined);
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    mockGetWhatsAppPendingFeedback.mockResolvedValue(null);
+    mockDeleteWhatsAppPendingFeedback.mockResolvedValue(undefined);
+    mockSaveFeedbackNote.mockResolvedValue(undefined);
     mockGetClarificationState.mockResolvedValue(null);
     mockDeleteClarificationState.mockResolvedValue(undefined);
     mockGetEscalationByThread.mockResolvedValue(null);
@@ -173,6 +204,7 @@ describe('handleWhatsAppMessages', () => {
       questions: ['Which metric should I use?'],
       traceId: 'trace-answerer',
     });
+    mockCreateWhatsAppActionContext.mockResolvedValue('ctx_default');
   });
 
   it('runs the WhatsApp pipeline for allowed text message', async () => {
@@ -208,6 +240,58 @@ describe('handleWhatsAppMessages', () => {
       tables,
       config,
     });
+  });
+
+  it('wires answer controls into the pipeline and sends feedback buttons', async () => {
+    const inbound = message();
+    const dependencies = deps();
+    mockCreateWhatsAppActionContext
+      .mockResolvedValueOnce('ctx_ok')
+      .mockResolvedValueOnce('ctx_problem')
+      .mockResolvedValueOnce('ctx_actions');
+
+    await handleWhatsAppMessages([inbound], dependencies);
+
+    const runInput = mockRunWhatsAppPipeline.mock.calls[0][0];
+    expect(runInput.sendAnswerControls).toEqual(expect.any(Function));
+
+    await runInput.sendAnswerControls?.(
+      conversation,
+      'response-key',
+      {} as ResponseContext,
+    );
+
+    expect(mockCreateWhatsAppActionContext).toHaveBeenCalledTimes(3);
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(1, {
+      kind: 'ok',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(2, {
+      kind: 'problem',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(mockCreateWhatsAppActionContext).toHaveBeenNthCalledWith(3, {
+      kind: 'actions',
+      responseContextKey: 'response-key',
+      conversationId: conversation.conversationId,
+      userId: conversation.userId,
+    });
+    expect(dependencies.client.sendInteractive).toHaveBeenCalledWith(
+      conversation,
+      {
+        kind: 'reply_buttons',
+        body: 'Was this answer useful?',
+        buttons: [
+          { id: 'wa:v1:ok:ctx_ok', title: 'Looks right' },
+          { id: 'wa:v1:problem:ctx_problem', title: 'Problem' },
+          { id: 'wa:v1:actions:ctx_actions', title: 'Actions' },
+        ],
+      },
+    );
   });
 
   it('skips unknown users when allowlist configured', async () => {
@@ -250,6 +334,125 @@ describe('handleWhatsAppMessages', () => {
     expect(vi.mocked(dependencies.client.sendText).mock.invocationCallOrder[0])
       .toBeLessThan(mockMarkWhatsAppEventVisible.mock.invocationCallOrder[0]);
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+  });
+
+  it('captures pending WhatsApp free-text feedback before running the pipeline', async () => {
+    const dependencies = deps();
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies);
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledWith({
+      note: 'It included refunded orders.',
+      userId: '15551234567',
+      threadTs: 'whatsapp:15551234567',
+      channel: 'whatsapp:15551234567',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+    });
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).toHaveBeenCalledWith(
+      conversation,
+      'Got it. I logged this feedback for review.',
+    );
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+  });
+
+  it('keeps the event claim when pending feedback ack fails after save and delete', async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.client.sendText).mockRejectedValue(new Error('ack failed'));
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await expect(handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies)).resolves.toBeUndefined();
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledOnce();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).toHaveBeenCalledWith(
+      conversation,
+      'Got it. I logged this feedback for review.',
+    );
+    expect(mockMarkWhatsAppEventVisible).toHaveBeenCalledWith('wamid.1');
+    const [logContext, logKey] = mockRootLoggerWarn.mock.calls[0];
+    expect(logContext).toEqual(expect.objectContaining({
+      err: expect.any(Error),
+      providerMessageId: 'wamid.1',
+      traceId: 'trace-1',
+    }));
+    expect(logContext).not.toHaveProperty('conversationId');
+    expect(logKey).toBe('whatsapp.pending_feedback_ack_failed');
+    expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+  });
+
+  it('releases the event claim when pending feedback delete fails after save', async () => {
+    const dependencies = deps();
+    mockDeleteWhatsAppPendingFeedback.mockRejectedValue(new Error('delete failed'));
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15551234567',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await expect(handleWhatsAppMessages([
+      message({ text: 'It included refunded orders.' }),
+    ], dependencies)).rejects.toThrow('delete failed');
+
+    expect(mockSaveFeedbackNote).toHaveBeenCalledOnce();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(dependencies.client.sendText).not.toHaveBeenCalled();
+    expect(mockReleaseWhatsAppEventClaim).toHaveBeenCalledWith('wamid.1');
+    expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+  });
+
+  it('ignores pending WhatsApp feedback for a different user and runs the pipeline', async () => {
+    const dependencies = deps();
+    const inbound = message();
+    mockGetWhatsAppPendingFeedback.mockResolvedValue({
+      conversationId: 'whatsapp:15551234567',
+      userId: '15557654321',
+      responseContextKey: 'response-key',
+      traceId: 'trace-1',
+      clarifiedQuestion: 'What was revenue?',
+      createdAt: new Date('2026-06-23T00:00:00.000Z'),
+      expiresAt: new Date('2026-06-23T00:30:00.000Z'),
+    });
+
+    await handleWhatsAppMessages([inbound], dependencies);
+
+    expect(mockSaveFeedbackNote).not.toHaveBeenCalled();
+    expect(mockDeleteWhatsAppPendingFeedback).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(mockCheckRateLimit).toHaveBeenCalledWith('whatsapp:15551234567', 30);
+    expect(mockRunWhatsAppPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      message: inbound,
+      client: dependencies.client,
+    }));
     expect(mockReleaseWhatsAppEventClaim).not.toHaveBeenCalled();
   });
 

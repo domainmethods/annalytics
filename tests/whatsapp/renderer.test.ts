@@ -4,6 +4,10 @@ import {
   renderWhatsAppClarification,
   renderWhatsAppUnsupported,
   renderWhatsAppSafeError,
+  renderWhatsAppReasoning,
+  renderWhatsAppSql,
+  renderWhatsAppFeedbackAck,
+  renderWhatsAppExpiredAction,
 } from '../../src/whatsapp/renderer.js';
 
 describe('WhatsApp renderer', () => {
@@ -107,5 +111,29 @@ describe('WhatsApp renderer', () => {
   it('renders unsupported and safe error text', () => {
     expect(renderWhatsAppUnsupported()).toBe('I can only answer text questions in this WhatsApp prototype.');
     expect(renderWhatsAppSafeError('trace-4')).toBe("I couldn't complete that request safely. Please try again or ask in Slack. (trace: trace-4)");
+  });
+
+  it('renders reasoning from response context safely', () => {
+    expect(renderWhatsAppReasoning({
+      explanation: 'Revenue was 123.',
+      assumptions: ['Completed orders only'],
+      reasoningChain: 'Used the revenue card and fct_orders.',
+      supervisorNotes: 'Looks valid.',
+      groundingCitations: [{ sourceFile: 'reference_card:revenue' }],
+      traceId: 'trace-1',
+    })).toContain('Reasoning');
+  });
+
+  it('renders generated SQL behind an explicit action', () => {
+    expect(renderWhatsAppSql('SELECT 1', 'trace-1')).toContain('SELECT 1');
+  });
+
+  it('renders feedback acknowledgements', () => {
+    expect(renderWhatsAppFeedbackAck('positive')).toBe('Got it. I marked this answer as useful.');
+    expect(renderWhatsAppFeedbackAck('negative')).toBe('Got it. I logged this feedback for review.');
+  });
+
+  it('renders expired action recovery copy', () => {
+    expect(renderWhatsAppExpiredAction()).toContain('cannot find that answer context');
   });
 });

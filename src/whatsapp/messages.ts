@@ -1,21 +1,31 @@
-import type { ChannelClient, ChannelMessage } from '../channels/types.js';
+import type { ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
+import { rootLogger } from '../logging.js';
 import type { PipelineConfig } from '../pipeline.js';
+import { saveFeedbackNote } from '../state/feedbackNotes.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { getClarificationState, deleteClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
 import { saveResponseContext } from '../state/responseContext.js';
+import { createWhatsAppActionContext } from '../state/whatsappActionContext.js';
 import {
   claimWhatsAppEvent,
   markWhatsAppEventVisible,
   releaseWhatsAppEventClaim,
 } from '../state/whatsappEventDedupe.js';
+import {
+  deleteWhatsAppPendingFeedback,
+  getWhatsAppPendingFeedback,
+} from '../state/whatsappPendingFeedback.js';
 import type { UnsupportedWhatsAppMessage } from './payload.js';
+import { buildWhatsAppActionId } from './actionIds.js';
+import type { WhatsAppClient } from './client.js';
+import { buildAnswerFeedbackButtons } from './interactive.js';
 import { answerWhatsAppQuestion, runWhatsAppPipeline } from './pipeline.js';
-import { renderWhatsAppUnsupported } from './renderer.js';
+import { renderWhatsAppFeedbackAck, renderWhatsAppUnsupported } from './renderer.js';
 
 export interface HandleWhatsAppMessagesDeps {
-  client: ChannelClient;
+  client: WhatsAppClient;
   tables: TableContext[];
   config: PipelineConfig;
   rateLimitPerHour: number;
@@ -33,6 +43,35 @@ function clarifiedMessage(inbound: ChannelMessage, originalQuestion: string): Ch
   };
 }
 
+async function sendWhatsAppAnswerControls(
+  client: WhatsAppClient,
+  conversation: ChannelMessage['conversation'],
+  responseContextKey: string,
+): Promise<void> {
+  const base = {
+    responseContextKey,
+    conversationId: conversation.conversationId,
+    userId: conversation.userId,
+  };
+  const okId = buildWhatsAppActionId(
+    'ok',
+    await createWhatsAppActionContext({ ...base, kind: 'ok' }),
+  );
+  const problemId = buildWhatsAppActionId(
+    'problem',
+    await createWhatsAppActionContext({ ...base, kind: 'problem' }),
+  );
+  const actionsId = buildWhatsAppActionId(
+    'actions',
+    await createWhatsAppActionContext({ ...base, kind: 'actions' }),
+  );
+
+  await client.sendInteractive(
+    conversation,
+    buildAnswerFeedbackButtons({ okId, problemId, actionsId }),
+  );
+}
+
 export async function handleWhatsAppMessages(
   messages: ChannelMessage[],
   deps: HandleWhatsAppMessagesDeps,
@@ -46,6 +85,42 @@ export async function handleWhatsAppMessages(
     let visibleResponse = false;
 
     try {
+      const pendingFeedback = await getWhatsAppPendingFeedback(inbound.conversation.conversationId);
+      if (pendingFeedback) {
+        if (pendingFeedback.userId !== inbound.conversation.userId) {
+          if (pendingFeedback.conversationId === inbound.conversation.conversationId) {
+            await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId).catch(() => {});
+          }
+        } else {
+          await saveFeedbackNote({
+            note: inbound.text,
+            userId: inbound.conversation.userId,
+            threadTs: inbound.conversation.conversationId,
+            channel: inbound.conversation.conversationId,
+            traceId: pendingFeedback.traceId,
+            ...(pendingFeedback.clarifiedQuestion
+              ? { clarifiedQuestion: pendingFeedback.clarifiedQuestion }
+              : {}),
+          });
+          await deleteWhatsAppPendingFeedback(inbound.conversation.conversationId);
+          visibleResponse = true;
+          await deps.client
+            .sendText(inbound.conversation, renderWhatsAppFeedbackAck('negative'))
+            .catch((err: unknown) => {
+              rootLogger.warn(
+                {
+                  err,
+                  providerMessageId: inbound.providerMessageId,
+                  traceId: pendingFeedback.traceId,
+                },
+                'whatsapp.pending_feedback_ack_failed',
+              );
+            });
+          await markWhatsAppEventVisible(inbound.providerMessageId).catch(() => {});
+          continue;
+        }
+      }
+
       const rateCheck = await checkRateLimit(
         inbound.conversation.conversationId,
         deps.rateLimitPerHour,
@@ -86,6 +161,8 @@ export async function handleWhatsAppMessages(
           config: deps.config,
         }),
         saveResponseContext,
+        sendAnswerControls: (conversation, responseContextKey) =>
+          sendWhatsAppAnswerControls(deps.client, conversation, responseContextKey),
         markVisible: () => markWhatsAppEventVisible(inbound.providerMessageId),
       });
       visibleResponse = result.visible;
