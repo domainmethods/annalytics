@@ -503,7 +503,7 @@ Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
 present in the build workspace. The deploy job fails fast with a clear message
 if an implementation has not provided those artifacts.
 
-Required GitHub configuration for CI and deploy-related workflows:
+GitHub configuration for CI and optional deploy workflows:
 
 | Name | Type | Description |
 |------|------|-------------|
