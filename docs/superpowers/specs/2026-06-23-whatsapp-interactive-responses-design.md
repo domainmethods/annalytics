@@ -1,8 +1,8 @@
 # WhatsApp Interactive Responses Design
 
 **Date:** 2026-06-23
-**Status:** Draft for user review
-**Scope:** Design only; no implementation in this change
+**Status:** Implemented
+**Scope:** Design record for the WhatsApp interactive responses implementation
 
 ## Summary
 
