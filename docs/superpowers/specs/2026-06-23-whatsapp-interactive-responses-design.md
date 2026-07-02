@@ -516,6 +516,14 @@ The interactive WhatsApp slice is accepted when:
    beyond gated demo behavior or if WhatsApp-origin escalation becomes active
    scope.
 
+   *(2026-07-02 amendment: this guidance was wrong — it inverted governance
+   guardrail #6. The scope this design implements crossed the Deferred Work
+   table's "parity controls are out of scope" line, so the governance update
+   was required in the same change set, not deferred to promotion. Reconciled
+   retroactively; see the 2026-07-02 Evidence Log entry in
+   `docs/trajectory-governance.md`. Future designs that touch any surface named
+   in the Deferred Work table must carry their governance update with them.)*
+
 ## Implementation Planning Decisions
 
 - Use `whatsapp_action_context` from the start so Meta action IDs remain short
