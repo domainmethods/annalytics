@@ -31,7 +31,15 @@ export async function executeQuery(
     jobTimeoutMs: options.timeoutMs,
   });
 
-  const [rows] = await job.getQueryResults({ maxResults: options.maxRows });
+  const [rows] = await job.getQueryResults({
+    maxResults: options.maxRows,
+    wrapIntegers: {
+      integerTypeCastFunction: (value: string) => {
+        const integer = Number(value);
+        return Number.isSafeInteger(integer) ? integer : value;
+      },
+    },
+  });
   const [metadata] = await job.getMetadata();
   const stats = metadata.statistics;
   const bytesProcessed = parseInt(stats.totalBytesProcessed || '0', 10);
