@@ -18,11 +18,19 @@
 | Judge Model | gemini-3.0-pro |
 | GCP Project | mock-project |
 
+## Fast Path
+
+| Mode | Count | Supervisor Decision |
+|------|-------|---------------------|
+| full_quality_loop | 5 | required |
+
+Ineligible reasons: none
+
 ## Calibration
 
 **Verdict:** `FAIL`
 
-Reason: 5 benchmark result(s) had no judge result
+Reason: 4 benchmark result(s) had no judge result
 
 Wrong rule: `flaggedForReview || correctness < 3`
 
