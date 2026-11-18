@@ -141,7 +141,7 @@ function storedAction(
   };
 }
 
-function deps(testClient = client(), allowedWaIds: string[] = []) {
+function deps(testClient = client(), allowedWaIds = [conversation.userId]) {
   return {
     client: testClient,
     tables: [],
@@ -625,12 +625,16 @@ describe('handleWhatsAppActions', () => {
     expect(mockMarkWhatsAppEventVisible).not.toHaveBeenCalled();
   });
 
-  it('ignores disallowed users before claiming the action', async () => {
+  it.each([
+    { list: 'empty', allowedWaIds: [] },
+    { list: 'nonmatching', allowedWaIds: ['15550000000'] },
+  ])('skips interactive actions when the allowlist is $list', async ({ allowedWaIds }) => {
     const testClient = client();
 
-    await handleWhatsAppActions([action('wa:v1:ok:ctx_ok')], deps(testClient, ['15550000000']));
+    await handleWhatsAppActions([action('wa:v1:ok:ctx_ok')], deps(testClient, allowedWaIds));
 
     expect(mockClaimWhatsAppEvent).not.toHaveBeenCalled();
+    expect(mockGetWhatsAppActionContext).not.toHaveBeenCalled();
     expect(testClient.sendText).not.toHaveBeenCalled();
     expect(testClient.sendInteractive).not.toHaveBeenCalled();
   });

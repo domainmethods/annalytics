@@ -101,7 +101,8 @@ describe('loadConfig whatsapp', () => {
     vi.stubEnv('SLACK_SIGNING_SECRET', 'slack-secret');
     vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
     vi.stubEnv('GCP_PROJECT_ID', 'gcp-project');
-    vi.stubEnv('WHATSAPP_ENABLED', '');
+    vi.stubEnv('WHATSAPP_ENABLED', undefined);
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', '');
     vi.resetModules();
 
     const { loadConfig } = await import('../src/config.js');
@@ -118,6 +119,7 @@ describe('loadConfig whatsapp', () => {
     vi.stubEnv('GEMINI_API_KEY', 'gemini-key');
     vi.stubEnv('GCP_PROJECT_ID', 'gcp-project');
     vi.stubEnv('WHATSAPP_ENABLED', 'true');
+    vi.stubEnv('WHATSAPP_VERIFY_TOKEN', undefined);
     vi.resetModules();
 
     const { loadConfig } = await import('../src/config.js');
@@ -125,6 +127,21 @@ describe('loadConfig whatsapp', () => {
     expect(() => loadConfig()).toThrow('Missing required env var: WHATSAPP_VERIFY_TOKEN');
     vi.unstubAllEnvs();
   });
+
+  it.each([undefined, '', ' \t ', ' , , '])(
+    'rejects enabled WhatsApp without a tester ID (%j)',
+    (allowlist) => {
+      baseEnv();
+      vi.stubEnv('WHATSAPP_ENABLED', 'true');
+      vi.stubEnv('WHATSAPP_VERIFY_TOKEN', 'verify-token');
+      vi.stubEnv('WHATSAPP_APP_SECRET', 'app-secret');
+      vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'access-token');
+      vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', 'phone-number-id');
+      vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', allowlist);
+
+      expect(() => loadConfig()).toThrow(/WHATSAPP_ALLOWED_WA_IDS must contain at least one tester ID/);
+    },
+  );
 
   it('parses enabled WhatsApp config and allowlist', async () => {
     vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
