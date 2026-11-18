@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { Parser, type LocationRange, type Select } from 'node-sql-parser';
 import type { GroundingCitation } from '../src/agents/types.js';
 import type { FailureRecord, QualityResult, ValidationLayerRecord } from '../src/qualityLoop.js';
 import {
@@ -208,20 +209,143 @@ export function teachingComplianceLabel(passed: boolean | null): string {
   return passed ? 'followed' : 'missed';
 }
 
-export function extractTablesFromSql(sql: string | null | undefined, knownTables: string[]): string[] {
-  if (!sql) return [];
-  const normalizedSql = sql.toLowerCase().replace(/`/g, '');
-  const observed = new Set<string>();
+const benchmarkSqlParser = new Parser();
+const quotedIdentifier = /`[^`\\]+`/.source;
+const comment = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\//.source;
+const stringBody = [
+  /'''(?:\\[\s\S]|'(?!'')|[^'\\])*'''/,
+  /"""(?:\\[\s\S]|"(?!"")|[^"\\])*"""/,
+  /'(?!'')(?:\\[^\r\n]|[^'\\\r\n])*'/,
+  /"(?!"")(?:\\[^\r\n]|[^"\\\r\n])*"/,
+].map(pattern => pattern.source).join('|');
+const literal = `(?:br|rb|[br])?(?:${stringBody})`;
+const sqlSpans = new RegExp([
+  quotedIdentifier,
+  String.raw`(${literal}(?:(?:\s|${comment})+${literal})*)`,
+  `(${comment})`,
+  /(['"`]|\/\*)/.source,
+  /[a-z_]\w*/.source,
+].join('|'), 'gi');
+const namePart = String.raw`(?:${quotedIdentifier}|[a-z_][\w-]*)`;
+const tablePath = String.raw`${namePart}(?:\s*\.\s*${namePart}){0,2}`;
+const bigQueryParserGaps = new RegExp([
+  String.raw`(\bWITH\s+RECURSIVE)(?=\s+${namePart}\s+AS\s*\()`,
+  String.raw`(${quotedIdentifier})(?=\s+AS\s*\()`,
+  String.raw`(\bML\s*\.\s*\w+\s*\(\s*)MODEL\s+${tablePath}(?=\s*[,)])`,
+  String.raw`([(,])\s*TABLE\s+(${tablePath})(?=\s*[,)])`,
+  quotedIdentifier,
+].join('|'), 'gi');
 
-  for (const table of knownTables) {
-    const normalizedTable = table.toLowerCase().replace(/`/g, '').trim();
-    if (normalizedTable.length === 0) continue;
-    const tablePattern = escapeRegExp(normalizedTable);
-    const regex = new RegExp(`(^|[^a-z0-9_])${tablePattern}([^a-z0-9_]|$)`, 'i');
-    if (regex.test(normalizedSql)) observed.add(table);
+function prepareBenchmarkSql(sql: string): string {
+  // Keep quotes and comments opaque while adapting syntax absent from the installed parser.
+  const scrubbed = sql.replace(sqlSpans, (token, value, ignoredComment, unterminated) => {
+    if (unterminated) throw new Error('Unsupported or unterminated quoted SQL token');
+    if (value) return "''";
+    return ignoredComment ? ' ' : token;
+  });
+  return scrubbed.replace(bigQueryParserGaps, (token, recursive, cte, mlPrefix, separator, inputTable) => {
+    if (recursive) return 'WITH /*recursive*/';
+    if (cte) return JSON.stringify(cte.slice(1, -1));
+    if (mlPrefix) return `${mlPrefix}NULL`;
+    if (separator) return `${separator}(SELECT * FROM ${inputTable})`;
+    return token;
+  });
+}
+
+interface BigQueryFromItem {
+  type?: string;
+  db?: string | null;
+  schema?: string;
+  table?: string;
+  surround?: { table?: string };
+  as?: string | { value: string } | null;
+  expr?: unknown;
+}
+
+function warehouseRelations(sql: string): string[] {
+  const options = { database: 'BigQuery', trimQuery: false, parseOptions: { includeLocations: true } };
+  let source = prepareBenchmarkSql(sql);
+  let patchedThrough = 0;
+  let ast;
+  for (;;) {
+    try {
+      ast = benchmarkSqlParser.astify(source, options);
+      break;
+    } catch (error) {
+      // After a bare FROM item, the parser can consume QUALIFY as an alias.
+      const offset = (error as { location?: LocationRange }).location?.start.offset ?? 0;
+      const qualify = /\bQUALIFY\s*$/i.exec(source.slice(0, offset));
+      if (!qualify || qualify.index < patchedThrough) throw error;
+      const where = 'WHERE TRUE ';
+      source = source.slice(0, qualify.index) + where + source.slice(qualify.index);
+      patchedThrough = qualify.index + where.length + 'QUALIFY'.length;
+    }
   }
 
-  return [...observed];
+  const statements = Array.isArray(ast) ? ast : [ast];
+  if (statements.length !== 1 || statements[0]?.type !== 'select') return [];
+
+  const relations = new Set<string>();
+  function visit(value: unknown, ctes: ReadonlySet<string>, outerAliases: ReadonlySet<string>): void {
+    if (!value || typeof value !== 'object') return;
+    if (!('type' in value) || value.type !== 'select') {
+      for (const child of Object.values(value)) visit(child, ctes, outerAliases);
+      return;
+    }
+
+    const { with: definitions, from, _next, loc, parentheses_symbol, ...expressions } = value as Select;
+    const visibleCtes = new Set(ctes);
+    const recursive = loc && source.startsWith('WITH /*recursive*/', loc.start.offset);
+    const cteDefinitions = (definitions ?? []).map(({ name, stmt }) => ({
+      // The parser retains escaped double quotes in normalized CTE declarations.
+      name: name.value.replace(/\\"/g, '"').toLowerCase(),
+      stmt,
+    }));
+    if (recursive) {
+      for (const { name } of cteDefinitions) visibleCtes.add(name);
+    }
+    for (const { name, stmt } of cteDefinitions) {
+      visit(stmt, visibleCtes, outerAliases);
+      visibleCtes.add(name);
+    }
+
+    const aliases = new Set(outerAliases);
+    for (const item of (from ?? []) as BigQueryFromItem[]) {
+      const { type, table, db, schema, surround, as, expr, ...clauses } = item;
+      const path = [db, schema, table].filter(Boolean).join('.').toLowerCase();
+      const parts = path.split('.');
+      const quotedPath = !db && surround?.table === '`';
+      const arrayPath = parts.length > 1 && !quotedPath && aliases.has(parts[0]);
+      if (table && !arrayPath && (db || !visibleCtes.has(path))) relations.add(path);
+
+      visit(expr, visibleCtes, type === 'unnest' ? aliases : outerAliases);
+      const alias = typeof as === 'string' ? as : as?.value ?? parts.at(-1);
+      if (alias) aliases.add(alias.toLowerCase());
+      visit(clauses, visibleCtes, aliases);
+    }
+
+    for (const expression of Object.values(expressions)) visit(expression, visibleCtes, aliases);
+    // The parser links set branches as siblings. A WITH inside parentheses stays local.
+    visit(_next, parentheses_symbol ? ctes : visibleCtes, outerAliases);
+  }
+
+  visit(statements[0], new Set(), new Set());
+  return [...relations];
+}
+
+export function extractTablesFromSql(sql: string | null | undefined, knownTables: string[]): string[] {
+  if (!sql || knownTables.length === 0) return [];
+  try {
+    const relations = warehouseRelations(sql);
+    // A short expectation can match a longer path. Missing qualifiers cannot be inferred.
+    return [...new Set(knownTables.filter(table => {
+      const name = table.toLowerCase().replace(/`/g, '').trim();
+      return name && relations.some(ref => ref === name || ref.endsWith(`.${name}`));
+    }))];
+  } catch {
+    // shortcut: unparsed BigQuery syntax earns no table credit, extend only for benchmark shapes we need.
+    return [];
+  }
 }
 
 export function tableSelectionPassed(
@@ -260,10 +384,6 @@ export function clarificationPassed(
 
 function normalizeSqlFragment(value: string): string {
   return value.toLowerCase().replace(/`/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function stripIdentifierQualifiers(value: string): string {
