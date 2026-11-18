@@ -95,6 +95,7 @@ jobs:
             --project "${PROJECT_ID}" \
             --image "${REGION}-docker.pkg.dev/${PROJECT_ID}/anna-lytics/anna-lytics:${GITHUB_SHA}" \
             --region "${REGION}" \
+            --no-cpu-throttling \
             --service-account "${SERVICE_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
             --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID},GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
             --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \

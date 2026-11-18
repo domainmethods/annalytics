@@ -507,6 +507,12 @@ Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
 present in the build workspace. The deploy job fails fast with a clear message
 if an implementation has not provided those artifacts.
 
+Bolt acknowledges Slack before query processing to meet Slack's three-second
+deadline. Both deployment paths use instance-based billing to keep CPU
+available after the acknowledgment while the instance is running. Cloud Run
+bills for CPU and memory over the instance's lifetime, including idle time.
+[Cloud Run billing settings](https://cloud.google.com/run/docs/configuring/billing-settings)
+
 GitHub configuration for CI and optional deploy workflows:
 
 | Name | Type | Description |
@@ -536,6 +542,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --project "$PROJECT_ID" \
   --image "$REGION-docker.pkg.dev/$PROJECT_ID/anna-lytics/anna-lytics:latest" \
   --region "$REGION" \
+  --no-cpu-throttling \
   --service-account "$SERVICE_NAME@$PROJECT_ID.iam.gserviceaccount.com" \
   --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
   --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
