@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -33,6 +33,7 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       'Template pushes do not deploy by default.',
       'Manual GitHub Actions deploys use workflow_dispatch.',
       'Implementation repos may set ANNALYTICS_AUTO_DEPLOY=true when dbt artifacts are available in the build workspace.',
+      'gcloud run deploy anna-lytics --no-cpu-throttling',
     ].join('\n'),
     '.env.example': [
       'GEMINI_MODEL=gemini-3.1-pro-preview',
@@ -75,6 +76,7 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       '  gcloud run deploy anna-lytics \\',
       '    --project "${PROJECT_ID}" \\',
       '    --region "${REGION}" \\',
+      '    --no-cpu-throttling \\',
       '    --service-account "anna-lytics@${PROJECT_ID}.iam.gserviceaccount.com" \\',
       '    --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
       '    --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
@@ -208,6 +210,22 @@ describe('runSetupCheck', () => {
       message:
         'Deploy workflow validates WIF_SERVICE_ACCOUNT before auth (missing test -n "${WIF_SERVICE_ACCOUNT}")',
     });
+  });
+
+  it.each([
+    ['README.md', 'README manual deploy uses instance-based billing'],
+    ['.github/workflows/deploy.yml', 'Deploy workflow uses instance-based billing'],
+  ])('requires instance-based billing in %s', async (file, message) => {
+    const root = await createRepoFixture();
+    const path = join(root, file);
+    const content = await readFile(path, 'utf8');
+    await writeFile(path, content.replace('--no-cpu-throttling', '--cpu-throttling'));
+
+    const result = await runSetupCheck({ rootDir: root, env: {} });
+
+    expect(result.errors).toEqual([
+      { status: 'error', message: `${message} (missing --no-cpu-throttling)` },
+    ]);
   });
 
   it('reports stale Gemini 3.0 model IDs in docs or examples', async () => {

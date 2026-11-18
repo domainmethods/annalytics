@@ -194,6 +194,7 @@ async function checkReadme(
   requireText(readme, 'slack-signing-secret', 'README lists the Slack signing Secret Manager name', add);
   requireText(readme, 'gemini-api-key', 'README lists the Gemini Secret Manager name', add);
   requireText(readme, 'us-west1', 'README documents us-west1 as the standard region', add);
+  requireText(readme, '--no-cpu-throttling', 'README manual deploy uses instance-based billing', add);
   requireText(
     readme,
     'Template pushes do not deploy by default',
@@ -230,6 +231,7 @@ async function checkDeployWorkflow(
     ['REGION: us-west1', 'Deploy workflow includes REGION: us-west1'],
     ['--project', 'Deploy workflow includes --project'],
     ['--region', 'Deploy workflow includes --region'],
+    ['--no-cpu-throttling', 'Deploy workflow uses instance-based billing'],
     ['--service-account', 'Deploy workflow includes --service-account'],
     ['--set-env-vars', 'Deploy workflow includes --set-env-vars'],
     ['--set-secrets', 'Deploy workflow includes --set-secrets'],
