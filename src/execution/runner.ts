@@ -28,9 +28,8 @@ export async function executeQuery(
     query: sql,
     useLegacySql: false,
     maximumBytesBilled: String(options.maxBytes),
-    jobTimeoutMs: String(options.timeoutMs),
-    maxResults: options.maxRows,
-  } as any);
+    jobTimeoutMs: options.timeoutMs,
+  });
 
   const [rows] = await job.getQueryResults({ maxResults: options.maxRows });
   const [metadata] = await job.getMetadata();
