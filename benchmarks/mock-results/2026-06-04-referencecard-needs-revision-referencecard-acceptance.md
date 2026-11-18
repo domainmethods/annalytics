@@ -18,11 +18,19 @@
 | Judge Model | gemini-3.0-pro |
 | GCP Project | mock-project |
 
+## Fast Path
+
+| Mode | Count | Supervisor Decision |
+|------|-------|---------------------|
+| full_quality_loop | 2 | required |
+
+Ineligible reasons: none
+
 ## Calibration
 
 **Verdict:** `FAIL`
 
-Reason: 2 benchmark result(s) had no judge result
+Reason: 1 benchmark result(s) had no judge result
 
 Wrong rule: `flaggedForReview || correctness < 3`
 
@@ -45,6 +53,8 @@ No judge-backed confidence buckets available.
 | revenue-ref-001 | table_mismatch | Expected tables analytics.fct_orders; observed analytics.fct_revenue |
 | revenue-ref-001 | sql_shape_mismatch | Generated SQL did not contain all expected fragments: analytics.fct_orders, order_status = 'completed' |
 | revenue-ref-001 | validation_failure | Final SQL failed L3 |
+| revenue-ref-005 | pipeline_failure | Quality loop ended with verdict exhausted |
+| revenue-ref-005 | validation_failure | Final SQL failed L1, L3, L4 |
 | revenue-ref-005 | clarification_mismatch | Expected clarification confidence low |
 
 ## Suggested Next Action

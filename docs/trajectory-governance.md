@@ -161,7 +161,7 @@ Every deferred item now carries its blocking condition. Reviving any item requir
 | Admin side bar (suspend/consult/resume, ruling→teaching capture) | Trigger quality depends on calibrated confidence; analyst-fatigue risk. Every 2026-06-11/12 slice failed bucket coverage/sample only (never miscalibration). | Calibration verdict passes on real implementation data with all required confidence buckets at sample |
 | Teaching impact measurement | No promoted implementation teachings to measure against the recorded benchmark slices. Previously listed as both sanctioned and deferred; resolved 2026-06-09 as deferred | First real acceptance run + at least one promoted implementation teaching |
 | Scheduled admin digests | Depends on feedback aggregation having real data; low value before then | Feedback sensor running against a real deployment |
-| New evaluation/benchmark/sizing scaffolding | `ACCEPTED` recorded 2026-06-12, so the hard block is gone, but T3 #4 still orders net-new machinery last behind the side bar check, teaching impact, and node sizing | T3 #1–#3 resolve or an explicit governance update reorders the queue |
+| New evaluation/benchmark/sizing scaffolding | `ACCEPTED` recorded 2026-06-12, so the hard block is gone, but T3 #4 still orders net-new machinery last behind the side bar check, teaching impact, and node sizing. The clarification exemption correction falls under Current Decision #2. [Issue #56](https://github.com/domainmethods/annalytics/issues/56) | T3 #1–#3 resolve or an explicit governance update reorders the queue |
 | Node sizing completion (9 remaining nodes) | Corpus too small; ε too large for reasoning nodes | `benchmarks/corpus.json` (or implementation corpus) grows enough to bound ε |
 | Broad chart-generation expansion | Trust before surface area | Post-`ACCEPTED` evidence that the foundation works |
 | BQML prediction expansion | Same; the plumbing already in code (Code Debt Register) was reviewed 2026-06-19 → **KEEP, removal deferred** (removing the prompt branches would change the prompts behind the `ACCEPTED` 2026-06-12 run and force a fresh acceptance run, Guardrail #5) | Explicit governance update with rationale |
@@ -455,3 +455,7 @@ Issue #91 identified a gap in the shared SELECT-only validation contract. L3 rej
 ### 2026-11-18 - WhatsApp tester admission repair
 
 Enabling WhatsApp requires at least one tester ID. Text, unsupported messages, and interactive replies require a sender match, so an empty allowlist admits nobody. Local configuration and handler tests cover the repair. Further WhatsApp tranches still require manual pilot acceptance evidence. [Issue #72](https://github.com/domainmethods/annalytics/issues/72)
+
+### As of 2026-11-18 (ReferenceCard acceptance defect correction)
+
+- The analyzer exempts expected and observed LOW clarification suspensions with no SQL from validation and supervisor checks. Offline regression tests reproduced the false `ACCEPTED` for over-budget SQL and verified `NEEDS_REVISION` after the correction. T3 #4 still governs new scaffolding, and the calibration abstention discriminator remains open in the Code Debt Register.

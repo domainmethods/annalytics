@@ -266,7 +266,15 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
   const expectedTables = arrayOrEmpty(result.expectedTables);
   const observedTables = arrayOrEmpty(result.observedTables);
   const expectedSqlContains = arrayOrEmpty(result.expectedSqlContains);
-  const isClarificationOnly = result.expectedClarificationConfidence != null && expectedReferenceIds.length === 0;
+  // shortcut: the producer's Error: note identifies caught crashes until #63 adds an outcome field.
+  const isClarificationOnly = expectedReferenceIds.length === 0
+    && result.expectedClarificationConfidence === 'low'
+    && result.clarificationPassed === true
+    && result.confidence === 'low'
+    && result.generatedSql === null
+    && result.qualityVerdict === 'exhausted'
+    && !result.validationHistory?.length
+    && !result.supervisorNotes?.startsWith('Error:');
   const validationResults = normalizeValidationResults(result.validationResults);
 
   if (expectedReferenceIds.length > 0 && result.referenceRetrievalPassed !== true) {

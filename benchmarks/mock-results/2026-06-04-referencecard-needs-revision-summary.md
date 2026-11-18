@@ -14,4 +14,6 @@ Cases evaluated: 2
 | revenue-ref-001 | table_mismatch | Expected tables analytics.fct_orders; observed analytics.fct_revenue |
 | revenue-ref-001 | sql_shape_mismatch | Generated SQL did not contain all expected fragments: analytics.fct_orders, order_status = 'completed' |
 | revenue-ref-001 | validation_failure | Final SQL failed L3 |
+| revenue-ref-005 | pipeline_failure | Quality loop ended with verdict exhausted |
+| revenue-ref-005 | validation_failure | Final SQL failed L1, L3, L4 |
 | revenue-ref-005 | clarification_mismatch | Expected clarification confidence low |
