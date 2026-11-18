@@ -100,23 +100,28 @@ function parseEscalationMode(val: string | undefined): 'channel' | 'dm' {
 
 function loadWhatsAppConfig(): AppConfig['whatsapp'] {
   const enabled = parseEnvBool('WHATSAPP_ENABLED', false);
+  const allowedWaIds = parseEnvList('WHATSAPP_ALLOWED_WA_IDS');
   if (!enabled) {
     return {
       enabled: false,
       graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v23.0',
-      allowedWaIds: parseEnvList('WHATSAPP_ALLOWED_WA_IDS'),
+      allowedWaIds,
     };
   }
 
-  return {
+  const config: WhatsAppConfig = {
     enabled: true,
     verifyToken: requireEnv('WHATSAPP_VERIFY_TOKEN'),
     appSecret: requireEnv('WHATSAPP_APP_SECRET'),
     accessToken: requireEnv('WHATSAPP_ACCESS_TOKEN'),
     phoneNumberId: requireEnv('WHATSAPP_PHONE_NUMBER_ID'),
     graphApiVersion: process.env.WHATSAPP_GRAPH_API_VERSION || 'v23.0',
-    allowedWaIds: parseEnvList('WHATSAPP_ALLOWED_WA_IDS'),
+    allowedWaIds,
   };
+  if (allowedWaIds.length === 0) {
+    throw new Error('Invalid config: WHATSAPP_ALLOWED_WA_IDS must contain at least one tester ID when WHATSAPP_ENABLED=true');
+  }
+  return config;
 }
 
 export function loadConfig(): AppConfig {

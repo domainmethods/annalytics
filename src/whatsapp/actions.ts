@@ -40,10 +40,6 @@ export interface HandleWhatsAppActionsDeps {
   allowedWaIds: string[];
 }
 
-function isAllowed(userId: string, allowedWaIds: readonly string[]): boolean {
-  return allowedWaIds.length === 0 || allowedWaIds.includes(userId);
-}
-
 function isFirestoreNotFoundError(err: unknown): boolean {
   if (typeof err !== 'object' || err === null || !('code' in err)) {
     return false;
@@ -192,7 +188,7 @@ export async function handleWhatsAppActions(
   deps: HandleWhatsAppActionsDeps,
 ): Promise<void> {
   for (const action of actions) {
-    if (!isAllowed(action.conversation.userId, deps.allowedWaIds)) continue;
+    if (!deps.allowedWaIds.includes(action.conversation.userId)) continue;
 
     const claimed = await claimWhatsAppEvent(action.providerMessageId);
     if (!claimed) continue;

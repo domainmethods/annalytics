@@ -32,10 +32,6 @@ export interface HandleWhatsAppMessagesDeps {
   allowedWaIds: string[];
 }
 
-function isAllowed(userId: string, allowedWaIds: readonly string[]): boolean {
-  return allowedWaIds.length === 0 || allowedWaIds.includes(userId);
-}
-
 function clarifiedMessage(inbound: ChannelMessage, originalQuestion: string): ChannelMessage {
   return {
     ...inbound,
@@ -77,7 +73,7 @@ export async function handleWhatsAppMessages(
   deps: HandleWhatsAppMessagesDeps,
 ): Promise<void> {
   for (const inbound of messages) {
-    if (!isAllowed(inbound.conversation.userId, deps.allowedWaIds)) continue;
+    if (!deps.allowedWaIds.includes(inbound.conversation.userId)) continue;
 
     const claimed = await claimWhatsAppEvent(inbound.providerMessageId);
     if (!claimed) continue;
@@ -184,7 +180,7 @@ export async function handleUnsupportedWhatsAppMessages(
   deps: HandleWhatsAppMessagesDeps,
 ): Promise<void> {
   for (const inbound of messages) {
-    if (!isAllowed(inbound.conversation.userId, deps.allowedWaIds)) continue;
+    if (!deps.allowedWaIds.includes(inbound.conversation.userId)) continue;
 
     const claimed = await claimWhatsAppEvent(inbound.providerMessageId);
     if (!claimed) continue;

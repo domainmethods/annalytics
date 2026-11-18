@@ -294,20 +294,18 @@ describe('handleWhatsAppMessages', () => {
     );
   });
 
-  it('skips unknown users when allowlist configured', async () => {
-    await handleWhatsAppMessages([
-      message({
-        conversation: {
-          ...conversation,
-          conversationId: 'whatsapp:15557654321',
-          userId: '15557654321',
-        },
-      }),
-    ], deps());
+  it.each([
+    { list: 'empty', allowedWaIds: [] },
+    { list: 'nonmatching', allowedWaIds: ['15557654321'] },
+  ])('skips text messages when the allowlist is $list', async ({ allowedWaIds }) => {
+    const dependencies = deps({ allowedWaIds });
+
+    await handleWhatsAppMessages([message()], dependencies);
 
     expect(mockClaimWhatsAppEvent).not.toHaveBeenCalled();
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
     expect(mockRunWhatsAppPipeline).not.toHaveBeenCalled();
+    expect(dependencies.client.sendText).not.toHaveBeenCalled();
   });
 
   it('does not run duplicate messages when claim returns false', async () => {
@@ -551,19 +549,17 @@ describe('handleUnsupportedWhatsAppMessages', () => {
     mockReleaseWhatsAppEventClaim.mockResolvedValue(undefined);
   });
 
-  it('skips unsupported messages from unknown users when allowlist configured', async () => {
-    await handleUnsupportedWhatsAppMessages([
-      unsupportedMessage({
-        conversation: {
-          ...conversation,
-          conversationId: 'whatsapp:15557654321',
-          userId: '15557654321',
-        },
-      }),
-    ], deps());
+  it.each([
+    { list: 'empty', allowedWaIds: [] },
+    { list: 'nonmatching', allowedWaIds: ['15557654321'] },
+  ])('skips unsupported messages when the allowlist is $list', async ({ allowedWaIds }) => {
+    const dependencies = deps({ allowedWaIds });
+
+    await handleUnsupportedWhatsAppMessages([unsupportedMessage()], dependencies);
 
     expect(mockClaimWhatsAppEvent).not.toHaveBeenCalled();
     expect(mockMarkWhatsAppEventVisible).not.toHaveBeenCalled();
+    expect(dependencies.client.sendText).not.toHaveBeenCalled();
   });
 
   it('does not send duplicate unsupported messages when claim returns false', async () => {
