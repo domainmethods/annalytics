@@ -116,32 +116,91 @@ describe('isReferenceCardAcceptanceCase', () => {
 });
 
 describe('evaluateReferenceCardAcceptance', () => {
-  it('accepts a passing revenue reference-card run', () => {
-    const acceptance = evaluateReferenceCardAcceptance(run([
-      result(),
-      result({
-        corpusId: 'revenue-ref-005',
-        question: 'revenue',
-        generatedSql: null,
-        confidence: 'low',
-        qualityVerdict: 'exhausted',
-        expectedReferenceIds: undefined,
-        observedReferenceIds: [],
-        referenceRetrievalPassed: null,
-        expectedTables: undefined,
-        observedTables: [],
-        tableSelectionPassed: null,
-        expectedSqlContains: undefined,
-        sqlShapePassed: null,
-        expectedClarificationConfidence: 'low',
-        clarificationPassed: true,
-        validationResults: { l1: false, l2: false, l3: false, l4: false },
-      }),
-    ]));
+  const lowSuspension = result({
+    corpusId: 'revenue-ref-005',
+    question: 'revenue',
+    generatedSql: null,
+    confidence: 'low',
+    qualityVerdict: 'exhausted',
+    supervisorNotes: 'Skipped: LOW clarification confidence',
+    expectedReferenceIds: undefined,
+    observedReferenceIds: [],
+    referenceRetrievalPassed: null,
+    expectedTables: undefined,
+    observedTables: [],
+    tableSelectionPassed: null,
+    expectedSqlContains: undefined,
+    sqlShapePassed: null,
+    expectedClarificationConfidence: 'low',
+    clarificationPassed: true,
+    validationResults: { l1: false, l2: false, l3: false, l4: false },
+    validationHistory: [],
+    bytesProcessed: null,
+  });
+
+  it('accepts a genuine LOW suspension alongside a passing SQL case', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([result(), lowSuspension]));
 
     expect(acceptance.decision).toBe('ACCEPTED');
     expect(acceptance.failures).toEqual([]);
     expect(acceptance.cases).toHaveLength(2);
+  });
+
+  it.each(['high', 'medium'] as const)(
+    'rejects generated SQL that fails L4 after a matching %s clarification',
+    confidence => {
+      const acceptance = evaluateReferenceCardAcceptance(run([
+        result({
+          confidence,
+          expectedReferenceIds: [],
+          expectedClarificationConfidence: confidence,
+          clarificationPassed: true,
+          qualityVerdict: 'cost_exceeded',
+          validationResults: { l1: true, l2: true, l3: true, l4: false },
+        }),
+      ]));
+
+      expect(acceptance.decision).toBe('NEEDS_REVISION');
+      expect(acceptance.failures).toEqual([
+        expect.objectContaining({ failureClass: 'pipeline_failure' }),
+        expect.objectContaining({ failureClass: 'validation_failure', detail: 'Final SQL failed L4' }),
+      ]);
+    },
+  );
+
+  it.each([
+    { outcome: 'generated SQL', overrides: { generatedSql: 'SELECT 1' } },
+    { outcome: 'a cost failure', overrides: { qualityVerdict: 'cost_exceeded' } },
+    { outcome: 'a caught error', overrides: { supervisorNotes: 'Error: benchmark failed' } },
+    { outcome: 'a validation attempt', overrides: { validationHistory: [{ attempt: 1, layer: 'l4', valid: false }] } },
+  ] satisfies Array<{ outcome: string; overrides: Partial<BenchmarkResult> }>)(
+    'applies ordinary checks to a LOW case with $outcome',
+    ({ overrides }) => {
+      const acceptance = evaluateReferenceCardAcceptance(run([{ ...lowSuspension, ...overrides }]));
+
+      expect(acceptance.decision).toBe('NEEDS_REVISION');
+      expect(acceptance.failures.map(failure => failure.failureClass)).toEqual([
+        'pipeline_failure',
+        'validation_failure',
+      ]);
+    },
+  );
+
+  it('reports both the clarification mismatch and the failed pipeline checks', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      {
+        ...lowSuspension,
+        confidence: 'high',
+        clarificationPassed: false,
+        supervisorNotes: 'Mock clarification mismatch',
+      },
+    ]));
+
+    expect(acceptance.failures.map(failure => failure.failureClass)).toEqual([
+      'pipeline_failure',
+      'validation_failure',
+      'clarification_mismatch',
+    ]);
   });
 
   it('allows empty judge results because acceptance is deterministic', () => {
@@ -354,33 +413,6 @@ describe('evaluateReferenceCardAcceptance', () => {
       l3: false,
       l4: false,
     });
-  });
-
-  it('classifies ambiguous intake clarification mismatches without treating skipped SQL as pipeline failure', () => {
-    const acceptance = evaluateReferenceCardAcceptance(run([
-      result({
-        corpusId: 'revenue-ref-005',
-        question: 'revenue',
-        generatedSql: null,
-        confidence: 'high',
-        qualityVerdict: 'exhausted',
-        expectedReferenceIds: undefined,
-        observedReferenceIds: [],
-        referenceRetrievalPassed: null,
-        expectedTables: undefined,
-        observedTables: [],
-        tableSelectionPassed: null,
-        expectedSqlContains: undefined,
-        sqlShapePassed: null,
-        expectedClarificationConfidence: 'low',
-        clarificationPassed: false,
-        validationResults: { l1: false, l2: false, l3: false, l4: false },
-      }),
-    ]));
-
-    expect(acceptance.failures).toEqual([
-      expect.objectContaining({ failureClass: 'clarification_mismatch' }),
-    ]);
   });
 
   it('classifies blocking L1 and L4 validation failures while keeping L2 advisory', () => {
