@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import type { Router, Request, Response } from 'express';
+import { promisify } from 'node:util';
+import express, { type Router, type Request, type Response } from 'express';
 import type { DbtRunHistoryEntry } from '../state/dbtRunHistory.js';
 import { saveDbtRunResults } from '../state/dbtRunHistory.js';
 
@@ -10,6 +11,8 @@ function mapStatus(status: string): DbtRunHistoryEntry['status'] {
 }
 
 export function registerDbtRunIngestion(router: Router, webhookSecret: string): void {
+  const parseJson = promisify(express.json({ limit: '5mb' }));
+
   router.post('/api/dbt-run-results', async (req: Request, res: Response) => {
     // 1. Auth check (timing-safe comparison). Compare byte lengths, not string lengths:
     // a multi-byte char (e.g. 'ÿ') can match the string length while Buffer.from()
@@ -21,16 +24,31 @@ export function registerDbtRunIngestion(router: Router, webhookSecret: string): 
       return;
     }
 
-    // 2. Validate body
+    // 2. Parse and validate the body. Bolt only parses requests on its Slack endpoint.
+    try {
+      await parseJson(req, res);
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 400;
+      res.status(status).json({
+        error: status === 413 ? 'run_results.json payload too large' : 'Invalid run_results.json format',
+      });
+      return;
+    }
+
     const { metadata, results } = req.body || {};
-    if (!Array.isArray(results) || !metadata?.generated_at) {
+    const generatedAt = metadata?.generated_at;
+    if (
+      typeof generatedAt !== 'string' || !generatedAt ||
+      !Array.isArray(results) ||
+      results.some((result) => typeof result?.unique_id !== 'string')
+    ) {
       res.status(400).json({ error: 'Invalid run_results.json format' });
       return;
     }
 
     // 3. Parse each result into DbtRunHistoryEntry
-    const runStartedAt = new Date(metadata.generated_at as string);
-    const runId = (metadata.invocation_id as string) || (metadata.generated_at as string);
+    const runStartedAt = new Date(generatedAt);
+    const runId = (metadata.invocation_id as string) || generatedAt;
 
     const entries: DbtRunHistoryEntry[] = results.map((result: Record<string, unknown>) => {
       const uniqueId = result.unique_id as string;
