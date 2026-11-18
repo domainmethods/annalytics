@@ -330,8 +330,13 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     const sampleRowsMap = new Map<string, { rows: Record<string, unknown>[]; stale: boolean }>();
     const sampleResults = await Promise.all(
       tables.map(async (table) => {
-        const cached = await getSampleRows(table.name);
-        return cached ? { name: table.name, data: cached } : null;
+        try {
+          const cached = await getSampleRows(table.name);
+          return cached ? { name: table.name, data: cached } : null;
+        } catch (err) {
+          logger.warn({ err, table: table.name }, 'pipeline.sample_rows_failed');
+          return null;
+        }
       }),
     );
     for (const r of sampleResults) {

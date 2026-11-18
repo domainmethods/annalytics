@@ -1,6 +1,8 @@
 import type { BigQuery } from '@google-cloud/bigquery';
 import type { TableContext } from './types.js';
 
+const SAMPLE_MAX_BYTES = 100 * 1024 * 1024;
+
 export interface SampleRowResult {
   tableName: string;
   rows: Record<string, unknown>[];
@@ -11,7 +13,13 @@ export async function fetchSampleRows(
   bigquery: BigQuery,
   table: TableContext,
   partitionColumn?: string,
+  maxBytes = SAMPLE_MAX_BYTES,
 ): Promise<SampleRowResult> {
+  const maximumBytesBilled = Math.floor(Math.min(SAMPLE_MAX_BYTES, maxBytes));
+  if (!Number.isFinite(maximumBytesBilled) || maximumBytesBilled <= 0) {
+    return { tableName: table.name, rows: [], error: 'Sampling byte budget must be positive' };
+  }
+
   const fqn = `\`${table.schema}.${table.name.split('.').pop()}\``;
   let query: string;
 
@@ -22,7 +30,7 @@ export async function fetchSampleRows(
   }
 
   try {
-    const [rows] = await bigquery.query({ query, useLegacySql: false });
+    const [rows] = await bigquery.query({ query, useLegacySql: false, maximumBytesBilled: String(maximumBytesBilled) });
     return {
       tableName: table.name,
       rows: (rows as Record<string, unknown>[]).map(row => truncateRow(row, 500)),
@@ -41,12 +49,12 @@ export async function fetchAllSampleRows(
   tables: TableContext[],
   catalogStats?: Record<string, { partitionColumn?: string }>,
 ): Promise<SampleRowResult[]> {
-  return Promise.all(
-    tables.map(table => {
-      const stats = catalogStats?.[table.name];
-      return fetchSampleRows(bigquery, table, stats?.partitionColumn);
-    }),
-  );
+  const results: SampleRowResult[] = [];
+  for (const table of tables) {
+    const partitionColumn = catalogStats?.[table.name]?.partitionColumn;
+    results.push(await fetchSampleRows(bigquery, table, partitionColumn));
+  }
+  return results;
 }
 
 function truncateRow(

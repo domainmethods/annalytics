@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchSampleRows } from '../../src/dbt/sampleRows.js';
+import { fetchAllSampleRows, fetchSampleRows } from '../../src/dbt/sampleRows.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
 const mockQuery = vi.fn();
@@ -32,6 +32,7 @@ describe('fetchSampleRows', () => {
     expect(mockQuery).toHaveBeenCalledWith(
       expect.objectContaining({
         query: expect.stringContaining('LIMIT 5'),
+        maximumBytesBilled: '104857600',
       }),
     );
     expect(mockQuery).toHaveBeenCalledWith(
@@ -81,5 +82,26 @@ describe('fetchSampleRows', () => {
 
     expect(result.rows).toEqual([]);
     expect(result.error).toContain('Access denied');
+  });
+
+  it('omits samples when the configured budget allows no bytes', async () => {
+    const result = await fetchSampleRows(mockBigQuery, table, undefined, 0);
+
+    expect(result.rows).toEqual([]);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('applies known partitions only to their own table in a batch', async () => {
+    mockQuery.mockResolvedValue([[{ id: 1 }]]);
+    const customers = { ...table, name: 'analytics.dim_customers' };
+
+    await fetchAllSampleRows(mockBigQuery, [table, customers], {
+      'analytics.fct_orders': { partitionColumn: 'order_date' },
+    });
+
+    expect(mockQuery.mock.calls.map(([options]) => options.query)).toEqual([
+      'SELECT * FROM `analytics.fct_orders` WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) LIMIT 5',
+      'SELECT * FROM `analytics.dim_customers` LIMIT 5',
+    ]);
   });
 });

@@ -177,6 +177,24 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it('continues with other cached samples when a table cache read fails', async () => {
+    const orders = {
+      name: 'analytics.fct_orders', schema: 'analytics', description: '',
+      materialization: 'table', columns: [], sampleDDL: '', dependsOn: [], tags: [],
+    };
+    const customers = { ...orders, name: 'analytics.dim_customers' };
+    const sample = { rows: [{ customer_id: 1 }], stale: true };
+    mockGetSampleRows.mockImplementation(async name => {
+      if (name === orders.name) throw new Error('Cache read failed');
+      return sample;
+    });
+
+    await runPipeline({ ...baseInput, tables: [orders, customers] });
+
+    expect(mockQualityLoop.mock.calls[0]?.[0].sampleRows).toEqual(new Map([[customers.name, sample]]));
+    expect(mockExecute).toHaveBeenCalledOnce();
+  });
+
   it('MEDIUM confidence: includes assumptions in response', async () => {
     mockClassify.mockResolvedValue({
       ...highClarification,

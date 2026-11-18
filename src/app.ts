@@ -25,8 +25,8 @@ import { registerLifecycleSweep } from './handlers/lifecycleSweep.js';
 import { createWhatsAppClient } from './whatsapp/client.js';
 import { registerWhatsAppWebhook } from './whatsapp/webhook.js';
 import { startSummaryRefresh } from './teachings/summaryMap.js';
-import { fetchAllSampleRows } from './dbt/sampleRows.js';
-import { saveSampleRows } from './dbt/sampleRowCache.js';
+import { fetchSampleRows } from './dbt/sampleRows.js';
+import { getSampleRows, saveSampleRows } from './dbt/sampleRowCache.js';
 import { rootLogger } from './logging.js';
 import { setDefaultUsageSink } from './agents/modelGateway.js';
 import { setIntakeFallbackSink } from './agents/slackIntakeAgent.js';
@@ -70,19 +70,23 @@ try {
 startSummaryRefresh();
 
 // Populate sample rows cache at startup (non-blocking)
-(async () => {
-  try {
-    const bq = getBigQueryClient();
-    const results = await fetchAllSampleRows(bq, tables);
-    for (const result of results) {
-      if (result.rows.length > 0) {
-        await saveSampleRows(result);
-      }
+// shortcut: cold instances can race on the same cache miss, add coordination if duplicate scans become costly.
+void (async () => {
+  let count = 0;
+  for (const table of tables) {
+    try {
+      const cached = await getSampleRows(table.name);
+      if (cached && !cached.stale && cached.rows.length > 0) continue;
+
+      const result = await fetchSampleRows(getBigQueryClient(), table, undefined, config.limits.costGateMaxBytes);
+      if (result.rows.length === 0) continue;
+      await saveSampleRows(result);
+      count++;
+    } catch (err) {
+      rootLogger.warn({ err, table: table.name }, 'Sample rows population failed');
     }
-    rootLogger.info({ count: results.filter(r => r.rows.length > 0).length }, 'Sample rows cached');
-  } catch (err) {
-    rootLogger.warn({ error: (err as Error).message }, 'Sample rows population failed');
   }
+  rootLogger.info({ count }, 'Sample rows cached');
 })();
 
 // Set up Bolt.js
