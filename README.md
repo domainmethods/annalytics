@@ -499,15 +499,15 @@ Artifact Registry, then deploys Cloud Run with explicit project, region,
 service account, env vars, Secret Manager bindings, port, and unauthenticated
 Slack endpoint access.
 
+Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
+present in the build workspace. The deploy job fails fast with a clear message
+if an implementation has not provided those artifacts.
+
 Bolt acknowledges Slack before query processing to meet Slack's three-second
 deadline. Both deployment paths use instance-based billing to keep CPU
 available after the acknowledgment while the instance is running. Cloud Run
 bills for CPU and memory over the instance's lifetime, including idle time.
 [Cloud Run billing settings](https://cloud.google.com/run/docs/configuring/billing-settings)
-
-Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
-present in the build workspace. The deploy job fails fast with a clear message
-if an implementation has not provided those artifacts.
 
 GitHub configuration for CI and optional deploy workflows:
 
