@@ -18,7 +18,6 @@ import {
   buildBenchmarkMetadata,
   clarificationPassed,
   combineReferenceIds,
-  extractTablesFromSql,
   extractReferenceIdsFromCitations,
   extractTeachingIdsFromCitations,
   getGitDirty,
@@ -27,6 +26,7 @@ import {
   referenceRetrievalSource,
   resolveCollisionFreeResultPath,
   resolveCorpusPath,
+  scoreTableSelection,
   sqlShapePassed,
   tableSelectionPassed,
   teachingComplianceLabel,
@@ -283,7 +283,8 @@ async function main() {
         quality.sqlResult.groundingCitations,
       );
       const teachingPassed = teachingRetrievalPassed(entry.expectedTeachingIds, observedTeachingIds);
-      const observedTables = extractTablesFromSql(
+      const tableScore = scoreTableSelection(
+        entry.expectedTables,
         quality.sqlResult.sql,
         knownBenchmarkTables,
       );
@@ -323,11 +324,7 @@ async function main() {
         ),
         ...(referenceProbe.error ? { referenceProbeError: referenceProbe.error } : {}),
         expectedTables: entry.expectedTables,
-        observedTables,
-        tableSelectionPassed: tableSelectionPassed(
-          entry.expectedTables,
-          observedTables,
-        ),
+        ...tableScore,
         expectedSqlContains: entry.expectedSqlContains,
         sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, quality.sqlResult.sql),
         expectedClarificationConfidence: entry.expectedClarificationConfidence,

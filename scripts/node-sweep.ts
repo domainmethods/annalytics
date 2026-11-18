@@ -25,8 +25,8 @@ import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
 import {
   clarificationPassed,
   sqlShapePassed,
-  tableSelectionPassed,
-  extractTablesFromSql,
+  scoreTableSelection,
+  type TableSelectionScore,
 } from './benchmarkSupport.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
 import { type SweepProfile, type PointScore } from './node-sweep-types.js';
@@ -155,7 +155,7 @@ function buildResult(
     retryCount: number;
     supervisorNotes: string;
     bytesProcessed: number | null;
-    observedTables: string[];
+    tableScore: TableSelectionScore;
   },
 ): BenchmarkResult {
   return {
@@ -172,8 +172,7 @@ function buildResult(
     observedReferenceIds: [],
     referenceRetrievalPassed: null,
     expectedTables: entry.expectedTables,
-    observedTables: fields.observedTables,
-    tableSelectionPassed: tableSelectionPassed(entry.expectedTables, fields.observedTables),
+    ...fields.tableScore,
     expectedSqlContains: entry.expectedSqlContains,
     sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, generatedSql),
     expectedClarificationConfidence: entry.expectedClarificationConfidence,
@@ -713,7 +712,7 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
               retryCount: 0,
               supervisorNotes: 'Skipped: LOW clarification confidence',
               bytesProcessed: null,
-              observedTables: [],
+              tableScore: scoreTableSelection(entry.expectedTables, null, knownBenchmarkTables),
             });
           } else {
             const resolved = clarification.resolved_question || entry.question;
@@ -730,14 +729,14 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
               resolved,
               maxBytes,
             );
-            const observedTables = extractTablesFromSql(quality.sqlResult.sql, knownBenchmarkTables);
+            const tableScore = scoreTableSelection(entry.expectedTables, quality.sqlResult.sql, knownBenchmarkTables);
             result = buildResult(entry, quality.sqlResult.sql, {
               confidence: quality.finalConfidence,
               qualityVerdict: quality.verdict,
               retryCount: quality.retryCount,
               supervisorNotes: quality.supervisorNotes,
               bytesProcessed: quality.bytesProcessed ?? null,
-              observedTables,
+              tableScore,
             });
           }
 
@@ -758,7 +757,8 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
             overallScore = judge.overallScore;
           }
 
-          const tableSel = tableSelectionPassed(entry.expectedTables, result.observedTables);
+          // null also covers SQL the table extractor could not parse (tableSelectionUnscorableReason).
+          const tableSel = result.tableSelectionPassed;
           const sqlShape = sqlShapePassed(entry.expectedSqlContains, result.generatedSql);
           // Normalize 1–5 judge correctness to 0..1 (the plan said "/10"; that is
           // WRONG — the judge scores correctness on a 1–5 scale). Correctness is the

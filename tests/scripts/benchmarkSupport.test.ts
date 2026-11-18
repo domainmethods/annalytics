@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import acceptedFixture from '../../benchmarks/mock-results/2026-06-04-referencecard-accepted.json';
 import {
+  analyzeTablesInSql,
   buildBenchmarkMetadata,
   clarificationPassed,
   combineReferenceIds,
@@ -12,6 +14,7 @@ import {
   referenceRetrievalSource,
   resolveCollisionFreeResultPath,
   resolveCorpusPath,
+  scoreTableSelection,
   sqlShapePassed,
   tableSelectionPassed,
   referenceRetrievalPassed,
@@ -255,6 +258,283 @@ describe('deterministic benchmark expectation helpers', () => {
       'analytics.fct_orders',
       'analytics.fct_orders_archive',
     ])).toEqual(['analytics.fct_orders_archive']);
+  });
+
+  it('fails table selection when the expected table is only a projected column', () => {
+    const expected = ['orders'];
+    const observed = extractTablesFromSql('SELECT orders, revenue FROM daily_totals', [...expected, 'daily_totals']);
+
+    expect(observed).toEqual(['daily_totals']);
+    expect(tableSelectionPassed(expected, observed)).toBe(false);
+    expect(tableSelectionPassed(expected, extractTablesFromSql('SELECT revenue FROM orders', expected))).toBe(true);
+  });
+
+  it('matches table names at the qualification level supplied by the expectation', () => {
+    const known = ['orders', 'analytics.orders', 'demo-project.analytics.orders', 'other-project.analytics.orders'];
+
+    expect(extractTablesFromSql('SELECT * FROM `demo-project` . `Analytics` . `Orders`', known))
+      .toEqual(known.slice(0, 3));
+    expect(extractTablesFromSql('SELECT * FROM analytics.orders', known)).toEqual(known.slice(0, 2));
+    expect(extractTablesFromSql('SELECT * FROM other_dataset.orders', known)).toEqual(['orders']);
+    expect(extractTablesFromSql('SELECT * FROM orders', known)).toEqual(['orders']);
+  });
+
+  it('keeps a wildcard relation distinct from a concrete table expectation', () => {
+    const sql = 'SELECT id FROM `analytics.orders*` WHERE _TABLE_SUFFIX = "20260101"';
+
+    expect(extractTablesFromSql(sql, ['analytics.orders', 'analytics.orders20260101', 'analytics.orders*']))
+      .toEqual(['analytics.orders*']);
+  });
+
+  it('ignores qualified columns, aliases, strings and comments', () => {
+    const sql = `SELECT analytics.orders, 'JOIN analytics.orders' AS orders
+      FROM daily_totals AS analytics /* FROM analytics.orders */
+      -- JOIN analytics.orders
+      # FROM orders`;
+
+    expect(extractTablesFromSql(sql, ['orders', 'analytics.orders', 'daily_totals'])).toEqual(['daily_totals']);
+  });
+
+  it('ignores BigQuery raw, bytes and triple-quoted literal contents', () => {
+    const sql = `SELECT r'FROM analytics.orders', br"""this isn't SQL
+      JOIN analytics.orders""" AS label FROM daily_totals`;
+
+    expect(extractTablesFromSql(sql, ['analytics.orders', 'daily_totals'])).toEqual(['daily_totals']);
+  });
+
+  it('visits CTE bodies, comma joins, expression subqueries and set-operation branches', () => {
+    const sql = `WITH recent AS (SELECT id FROM analytics.orders)
+      SELECT r.id FROM recent r, analytics.customers c
+      WHERE EXISTS (SELECT 1 FROM analytics.daily_totals)
+      UNION ALL SELECT id FROM analytics.archived_orders`;
+    const tables = ['analytics.orders', 'analytics.customers', 'analytics.daily_totals', 'analytics.archived_orders'];
+
+    expect(extractTablesFromSql(sql, ['recent', ...tables])).toEqual(tables);
+  });
+
+  it('honors CTE shadowing without hiding qualified warehouse relations or leaking nested aliases', () => {
+    const sql = `SELECT * FROM (
+      WITH \`orders\` AS (SELECT * FROM analytics.daily_totals)
+      SELECT * FROM \`ORDERS\`
+    ) subquery, orders`;
+
+    expect(extractTablesFromSql(sql, ['analytics.daily_totals', 'orders'])).toEqual(['analytics.daily_totals', 'orders']);
+    expect(extractTablesFromSql('WITH orders AS (SELECT * FROM daily_totals) SELECT * FROM orders', ['orders']))
+      .toEqual([]);
+    expect(extractTablesFromSql('WITH orders AS (SELECT 1) SELECT * FROM analytics.orders', ['analytics.orders']))
+      .toEqual(['analytics.orders']);
+    expect(extractTablesFromSql('WITH orders AS (SELECT * FROM orders) SELECT * FROM orders', ['orders']))
+      .toEqual(['orders']);
+  });
+
+  it('keeps a quoted CTE identifier intact when it contains a double quote', () => {
+    const sql = 'WITH `today"orders` AS (SELECT * FROM daily_totals) SELECT * FROM `today"orders`';
+
+    expect(extractTablesFromSql(sql, ['today"orders', 'daily_totals'])).toEqual(['daily_totals']);
+  });
+
+  it('does not count a recursive CTE self-reference as a table', () => {
+    const sql = `WITH RECURSIVE orders AS (
+      SELECT id FROM analytics.daily_totals
+      UNION ALL SELECT id + 1 FROM orders WHERE id < 5
+    ) SELECT id FROM orders`;
+
+    expect(extractTablesFromSql(sql, ['orders', 'analytics.daily_totals'])).toEqual(['analytics.daily_totals']);
+  });
+
+  it('distinguishes implicit and explicit UNNEST from qualified warehouse paths', () => {
+    const sql = `SELECT (SELECT COUNT(*) FROM analytics.orders) AS item_count
+      FROM dataset.daily_totals AS \`analytics\`, analytics.customers,
+      UNNEST(analytics.items) AS item, \`analytics.shipments\``;
+
+    expect(extractTablesFromSql(sql, [
+      'analytics.orders', 'analytics.customers', 'analytics.items', 'dataset.daily_totals', 'analytics.shipments',
+    ])).toEqual(['dataset.daily_totals', 'analytics.shipments']);
+  });
+
+  it('keeps warehouse references in BigQuery QUALIFY queries', () => {
+    const sql = `SELECT * EXCEPT (description) FROM analytics.orders
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY order_date DESC) = 1
+        AND EXISTS (SELECT 1 FROM analytics.daily_totals)`;
+
+    const tables = ['analytics.orders', 'analytics.daily_totals'];
+    expect(extractTablesFromSql(sql, tables)).toEqual(tables);
+  });
+
+  it.each(['TABLE `analytics.orders`', '(SELECT id FROM analytics.orders)'])(
+    'observes a BigQuery ML input relation expressed as %s',
+    (input) => {
+      const sql = `SELECT * FROM ML.DETECT_ANOMALIES(
+        MODEL \`analytics.order_model\`, STRUCT(0.95 AS anomaly_prob_threshold), ${input})`;
+
+      expect(extractTablesFromSql(sql, ['analytics.order_model', 'analytics.orders'])).toEqual(['analytics.orders']);
+    },
+  );
+
+  it('does not credit a model-only forecast or a table function name', () => {
+    const sql = 'SELECT * FROM ML.FORECAST(MODEL `analytics.orders`, STRUCT(30 AS horizon))';
+
+    expect(extractTablesFromSql(sql, ['analytics.orders', 'ML.FORECAST'])).toEqual([]);
+    expect(extractTablesFromSql('SELECT * FROM analytics.orders(1)', ['analytics.orders'])).toEqual([]);
+  });
+
+  it.each([
+    'SELECT orders FROM analytics.daily_totals |> WHERE revenue > 0',
+    'SELECT * FROM analytics.orders WHERE',
+    'SELECT 1; SELECT * FROM analytics.orders',
+    'WITH `ord\\u0065rs` AS (SELECT 1) SELECT * FROM orders',
+  ])('leaves uncertain or multi-statement SQL uncredited: %s', (sql) => {
+    expect(extractTablesFromSql(sql, ['orders', 'analytics.orders', 'analytics.daily_totals'])).toEqual([]);
+  });
+
+  it.each([
+    'SELECT ARRAY_AGG(source IGNORE NULLS ORDER BY ts DESC LIMIT 1)[OFFSET(0)] FROM analytics.fct_orders GROUP BY user_id',
+    'SELECT ARRAY_AGG(source RESPECT NULLS ORDER BY ts DESC NULLS FIRST, id LIMIT 1)[SAFE_OFFSET(0)] FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(source ORDER BY ts) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(source LIMIT 1) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(DISTINCT source ORDER BY source) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(STRUCT(a, b) ORDER BY COALESCE(a, 0) DESC LIMIT 5) FROM analytics.fct_orders',
+    'SELECT LAST_VALUE(x IGNORE NULLS) OVER (ORDER BY d) FROM analytics.fct_orders',
+    'SELECT * FROM analytics.fct_orders ORDER BY a DESC NULLS LAST',
+    'SELECT * FROM analytics.fct_orders ORDER BY a NULLS FIRST',
+    'SELECT * FROM analytics.fct_orders QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC NULLS LAST) = 1',
+    "SELECT STRING_AGG(name, ', ' ORDER BY name) FROM analytics.fct_orders",
+    'SELECT * FROM analytics.fct_orders TABLESAMPLE SYSTEM (10 PERCENT)',
+    'SELECT * FROM analytics.fct_orders AS o TABLESAMPLE SYSTEM (10 PERCENT)',
+    'SELECT * FROM analytics.fct_orders WINDOW w AS (ORDER BY d)',
+    'SELECT o.* FROM analytics.fct_orders o JOIN analytics.INFORMATION_SCHEMA.TABLES t ON t.table_name = o.x',
+    'SELECT o.* FROM analytics.fct_orders o WHERE EXISTS (SELECT 1 FROM `region-us`.INFORMATION_SCHEMA.JOBS j)',
+    'SELECT o.* FROM analytics.fct_orders o, `proj`.`region-us`.INFORMATION_SCHEMA.JOBS j',
+    'SELECT o.* FROM analytics.fct_orders o, proj.analytics.INFORMATION_SCHEMA.TABLES t',
+  ])('scores BigQuery syntax the parser lacks: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({ observedTables: known, unscorableReason: null });
+    expect(tableSelectionPassed(known, extractTablesFromSql(sql, known))).toBe(true);
+  });
+
+  it('keeps tables referenced from subqueries inside aggregate ORDER BY clauses', () => {
+    const sql = 'SELECT ARRAY_AGG(x ORDER BY (SELECT MAX(y) FROM analytics.dim_users) DESC LIMIT 1) FROM analytics.fct_orders';
+
+    expect(extractTablesFromSql(sql, ['analytics.fct_orders', 'analytics.dim_users']))
+      .toEqual(['analytics.fct_orders', 'analytics.dim_users']);
+  });
+
+  it('scores INFORMATION_SCHEMA views as relations at any qualification', () => {
+    const known = ['analytics.INFORMATION_SCHEMA.TABLES', 'region-us.INFORMATION_SCHEMA.JOBS', 'analytics.fct_orders'];
+
+    expect(extractTablesFromSql('SELECT table_name FROM analytics.INFORMATION_SCHEMA.TABLES', known))
+      .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
+    expect(extractTablesFromSql('SELECT * FROM proj.analytics.INFORMATION_SCHEMA.TABLES', known))
+      .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
+    expect(extractTablesFromSql('SELECT * FROM `region-us`.INFORMATION_SCHEMA.JOBS', known))
+      .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
+    expect(extractTablesFromSql('SELECT * FROM `proj.region-us.INFORMATION_SCHEMA.JOBS`', known))
+      .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
+  });
+
+  it('leaves parser-gap keywords inside strings and comments untouched', () => {
+    const sql = `SELECT 'ORDER BY x LIMIT 1 IGNORE NULLS TABLESAMPLE SYSTEM (1) FROM analytics.dim_users' AS s
+      FROM analytics.fct_orders -- NULLS LAST JOIN analytics.dim_users`;
+
+    expect(extractTablesFromSql(sql, ['analytics.fct_orders', 'analytics.dim_users'])).toEqual(['analytics.fct_orders']);
+  });
+
+  it('marks unparsable SQL as unscorable instead of a wrong-table miss', () => {
+    const known = ['analytics.fct_orders'];
+    const sql = 'SELECT 1 FROM analytics.fct_orders |> WHERE x';
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({
+      observedTables: [],
+      unscorableReason: expect.stringContaining('SQL parser could not resolve table references'),
+    });
+    expect(scoreTableSelection(known, sql, known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: expect.stringContaining('could not resolve'),
+    });
+    expect(analyzeTablesInSql("SELECT 'open FROM analytics.fct_orders", known).unscorableReason)
+      .toContain('unterminated quoted token');
+  });
+
+  it.each([
+    'SELECT a, COUNT(*) FROM analytics.fct_orders GROUP BY ALL',
+    'SELECT a, COUNT(*) FROM `proj`.`analytics` . `fct_orders` GROUP BY ALL',
+    'SELECT a FROM analytics.fct_orders WHERE a IS DISTINCT FROM b',
+    'SELECT (SELECT AS STRUCT a, b) AS s FROM analytics.fct_orders',
+  ])('leaves an unparsable query naming every expected table unscorable: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, sql, known)).toMatchObject({
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: expect.stringContaining('could not resolve'),
+    });
+  });
+
+  it.each([
+    'SELECT (SELECT AS STRUCT a, b) AS s FROM wrong_ds.totally_wrong_table',
+    'SELECT a, COUNT(*) FROM wrong_ds.t GROUP BY ALL',
+    "SELECT CAST(d AS STRING FORMAT 'YYYY') FROM wrong_ds.t",
+    'SELECT ARRAY_AGG((SELECT 1) ORDER BY z) FROM analytics.fct_orders_archive',
+    "SELECT 'analytics.fct_orders' AS label FROM wrong_ds.t GROUP BY ALL",
+    'SELECT 1 FROM wrong_ds.t GROUP BY ALL -- FROM analytics.fct_orders',
+    "SELECT 'open FROM analytics.fct_orders",
+    'SELECT analytics.fct_orders.id FROM wrong_ds.t GROUP BY ALL',
+  ])('fails an unparsable query when an expected table is absent from its text: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, sql, known)).toEqual({ observedTables: [], tableSelectionPassed: false });
+  });
+
+  it.each([
+    '   ',
+    '-- SELECT * FROM analytics.fct_orders',
+    '/* SELECT * FROM analytics.fct_orders */',
+    'DELETE FROM analytics.fct_orders WHERE TRUE',
+    'SELECT 1; SELECT * FROM analytics.fct_orders',
+  ])('scores blank, comment-only, DML and multi-statement SQL as a miss: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({ observedTables: [], unscorableReason: null });
+    expect(scoreTableSelection(known, sql, known)).toEqual({ observedTables: [], tableSelectionPassed: false });
+  });
+
+  it('accepts a trailing semicolon and parenthesized set operations as a single SELECT', () => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, 'SELECT * FROM analytics.fct_orders;', known).tableSelectionPassed).toBe(true);
+    expect(scoreTableSelection(
+      known,
+      '(SELECT * FROM analytics.fct_orders) UNION ALL (SELECT * FROM analytics.fct_orders)',
+      known,
+    ).tableSelectionPassed).toBe(true);
+  });
+
+  it('still fails table selection for missing or wrong SQL and skips entries without expectations', () => {
+    const known = ['analytics.fct_orders', 'analytics.dim_users'];
+
+    expect(scoreTableSelection(['analytics.fct_orders'], null, known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: false,
+    });
+    expect(scoreTableSelection(['analytics.fct_orders'], 'SELECT * FROM analytics.dim_users', known)).toEqual({
+      observedTables: ['analytics.dim_users'],
+      tableSelectionPassed: false,
+    });
+    expect(scoreTableSelection(undefined, 'SELECT 1 |> WHERE x', known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: null,
+    });
+  });
+
+  it('preserves the observed tables in the accepted benchmark fixture', () => {
+    const known = acceptedFixture.results.flatMap(result => result.expectedTables ?? []);
+
+    for (const result of acceptedFixture.results) {
+      const observed = extractTablesFromSql(result.generatedSql, known);
+      expect(observed).toEqual(result.observedTables);
+      expect(tableSelectionPassed(result.expectedTables, observed)).toBe(result.tableSelectionPassed);
+    }
   });
 
   it('reports whether all expected tables were observed', () => {

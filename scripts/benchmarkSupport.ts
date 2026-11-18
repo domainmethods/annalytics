@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { Parser, type LocationRange, type Select } from 'node-sql-parser';
 import type { GroundingCitation } from '../src/agents/types.js';
 import type { FailureRecord, QualityResult, ValidationLayerRecord } from '../src/qualityLoop.js';
 import {
@@ -208,20 +209,313 @@ export function teachingComplianceLabel(passed: boolean | null): string {
   return passed ? 'followed' : 'missed';
 }
 
-export function extractTablesFromSql(sql: string | null | undefined, knownTables: string[]): string[] {
-  if (!sql) return [];
-  const normalizedSql = sql.toLowerCase().replace(/`/g, '');
-  const observed = new Set<string>();
+class UnscorableSqlError extends Error {}
 
-  for (const table of knownTables) {
-    const normalizedTable = table.toLowerCase().replace(/`/g, '').trim();
-    if (normalizedTable.length === 0) continue;
-    const tablePattern = escapeRegExp(normalizedTable);
-    const regex = new RegExp(`(^|[^a-z0-9_])${tablePattern}([^a-z0-9_]|$)`, 'i');
-    if (regex.test(normalizedSql)) observed.add(table);
+const benchmarkSqlParser = new Parser();
+const quotedIdentifier = /`[^`\\]+`/.source;
+const comment = /--[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\//.source;
+const stringBody = [
+  /'''(?:\\[\s\S]|'(?!'')|[^'\\])*'''/,
+  /"""(?:\\[\s\S]|"(?!"")|[^"\\])*"""/,
+  /'(?!'')(?:\\[^\r\n]|[^'\\\r\n])*'/,
+  /"(?!"")(?:\\[^\r\n]|[^"\\\r\n])*"/,
+].map(pattern => pattern.source).join('|');
+const literal = `(?:br|rb|[br])?(?:${stringBody})`;
+const sqlSpans = new RegExp([
+  quotedIdentifier,
+  String.raw`(${literal}(?:(?:\s|${comment})+${literal})*)`,
+  `(${comment})`,
+  /(['"`]|\/\*)/.source,
+  /[a-z_]\w*/.source,
+].join('|'), 'gi');
+const namePart = String.raw`(?:${quotedIdentifier}|[a-z_][\w-]*)`;
+const tablePath = String.raw`${namePart}(?:\s*\.\s*${namePart}){0,2}`;
+const bigQueryParserGaps = new RegExp([
+  String.raw`(\bWITH\s+RECURSIVE)(?=\s+${namePart}\s+AS\s*\()`,
+  // project.dataset.INFORMATION_SCHEMA.VIEW (or project.`region-us`...) has one more part than the parser accepts.
+  String.raw`(?<![\w.\x60-])(${namePart}\s*\.\s*${namePart}\s*\.\s*(?:\x60INFORMATION_SCHEMA\x60|INFORMATION_SCHEMA)\s*\.\s*${namePart})(?![\w\x60-]|\s*\.)`,
+  String.raw`(${quotedIdentifier})(?=\s+AS\s*\()`,
+  String.raw`(\bML\s*\.\s*\w+\s*\(\s*)MODEL\s+${tablePath}(?=\s*[,)])`,
+  String.raw`([(,])\s*TABLE\s+(${tablePath})(?=\s*[,)])`,
+  // Clauses the parser rejects but which never name a relation.
+  /\b(?:IGNORE|RESPECT)\s+NULLS\b|\bNULLS\s+(?:FIRST|LAST)\b|\bTABLESAMPLE\s+SYSTEM\s*\([^()]*\)/.source,
+  quotedIdentifier,
+].join('|'), 'gi');
+
+/** Empties string literals and blanks comments; quoted identifiers are kept. */
+function scrubLiteralsAndComments(sql: string): string {
+  return sql.replace(sqlSpans, (token, value, ignoredComment, unterminated) => {
+    if (unterminated) throw new UnscorableSqlError('SQL has an unsupported or unterminated quoted token');
+    if (value) return "''";
+    return ignoredComment ? ' ' : token;
+  });
+}
+
+function prepareBenchmarkSql(sql: string): string {
+  // Keep quotes and comments opaque while adapting syntax absent from the installed parser.
+  const scrubbed = scrubLiteralsAndComments(sql);
+  const adapted = scrubbed.replace(
+    bigQueryParserGaps,
+    (token, recursive, schemaPath, cte, mlPrefix, separator, inputTable) => {
+      if (recursive) return 'WITH /*recursive*/';
+      if (schemaPath) return `\`${schemaPath.replace(/[`\s]/g, '')}\``;
+      if (cte) return JSON.stringify(cte.slice(1, -1));
+      if (mlPrefix) return `${mlPrefix}NULL`;
+      if (separator) return `${separator}(SELECT * FROM ${inputTable})`;
+      if (token.startsWith('`')) return token;
+      return ' '.repeat(token.length);
+    },
+  );
+  return neutralizeAggregateModifiers(adapted);
+}
+
+const sqlTokens = /`[^`]*`|'[^']*'|"[^"]*"|[()]|[a-z_]\w*|\S/gi;
+// Words that open a parenthesis without making it a function call (window specs, joins, IN lists).
+const nonCallWords = new Set(['as', 'over', 'in', 'from', 'join', 'on', 'using', 'exists', 'unnest', 'values']);
+
+/**
+ * The parser rejects ORDER BY / LIMIT (and some DISTINCT) inside aggregate calls (ARRAY_AGG, STRING_AGG, ...).
+ * Neither can name a relation unless it holds a subquery, so blank that tail of the call;
+ * when it does hold a subquery, keep the expressions as extra call arguments instead.
+ */
+function neutralizeAggregateModifiers(source: string): string {
+  const tokens = [...source.matchAll(sqlTokens)].map(match => ({
+    text: match[0],
+    word: /^[a-z_]/i.test(match[0]) ? match[0].toLowerCase() : null,
+    start: match.index,
+  }));
+  const chars = source.split(''); // UTF-16 units, matching match.index
+  const frames: Array<{ call: boolean; tail: number | null }> = [];
+
+  tokens.forEach((token, index) => {
+    if (token.text === '(') {
+      const previous = tokens[index - 1]?.word;
+      const next = tokens[index + 1];
+      const call = previous != null && !nonCallWords.has(previous)
+        && next?.text !== '(' && next?.word !== 'select' && next?.word !== 'with';
+      frames.push({ call, tail: null });
+      // ARRAY_AGG(DISTINCT x) and STRING_AGG(DISTINCT x, ', ') are also rejected.
+      if (call && next?.word === 'distinct') {
+        for (let at = next.start; at < next.start + next.text.length; at++) chars[at] = ' ';
+      }
+      return;
+    }
+    const frame = frames.at(-1);
+    if (token.text === ')') {
+      frames.pop();
+      if (!frame || frame.tail === null) return;
+      const tail = tokens.slice(frame.tail, index);
+      const tailEnd = token.start;
+      const tailStart = tail[0].start;
+      if (!tail.some(item => item.word === 'select')) {
+        for (let at = tailStart; at < tailEnd; at++) chars[at] = ' ';
+        return;
+      }
+      // Rewrite only the modifier keywords that sit directly inside this call.
+      let depth = 0;
+      for (const item of tail) {
+        if (item.text === '(') depth++;
+        else if (item.text === ')') depth--;
+        else if (depth === 0 && item.word && ['order', 'limit', 'by', 'asc', 'desc'].includes(item.word)) {
+          const replacement = item.word === 'order' || item.word === 'limit' ? ',' : ' ';
+          chars[item.start] = replacement;
+          for (let at = item.start + 1; at < item.start + item.text.length; at++) chars[at] = ' ';
+        }
+      }
+      return;
+    }
+    if (!frame?.call || frame.tail !== null) return;
+    const startsOrderBy = token.word === 'order' && tokens[index + 1]?.word === 'by';
+    if (startsOrderBy || token.word === 'limit') frame.tail = index;
+  });
+
+  return chars.join('');
+}
+
+interface BigQueryFromItem {
+  type?: string;
+  db?: string | null;
+  schema?: string;
+  table?: string;
+  surround?: { table?: string };
+  as?: string | { value: string } | null;
+  expr?: unknown;
+}
+
+function warehouseRelations(sql: string): string[] {
+  const options = { database: 'BigQuery', trimQuery: false, parseOptions: { includeLocations: true } };
+  let source = prepareBenchmarkSql(sql);
+  let patchedThrough = 0;
+  let ast;
+  for (;;) {
+    try {
+      ast = benchmarkSqlParser.astify(source, options);
+      break;
+    } catch (error) {
+      // After a bare FROM item, the parser can consume QUALIFY as an alias.
+      const offset = (error as { location?: LocationRange }).location?.start.offset ?? 0;
+      const qualify = /\bQUALIFY\s*$/i.exec(source.slice(0, offset));
+      if (!qualify || qualify.index < patchedThrough) throw error;
+      const where = 'WHERE TRUE ';
+      source = source.slice(0, qualify.index) + where + source.slice(qualify.index);
+      patchedThrough = qualify.index + where.length + 'QUALIFY'.length;
+    }
   }
 
-  return [...observed];
+  const statements = Array.isArray(ast) ? ast : [ast];
+  // Anything but one SELECT is a definite miss, never unscorable.
+  if (statements.length !== 1 || statements[0]?.type !== 'select') return [];
+
+  const relations = new Set<string>();
+  function visit(value: unknown, ctes: ReadonlySet<string>, outerAliases: ReadonlySet<string>): void {
+    if (!value || typeof value !== 'object') return;
+    if (!('type' in value) || value.type !== 'select') {
+      for (const child of Object.values(value)) visit(child, ctes, outerAliases);
+      return;
+    }
+
+    const { with: definitions, from, _next, loc, parentheses_symbol, ...expressions } = value as Select;
+    const visibleCtes = new Set(ctes);
+    const recursive = loc && source.startsWith('WITH /*recursive*/', loc.start.offset);
+    const cteDefinitions = (definitions ?? []).map(({ name, stmt }) => ({
+      // The parser retains escaped double quotes in normalized CTE declarations.
+      name: name.value.replace(/\\"/g, '"').toLowerCase(),
+      stmt,
+    }));
+    if (recursive) {
+      for (const { name } of cteDefinitions) visibleCtes.add(name);
+    }
+    for (const { name, stmt } of cteDefinitions) {
+      visit(stmt, visibleCtes, outerAliases);
+      visibleCtes.add(name);
+    }
+
+    const aliases = new Set(outerAliases);
+    for (const item of (from ?? []) as BigQueryFromItem[]) {
+      const { type, table, db, schema, surround, as, expr, ...clauses } = item;
+      const path = [db, schema, table].filter(Boolean).join('.').toLowerCase();
+      const parts = path.split('.');
+      const quotedPath = !db && surround?.table === '`';
+      const arrayPath = parts.length > 1 && !quotedPath && aliases.has(parts[0]);
+      if (table && !arrayPath && (db || !visibleCtes.has(path))) relations.add(path);
+
+      visit(expr, visibleCtes, type === 'unnest' ? aliases : outerAliases);
+      const alias = typeof as === 'string' ? as : as?.value ?? parts.at(-1);
+      if (alias) aliases.add(alias.toLowerCase());
+      visit(clauses, visibleCtes, aliases);
+    }
+
+    for (const expression of Object.values(expressions)) visit(expression, visibleCtes, aliases);
+    // The parser links set branches as siblings. A WITH inside parentheses stays local.
+    visit(_next, parentheses_symbol ? ctes : visibleCtes, outerAliases);
+  }
+
+  visit(statements[0], new Set(), new Set());
+  return [...relations];
+}
+
+export interface TableReferenceAnalysis {
+  observedTables: string[];
+  /** Set when the SQL could not be resolved to relations, so table selection cannot be scored. */
+  unscorableReason: string | null;
+}
+
+export function analyzeTablesInSql(
+  sql: string | null | undefined,
+  knownTables: string[],
+): TableReferenceAnalysis {
+  // Missing, blank or comment-only SQL is a real miss, not an unscorable one.
+  if (!sql?.trim() || knownTables.length === 0) return { observedTables: [], unscorableReason: null };
+  let relations: string[];
+  try {
+    relations = isSingleSelectText(sql) ? warehouseRelations(sql) : [];
+  } catch (error) {
+    return { observedTables: [], unscorableReason: unscorableReasonFor(error) };
+  }
+  // A short expectation can match a longer path. Missing qualifiers cannot be inferred.
+  const observedTables = [...new Set(knownTables.filter(table => {
+    const name = normalizeTableName(table);
+    return name && relations.some(ref => ref === name || ref.endsWith(`.${name}`));
+  }))];
+  return { observedTables, unscorableReason: null };
+}
+
+function normalizeTableName(table: string): string {
+  return table.toLowerCase().replace(/`/g, '').trim();
+}
+
+/**
+ * Checks statement shape without the parser, so DML or multi-statement SQL the
+ * parser cannot read still scores as a miss. A failed scrub defers to the parser.
+ */
+function isSingleSelectText(sql: string): boolean {
+  let text: string;
+  try {
+    text = scrubLiteralsAndComments(sql).trim().replace(/(?:\s*;)+$/, '');
+  } catch {
+    return true;
+  }
+  if (text.length === 0 || text.includes(';')) return false;
+  return /^(?:\(\s*)*(?:SELECT|WITH)\b/i.test(text);
+}
+
+/**
+ * Text-level presence check for SQL the parser rejected. Literals and comments are
+ * scrubbed, so a table named only there is absent. Presence is necessary for a pass,
+ * never sufficient; an unscrubbable query proves nothing and counts as absent.
+ */
+function expectedTablesAppearInText(sql: string, expectedTables: string[]): boolean {
+  let text: string;
+  try {
+    text = scrubLiteralsAndComments(sql).toLowerCase().replace(/`/g, '').replace(/\s*\.\s*/g, '.');
+  } catch {
+    return false;
+  }
+  return expectedTables.every(table => {
+    const name = normalizeTableName(table);
+    if (!name) return false;
+    // Same suffix rule as relation matching: a preceding qualifier (".") is allowed.
+    // A trailing "." means a qualified column (table.col), never a relation reference.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`).test(text);
+  });
+}
+
+function unscorableReasonFor(error: unknown): string {
+  if (error instanceof UnscorableSqlError) return error.message;
+  const start = (error as { location?: LocationRange }).location?.start;
+  return start
+    ? `SQL parser could not resolve table references (line ${start.line}, column ${start.column})`
+    : 'SQL parser could not resolve table references';
+}
+
+/** Uncertain SQL earns no table credit; use analyzeTablesInSql to tell that apart from a miss. */
+export function extractTablesFromSql(sql: string | null | undefined, knownTables: string[]): string[] {
+  return analyzeTablesInSql(sql, knownTables).observedTables;
+}
+
+export interface TableSelectionScore {
+  observedTables: string[];
+  tableSelectionPassed: boolean | null;
+  tableSelectionUnscorableReason?: string;
+}
+
+/**
+ * Scores table selection for a generated query. SQL the parser cannot resolve is
+ * unscorable (null plus a reason) only when every expected table still appears in
+ * its text; an expected table that is provably absent is a definite miss (false).
+ */
+export function scoreTableSelection(
+  expectedTables: string[] | undefined,
+  sql: string | null | undefined,
+  knownTables: string[],
+): TableSelectionScore {
+  const { observedTables, unscorableReason } = analyzeTablesInSql(sql, knownTables);
+  if (unscorableReason && sql && expectedTables && expectedTables.length > 0
+    && expectedTablesAppearInText(sql, expectedTables)) {
+    return { observedTables, tableSelectionPassed: null, tableSelectionUnscorableReason: unscorableReason };
+  }
+  return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables) };
 }
 
 export function tableSelectionPassed(
@@ -260,10 +554,6 @@ export function clarificationPassed(
 
 function normalizeSqlFragment(value: string): string {
   return value.toLowerCase().replace(/`/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function stripIdentifierQualifiers(value: string): string {

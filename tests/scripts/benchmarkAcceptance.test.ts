@@ -11,6 +11,7 @@ import type {
   BenchmarkRun,
   JudgeResult,
 } from '../../scripts/benchmark-types.js';
+import { scoreTableSelection } from '../../scripts/benchmarkSupport.js';
 
 const metadata: BenchmarkMetadata = {
   runId: 'benchmark_2026-06-04T10-00-00-000Z',
@@ -326,6 +327,63 @@ describe('evaluateReferenceCardAcceptance', () => {
       corpusId: 'revenue-ref-001',
       failureClass: 'table_mismatch',
     }));
+  });
+
+  it('fails a wrong-table query that also hits a parser gap', () => {
+    const expectedTables = ['analytics.fct_orders'];
+    const generatedSql = 'SELECT a, COUNT(*) FROM wrong_ds.totally_wrong_table GROUP BY ALL';
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({ generatedSql, expectedTables, ...scoreTableSelection(expectedTables, generatedSql, expectedTables) }),
+    ]));
+
+    expect(acceptance.decision).toBe('NEEDS_REVISION');
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({ failureClass: 'table_mismatch' }));
+    expect(acceptance.cases[0].tableSelectionUnscorableReason).toBeUndefined();
+  });
+
+  it('excuses a right-table query that hits a parser gap', () => {
+    const expectedTables = ['analytics.fct_orders'];
+    const generatedSql = 'SELECT a, COUNT(*) FROM analytics.fct_orders GROUP BY ALL';
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({ generatedSql, expectedTables, ...scoreTableSelection(expectedTables, generatedSql, expectedTables) }),
+    ]));
+
+    expect(acceptance.failures.filter(failure => failure.failureClass === 'table_mismatch')).toEqual([]);
+    expect(acceptance.cases[0]).toMatchObject({
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: expect.stringContaining('could not resolve'),
+    });
+  });
+
+  it('surfaces unscorable table selection without counting it as a failure', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        observedTables: [],
+        tableSelectionPassed: null,
+        tableSelectionUnscorableReason: 'SQL parser could not resolve table references (line 1, column 9)',
+      }),
+    ]));
+
+    expect(acceptance.decision).toBe('ACCEPTED');
+    expect(acceptance.failures).toEqual([]);
+    expect(acceptance.cases[0]).toMatchObject({
+      status: 'pass',
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: 'SQL parser could not resolve table references (line 1, column 9)',
+    });
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+    expect(report).toContain('## Unscorable Table Selection');
+    expect(report).toContain('| revenue-ref-001 | SQL parser could not resolve table references (line 1, column 9) |');
+    expect(report).toMatch(/\| revenue-ref-001 \| pass \|[^\n]*\| unscorable \|/);
+  });
+
+  it('still fails a null table selection that carries no unscorable reason', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({ observedTables: [], tableSelectionPassed: null }),
+    ]));
+
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({ failureClass: 'table_mismatch' }));
+    expect(formatReferenceCardAcceptanceReport(acceptance)).not.toContain('Unscorable');
   });
 
   it('classifies SQL-shape mismatches', () => {
