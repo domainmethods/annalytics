@@ -233,7 +233,7 @@ function supervisorResponse(overrides: Record<string, unknown> = {}) {
 
 function dryRunResult(bytesProcessed = 5000) {
   return [
-    { metadata: { statistics: { totalBytesProcessed: String(bytesProcessed) } } },
+    { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: String(bytesProcessed) } } },
   ];
 }
 

@@ -184,7 +184,9 @@ function supervisorResponse(overrides: Record<string, unknown> = {}) {
 }
 
 function dryRunResult(bytesProcessed = 5000) {
-  return [{ metadata: { statistics: { totalBytesProcessed: String(bytesProcessed) } } }];
+  return [{
+    metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: String(bytesProcessed) } },
+  }];
 }
 
 function executionResult(rows: Record<string, unknown>[], totalRows?: number) {

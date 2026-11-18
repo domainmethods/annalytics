@@ -17,8 +17,16 @@ export async function dryRunValidation(sql: string): Promise<ValidationResult> {
       useLegacySql: false,
     });
 
-    // Statistics live under job.metadata, not directly on the Job instance
-    const bytesProcessed = parseInt(job.metadata.statistics.totalBytesProcessed, 10);
+    const statistics = job?.metadata?.statistics;
+    if (statistics?.query?.statementType !== 'SELECT') {
+      return {
+        valid: false,
+        layer: 'L3-dryrun',
+        error: 'Only SELECT statements confirmed by BigQuery are allowed.',
+      };
+    }
+
+    const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
     return { valid: true, layer: 'L3-dryrun', bytesProcessed };
   } catch (error) {
     return {
