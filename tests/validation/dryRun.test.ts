@@ -17,12 +17,38 @@ describe('dryRunValidation', () => {
 
   it('returns valid with bytesProcessed on successful dry run', async () => {
     mockCreateQueryJob.mockResolvedValue([
-      { metadata: { statistics: { totalBytesProcessed: '5000000000' } } },
+      { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: '5000000000' } } },
     ]);
 
     const result = await dryRunValidation('SELECT * FROM users');
-    expect(result.valid).toBe(true);
-    expect(result.bytesProcessed).toBe(5_000_000_000);
+    expect(result).toEqual({ valid: true, layer: 'L3-dryrun', bytesProcessed: 5_000_000_000 });
+  });
+
+  it.each([
+    { label: 'a script', query: { statementType: 'SCRIPT' } },
+    { label: 'an unknown statement type', query: { statementType: 'UNKNOWN' } },
+    { label: 'a missing statement type', query: {} },
+    { label: 'missing query statistics', query: undefined },
+  ])('returns an L3 failure for $label in dry run metadata', async ({ query }) => {
+    mockCreateQueryJob.mockResolvedValue([
+      { metadata: { statistics: { query, totalBytesProcessed: '0' } } },
+    ]);
+
+    expect(await dryRunValidation('SELECT 1')).toEqual({
+      valid: false,
+      layer: 'L3-dryrun',
+      error: 'Only SELECT statements confirmed by BigQuery are allowed.',
+    });
+  });
+
+  it('returns a safe L3 error when job metadata is absent', async () => {
+    mockCreateQueryJob.mockResolvedValue([{}]);
+
+    expect(await dryRunValidation('SELECT 1')).toEqual({
+      valid: false,
+      layer: 'L3-dryrun',
+      error: 'Only SELECT statements confirmed by BigQuery are allowed.',
+    });
   });
 
   it('returns invalid with error message on dry run failure', async () => {
@@ -35,7 +61,7 @@ describe('dryRunValidation', () => {
 
   it('passes dryRun: true to BigQuery', async () => {
     mockCreateQueryJob.mockResolvedValue([
-      { metadata: { statistics: { totalBytesProcessed: '0' } } },
+      { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: '0' } } },
     ]);
 
     await dryRunValidation('SELECT 1');

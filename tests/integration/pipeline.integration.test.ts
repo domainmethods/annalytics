@@ -121,6 +121,8 @@ import { parseDbtArtifacts } from '../../src/dbt/parser.js';
 import { initBigQuery } from '../../src/validation/dryRun.js';
 import { initBigQueryClient } from '../../src/execution/runner.js';
 import { _resetCache } from '../../src/teachings/summaryMap.js';
+import { qualityLoop } from '../../src/qualityLoop.js';
+import { validationResultsFromFailures } from '../../scripts/benchmarkSupport.js';
 
 // ─── Parse real dbt fixtures ─────────────────────────────────────
 const manifest = JSON.parse(
@@ -190,7 +192,7 @@ function supervisorResponse(overrides: Record<string, unknown> = {}) {
 
 function dryRunResult(bytesProcessed = 5000) {
   return [
-    { metadata: { statistics: { totalBytesProcessed: String(bytesProcessed) } } },
+    { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: String(bytesProcessed) } } },
   ];
 }
 
@@ -296,6 +298,30 @@ describe('Pipeline — Integration', () => {
     expect(savedCtx.generatedSql).toBe(VALID_SQL);
     expect(savedCtx.supervisorVerdict).toBe('pass');
     expect(savedCtx.traceId).toBe('trace-integration');
+  });
+
+  it('records all four benchmark layers when BigQuery confirms SELECT after an AST warning', async () => {
+    const sql = 'SELECT id, ROW_NUMBER() OVER (PARTITION BY group_id ORDER BY created_at) AS rn FROM t QUALIFY rn = 1';
+    mockGenerateContent
+      .mockResolvedValueOnce(sqlGenResponse({ sql, tables_used: ['t'] }))
+      .mockResolvedValueOnce(supervisorResponse());
+    mockCreateQueryJob.mockResolvedValueOnce(dryRunResult(5000));
+
+    const question = 'Which record is first in each group?';
+    const result = await qualityLoop(
+      { question, tables: [], threadContext: [], apiKey: 'test-key' },
+      'test-key', question, 5000,
+    );
+
+    expect(result.verdict).toBe('pass');
+    expect(result.validationHistory).toMatchObject([
+      { layer: 'l1', valid: true },
+      { layer: 'l2', valid: true, detail: expect.stringContaining('AST parse failed') },
+      { layer: 'l3', valid: true, bytesProcessed: 5000 },
+      { layer: 'l4', valid: true, bytesProcessed: 5000 },
+    ]);
+    expect(validationResultsFromFailures(result.failureHistory, result.verdict, result.validationHistory))
+      .toEqual({ l1: true, l2: true, l3: true, l4: true });
   });
 
   it('resilience: a transient status-update failure does not abort the query', async () => {

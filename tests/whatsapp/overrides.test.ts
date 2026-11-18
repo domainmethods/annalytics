@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResult, ResponseContext } from '../../src/types.js';
 
-vi.mock('../../src/validation/pipeline.js', () => ({ validateSql: vi.fn() }));
+const mockCreateQueryJob = vi.fn();
+vi.mock('@google-cloud/bigquery', () => ({
+  BigQuery: class {
+    createQueryJob = mockCreateQueryJob;
+  },
+}));
 vi.mock('../../src/execution/runner.js', () => ({ executeQuery: vi.fn() }));
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
@@ -12,7 +17,7 @@ vi.mock('../../src/agents/modelGateway.js', () => ({ generateForNode: vi.fn() })
 
 import { generateForNode } from '../../src/agents/modelGateway.js';
 import { executeQuery } from '../../src/execution/runner.js';
-import { validateSql } from '../../src/validation/pipeline.js';
+import { initBigQuery } from '../../src/validation/dryRun.js';
 import {
   renderWhatsAppSummaryOverride,
   renderWhatsAppTableOverride,
@@ -20,7 +25,6 @@ import {
 
 const mockGenerateForNode = vi.mocked(generateForNode);
 const mockExecuteQuery = vi.mocked(executeQuery);
-const mockValidateSql = vi.mocked(validateSql);
 
 const config = {
   geminiApiKey: 'gemini-key',
@@ -72,17 +76,21 @@ const queryResult: QueryResult = {
 describe('WhatsApp override renderers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockValidateSql.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 512 });
+    initBigQuery();
+    mockCreateQueryJob.mockResolvedValue([
+      { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: '512' } } },
+    ]);
     mockExecuteQuery.mockResolvedValue(queryResult);
   });
 
   it('revalidates and re-executes SQL before rendering a table override', async () => {
     const text = await renderWhatsAppTableOverride(responseContext, config);
 
-    expect(mockValidateSql).toHaveBeenCalledWith(
-      'SELECT channel, revenue FROM t',
-      1_000_000,
-    );
+    expect(mockCreateQueryJob).toHaveBeenCalledWith({
+      query: responseContext.generatedSql,
+      dryRun: true,
+      useLegacySql: false,
+    });
     expect(mockExecuteQuery).toHaveBeenCalledWith('SELECT channel, revenue FROM t', {
       maxRows: 25,
       timeoutMs: 30_000,
@@ -92,6 +100,18 @@ describe('WhatsApp override renderers', () => {
     expect(text).toContain('paid');
   });
 
+  it.each([
+    { reason: 'BigQuery reports a non-SELECT statement', statementType: 'SCRIPT', totalBytesProcessed: '512', error: /Only SELECT/ },
+    { reason: 'the byte estimate exceeds the limit', statementType: 'SELECT', totalBytesProcessed: '1000001', error: /exceeding.*limit/ },
+  ])('skips re-execution when $reason', async ({ statementType, totalBytesProcessed, error }) => {
+    mockCreateQueryJob.mockResolvedValueOnce([
+      { metadata: { statistics: { query: { statementType }, totalBytesProcessed } } },
+    ]);
+
+    await expect(renderWhatsAppTableOverride(responseContext, config)).rejects.toThrow(error);
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
   it('re-executes SQL and uses summaryOverride before rendering a summary override', async () => {
     mockGenerateForNode.mockResolvedValue({
       text: 'Paid channel revenue was the largest, followed by organic.',
@@ -99,10 +119,11 @@ describe('WhatsApp override renderers', () => {
 
     const text = await renderWhatsAppSummaryOverride(responseContext, config);
 
-    expect(mockValidateSql).toHaveBeenCalledWith(
-      'SELECT channel, revenue FROM t',
-      1_000_000,
-    );
+    expect(mockCreateQueryJob).toHaveBeenCalledWith({
+      query: responseContext.generatedSql,
+      dryRun: true,
+      useLegacySql: false,
+    });
     expect(mockExecuteQuery).toHaveBeenCalledWith('SELECT channel, revenue FROM t', {
       maxRows: 25,
       timeoutMs: 30_000,
