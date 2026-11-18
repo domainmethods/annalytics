@@ -242,13 +242,18 @@ const bigQueryParserGaps = new RegExp([
   quotedIdentifier,
 ].join('|'), 'gi');
 
-function prepareBenchmarkSql(sql: string): string {
-  // Keep quotes and comments opaque while adapting syntax absent from the installed parser.
-  const scrubbed = sql.replace(sqlSpans, (token, value, ignoredComment, unterminated) => {
+/** Empties string literals and blanks comments; quoted identifiers are kept. */
+function scrubLiteralsAndComments(sql: string): string {
+  return sql.replace(sqlSpans, (token, value, ignoredComment, unterminated) => {
     if (unterminated) throw new UnscorableSqlError('SQL has an unsupported or unterminated quoted token');
     if (value) return "''";
     return ignoredComment ? ' ' : token;
   });
+}
+
+function prepareBenchmarkSql(sql: string): string {
+  // Keep quotes and comments opaque while adapting syntax absent from the installed parser.
+  const scrubbed = scrubLiteralsAndComments(sql);
   const adapted = scrubbed.replace(
     bigQueryParserGaps,
     (token, recursive, schemaPath, cte, mlPrefix, separator, inputTable) => {
@@ -358,8 +363,8 @@ function warehouseRelations(sql: string): string[] {
   }
 
   const statements = Array.isArray(ast) ? ast : [ast];
-  if (statements.length !== 1) throw new UnscorableSqlError('SQL is not a single statement');
-  if (statements[0]?.type !== 'select') throw new UnscorableSqlError('SQL is not a SELECT statement');
+  // Anything but one SELECT is a definite miss, never unscorable.
+  if (statements.length !== 1 || statements[0]?.type !== 'select') return [];
 
   const relations = new Set<string>();
   function visit(value: unknown, ctes: ReadonlySet<string>, outerAliases: ReadonlySet<string>): void {
@@ -419,20 +424,60 @@ export function analyzeTablesInSql(
   sql: string | null | undefined,
   knownTables: string[],
 ): TableReferenceAnalysis {
-  // Missing SQL is a real miss, not an unscorable one.
-  if (!sql || knownTables.length === 0) return { observedTables: [], unscorableReason: null };
+  // Missing, blank or comment-only SQL is a real miss, not an unscorable one.
+  if (!sql?.trim() || knownTables.length === 0) return { observedTables: [], unscorableReason: null };
   let relations: string[];
   try {
-    relations = warehouseRelations(sql);
+    relations = isSingleSelectText(sql) ? warehouseRelations(sql) : [];
   } catch (error) {
     return { observedTables: [], unscorableReason: unscorableReasonFor(error) };
   }
   // A short expectation can match a longer path. Missing qualifiers cannot be inferred.
   const observedTables = [...new Set(knownTables.filter(table => {
-    const name = table.toLowerCase().replace(/`/g, '').trim();
+    const name = normalizeTableName(table);
     return name && relations.some(ref => ref === name || ref.endsWith(`.${name}`));
   }))];
   return { observedTables, unscorableReason: null };
+}
+
+function normalizeTableName(table: string): string {
+  return table.toLowerCase().replace(/`/g, '').trim();
+}
+
+/**
+ * Checks statement shape without the parser, so DML or multi-statement SQL the
+ * parser cannot read still scores as a miss. A failed scrub defers to the parser.
+ */
+function isSingleSelectText(sql: string): boolean {
+  let text: string;
+  try {
+    text = scrubLiteralsAndComments(sql).trim().replace(/(?:\s*;)+$/, '');
+  } catch {
+    return true;
+  }
+  if (text.length === 0 || text.includes(';')) return false;
+  return /^(?:\(\s*)*(?:SELECT|WITH)\b/i.test(text);
+}
+
+/**
+ * Text-level presence check for SQL the parser rejected. Literals and comments are
+ * scrubbed, so a table named only there is absent. Presence is necessary for a pass,
+ * never sufficient; an unscrubbable query proves nothing and counts as absent.
+ */
+function expectedTablesAppearInText(sql: string, expectedTables: string[]): boolean {
+  let text: string;
+  try {
+    text = scrubLiteralsAndComments(sql).toLowerCase().replace(/`/g, '').replace(/\s*\.\s*/g, '.');
+  } catch {
+    return false;
+  }
+  return expectedTables.every(table => {
+    const name = normalizeTableName(table);
+    if (!name) return false;
+    // Same suffix rule as relation matching: a preceding qualifier (".") is allowed.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`).test(text);
+  });
 }
 
 function unscorableReasonFor(error: unknown): string {
@@ -456,7 +501,8 @@ export interface TableSelectionScore {
 
 /**
  * Scores table selection for a generated query. SQL the parser cannot resolve is
- * unscorable (null plus a reason) rather than a wrong-table failure.
+ * unscorable (null plus a reason) only when every expected table still appears in
+ * its text; an expected table that is provably absent is a definite miss (false).
  */
 export function scoreTableSelection(
   expectedTables: string[] | undefined,
@@ -464,7 +510,8 @@ export function scoreTableSelection(
   knownTables: string[],
 ): TableSelectionScore {
   const { observedTables, unscorableReason } = analyzeTablesInSql(sql, knownTables);
-  if (unscorableReason && expectedTables && expectedTables.length > 0) {
+  if (unscorableReason && sql && expectedTables && expectedTables.length > 0
+    && expectedTablesAppearInText(sql, expectedTables)) {
     return { observedTables, tableSelectionPassed: null, tableSelectionUnscorableReason: unscorableReason };
   }
   return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables) };

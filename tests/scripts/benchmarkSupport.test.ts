@@ -455,8 +455,58 @@ describe('deterministic benchmark expectation helpers', () => {
     });
     expect(analyzeTablesInSql("SELECT 'open FROM analytics.fct_orders", known).unscorableReason)
       .toContain('unterminated quoted token');
-    expect(analyzeTablesInSql('SELECT 1; SELECT * FROM analytics.fct_orders', known).unscorableReason)
-      .toBe('SQL is not a single statement');
+  });
+
+  it.each([
+    'SELECT a, COUNT(*) FROM analytics.fct_orders GROUP BY ALL',
+    'SELECT a, COUNT(*) FROM `proj`.`analytics` . `fct_orders` GROUP BY ALL',
+    'SELECT a FROM analytics.fct_orders WHERE a IS DISTINCT FROM b',
+    'SELECT (SELECT AS STRUCT a, b) AS s FROM analytics.fct_orders',
+  ])('leaves an unparsable query naming every expected table unscorable: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, sql, known)).toMatchObject({
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: expect.stringContaining('could not resolve'),
+    });
+  });
+
+  it.each([
+    'SELECT (SELECT AS STRUCT a, b) AS s FROM wrong_ds.totally_wrong_table',
+    'SELECT a, COUNT(*) FROM wrong_ds.t GROUP BY ALL',
+    "SELECT CAST(d AS STRING FORMAT 'YYYY') FROM wrong_ds.t",
+    'SELECT ARRAY_AGG((SELECT 1) ORDER BY z) FROM analytics.fct_orders_archive',
+    "SELECT 'analytics.fct_orders' AS label FROM wrong_ds.t GROUP BY ALL",
+    'SELECT 1 FROM wrong_ds.t GROUP BY ALL -- FROM analytics.fct_orders',
+    "SELECT 'open FROM analytics.fct_orders",
+  ])('fails an unparsable query when an expected table is absent from its text: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, sql, known)).toEqual({ observedTables: [], tableSelectionPassed: false });
+  });
+
+  it.each([
+    '   ',
+    '-- SELECT * FROM analytics.fct_orders',
+    '/* SELECT * FROM analytics.fct_orders */',
+    'DELETE FROM analytics.fct_orders WHERE TRUE',
+    'SELECT 1; SELECT * FROM analytics.fct_orders',
+  ])('scores blank, comment-only, DML and multi-statement SQL as a miss: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({ observedTables: [], unscorableReason: null });
+    expect(scoreTableSelection(known, sql, known)).toEqual({ observedTables: [], tableSelectionPassed: false });
+  });
+
+  it('accepts a trailing semicolon and parenthesized set operations as a single SELECT', () => {
+    const known = ['analytics.fct_orders'];
+
+    expect(scoreTableSelection(known, 'SELECT * FROM analytics.fct_orders;', known).tableSelectionPassed).toBe(true);
+    expect(scoreTableSelection(
+      known,
+      '(SELECT * FROM analytics.fct_orders) UNION ALL (SELECT * FROM analytics.fct_orders)',
+      known,
+    ).tableSelectionPassed).toBe(true);
   });
 
   it('still fails table selection for missing or wrong SQL and skips entries without expectations', () => {
