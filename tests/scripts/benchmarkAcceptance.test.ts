@@ -328,6 +328,37 @@ describe('evaluateReferenceCardAcceptance', () => {
     }));
   });
 
+  it('surfaces unscorable table selection without counting it as a failure', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({
+        observedTables: [],
+        tableSelectionPassed: null,
+        tableSelectionUnscorableReason: 'SQL parser could not resolve table references (line 1, column 9)',
+      }),
+    ]));
+
+    expect(acceptance.decision).toBe('ACCEPTED');
+    expect(acceptance.failures).toEqual([]);
+    expect(acceptance.cases[0]).toMatchObject({
+      status: 'pass',
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: 'SQL parser could not resolve table references (line 1, column 9)',
+    });
+    const report = formatReferenceCardAcceptanceReport(acceptance);
+    expect(report).toContain('## Unscorable Table Selection');
+    expect(report).toContain('| revenue-ref-001 | SQL parser could not resolve table references (line 1, column 9) |');
+    expect(report).toMatch(/\| revenue-ref-001 \| pass \|[^\n]*\| unscorable \|/);
+  });
+
+  it('still fails a null table selection that carries no unscorable reason', () => {
+    const acceptance = evaluateReferenceCardAcceptance(run([
+      result({ observedTables: [], tableSelectionPassed: null }),
+    ]));
+
+    expect(acceptance.failures).toContainEqual(expect.objectContaining({ failureClass: 'table_mismatch' }));
+    expect(formatReferenceCardAcceptanceReport(acceptance)).not.toContain('Unscorable');
+  });
+
   it('classifies SQL-shape mismatches', () => {
     const acceptance = evaluateReferenceCardAcceptance(run([
       result({ sqlShapePassed: false }),

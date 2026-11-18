@@ -462,5 +462,6 @@ Enabling WhatsApp requires at least one tester ID. Text, unsupported messages, a
 
 ### 2026-11-18 - Benchmark table-selection repair (#57)
 
-- The benchmark and node sweep now score warehouse relation references using GoogleSQL query scope. SQL the installed parser cannot resolve earns no table credit. New evaluation scaffolding remains deferred under T3 #4.
+- The benchmark and node sweep now score warehouse relation references using GoogleSQL query scope. New evaluation scaffolding remains deferred under T3 #4.
+- Parser coverage: a pre-scrub adapts BigQuery syntax the installed parser rejects (IGNORE/RESPECT NULLS, NULLS FIRST/LAST, ORDER BY/LIMIT/DISTINCT inside aggregate calls, TABLESAMPLE, four-part INFORMATION_SCHEMA paths). SQL that still cannot be parsed is recorded as unscorable (`tableSelectionPassed: null` with `tableSelectionUnscorableReason`): it earns no table credit, is not counted as a `table_mismatch`, and is listed in the acceptance report. Recorded results carry no reason field, so their verdicts are unchanged.
 - Evidence comes from offline regression tests and the committed mock acceptance fixture.

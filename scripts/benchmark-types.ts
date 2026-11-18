@@ -59,6 +59,8 @@ export interface BenchmarkResult {
   expectedTables?: string[];
   observedTables: string[];
   tableSelectionPassed: boolean | null;
+  /** Set when the generated SQL could not be parsed for relations; tableSelectionPassed is then null. */
+  tableSelectionUnscorableReason?: string;
   expectedSqlContains?: string[];
   sqlShapePassed: boolean | null;
   expectedClarificationConfidence?: 'high' | 'medium' | 'low';

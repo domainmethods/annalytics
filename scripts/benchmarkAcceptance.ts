@@ -42,6 +42,8 @@ export interface ReferenceCardCaseAcceptance {
   expectedTables: string[];
   observedTables: string[];
   tableSelectionPassed: boolean | null;
+  /** Table selection could not be scored (SQL unparsable for relations); not counted as a failure. */
+  tableSelectionUnscorableReason?: string;
   sqlShapePassed: boolean | null;
   clarificationPassed: boolean | null;
   qualityVerdict: BenchmarkResult['qualityVerdict'];
@@ -217,13 +219,27 @@ export function formatReferenceCardAcceptanceReport(result: ReferenceCardAccepta
       boolLabel(item.referenceRetrievalPassed),
       boolLabel(item.teachingRetrievalPassed),
       item.referenceRetrievalSource,
-      boolLabel(item.tableSelectionPassed),
+      item.tableSelectionUnscorableReason ? 'unscorable' : boolLabel(item.tableSelectionPassed),
       boolLabel(item.sqlShapePassed),
       blockingValidationLabel(item.validationResults),
       item.advisoryL2Passed ? 'pass' : 'advisory_fail',
     ].join(' | ')} |`);
   }
   lines.push('');
+
+  const unscorable = result.cases.filter(item => item.tableSelectionUnscorableReason);
+  if (unscorable.length > 0) {
+    lines.push('## Unscorable Table Selection');
+    lines.push('');
+    lines.push('Not counted as failures. Review these queries by hand.');
+    lines.push('');
+    lines.push('| Corpus ID | Reason |');
+    lines.push('|-----------|--------|');
+    for (const item of unscorable) {
+      lines.push(`| ${escapeMarkdown(item.corpusId)} | ${escapeMarkdown(item.tableSelectionUnscorableReason ?? '')} |`);
+    }
+    lines.push('');
+  }
 
   lines.push('## Failures');
   lines.push('');
@@ -295,7 +311,11 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     });
   }
 
-  if (expectedTables.length > 0 && result.tableSelectionPassed !== true) {
+  // Only a result that carries an unscorable reason is excused; a bare null with expectations still fails.
+  const tableSelectionUnscorableReason = result.tableSelectionPassed === null
+    ? result.tableSelectionUnscorableReason
+    : undefined;
+  if (expectedTables.length > 0 && result.tableSelectionPassed !== true && !tableSelectionUnscorableReason) {
     failures.push({
       corpusId: result.corpusId,
       failureClass: 'table_mismatch',
@@ -358,6 +378,7 @@ function evaluateCase(result: BenchmarkResult): ReferenceCardCaseAcceptance {
     expectedTables,
     observedTables,
     tableSelectionPassed: result.tableSelectionPassed,
+    ...(tableSelectionUnscorableReason ? { tableSelectionUnscorableReason } : {}),
     sqlShapePassed: result.sqlShapePassed,
     clarificationPassed: result.clarificationPassed,
     qualityVerdict: result.qualityVerdict,

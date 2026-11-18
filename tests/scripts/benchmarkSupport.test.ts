@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import acceptedFixture from '../../benchmarks/mock-results/2026-06-04-referencecard-accepted.json';
 import {
+  analyzeTablesInSql,
   buildBenchmarkMetadata,
   clarificationPassed,
   combineReferenceIds,
@@ -13,6 +14,7 @@ import {
   referenceRetrievalSource,
   resolveCollisionFreeResultPath,
   resolveCorpusPath,
+  scoreTableSelection,
   sqlShapePassed,
   tableSelectionPassed,
   referenceRetrievalPassed,
@@ -383,6 +385,95 @@ describe('deterministic benchmark expectation helpers', () => {
     'WITH `ord\\u0065rs` AS (SELECT 1) SELECT * FROM orders',
   ])('leaves uncertain or multi-statement SQL uncredited: %s', (sql) => {
     expect(extractTablesFromSql(sql, ['orders', 'analytics.orders', 'analytics.daily_totals'])).toEqual([]);
+  });
+
+  it.each([
+    'SELECT ARRAY_AGG(source IGNORE NULLS ORDER BY ts DESC LIMIT 1)[OFFSET(0)] FROM analytics.fct_orders GROUP BY user_id',
+    'SELECT ARRAY_AGG(source RESPECT NULLS ORDER BY ts DESC NULLS FIRST, id LIMIT 1)[SAFE_OFFSET(0)] FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(source ORDER BY ts) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(source LIMIT 1) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(DISTINCT source ORDER BY source) FROM analytics.fct_orders',
+    'SELECT ARRAY_AGG(STRUCT(a, b) ORDER BY COALESCE(a, 0) DESC LIMIT 5) FROM analytics.fct_orders',
+    'SELECT LAST_VALUE(x IGNORE NULLS) OVER (ORDER BY d) FROM analytics.fct_orders',
+    'SELECT * FROM analytics.fct_orders ORDER BY a DESC NULLS LAST',
+    'SELECT * FROM analytics.fct_orders ORDER BY a NULLS FIRST',
+    'SELECT * FROM analytics.fct_orders QUALIFY ROW_NUMBER() OVER (PARTITION BY a ORDER BY b DESC NULLS LAST) = 1',
+    "SELECT STRING_AGG(name, ', ' ORDER BY name) FROM analytics.fct_orders",
+    'SELECT * FROM analytics.fct_orders TABLESAMPLE SYSTEM (10 PERCENT)',
+    'SELECT * FROM analytics.fct_orders AS o TABLESAMPLE SYSTEM (10 PERCENT)',
+    'SELECT * FROM analytics.fct_orders WINDOW w AS (ORDER BY d)',
+    'SELECT o.* FROM analytics.fct_orders o JOIN analytics.INFORMATION_SCHEMA.TABLES t ON t.table_name = o.x',
+    'SELECT o.* FROM analytics.fct_orders o WHERE EXISTS (SELECT 1 FROM `region-us`.INFORMATION_SCHEMA.JOBS j)',
+    'SELECT o.* FROM analytics.fct_orders o, `proj`.`region-us`.INFORMATION_SCHEMA.JOBS j',
+    'SELECT o.* FROM analytics.fct_orders o, proj.analytics.INFORMATION_SCHEMA.TABLES t',
+  ])('scores BigQuery syntax the parser lacks: %s', (sql) => {
+    const known = ['analytics.fct_orders'];
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({ observedTables: known, unscorableReason: null });
+    expect(tableSelectionPassed(known, extractTablesFromSql(sql, known))).toBe(true);
+  });
+
+  it('keeps tables referenced from subqueries inside aggregate ORDER BY clauses', () => {
+    const sql = 'SELECT ARRAY_AGG(x ORDER BY (SELECT MAX(y) FROM analytics.dim_users) DESC LIMIT 1) FROM analytics.fct_orders';
+
+    expect(extractTablesFromSql(sql, ['analytics.fct_orders', 'analytics.dim_users']))
+      .toEqual(['analytics.fct_orders', 'analytics.dim_users']);
+  });
+
+  it('scores INFORMATION_SCHEMA views as relations at any qualification', () => {
+    const known = ['analytics.INFORMATION_SCHEMA.TABLES', 'region-us.INFORMATION_SCHEMA.JOBS', 'analytics.fct_orders'];
+
+    expect(extractTablesFromSql('SELECT table_name FROM analytics.INFORMATION_SCHEMA.TABLES', known))
+      .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
+    expect(extractTablesFromSql('SELECT * FROM proj.analytics.INFORMATION_SCHEMA.TABLES', known))
+      .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
+    expect(extractTablesFromSql('SELECT * FROM `region-us`.INFORMATION_SCHEMA.JOBS', known))
+      .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
+    expect(extractTablesFromSql('SELECT * FROM `proj.region-us.INFORMATION_SCHEMA.JOBS`', known))
+      .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
+  });
+
+  it('leaves parser-gap keywords inside strings and comments untouched', () => {
+    const sql = `SELECT 'ORDER BY x LIMIT 1 IGNORE NULLS TABLESAMPLE SYSTEM (1) FROM analytics.dim_users' AS s
+      FROM analytics.fct_orders -- NULLS LAST JOIN analytics.dim_users`;
+
+    expect(extractTablesFromSql(sql, ['analytics.fct_orders', 'analytics.dim_users'])).toEqual(['analytics.fct_orders']);
+  });
+
+  it('marks unparsable SQL as unscorable instead of a wrong-table miss', () => {
+    const known = ['analytics.fct_orders'];
+    const sql = 'SELECT 1 FROM analytics.fct_orders |> WHERE x';
+
+    expect(analyzeTablesInSql(sql, known)).toEqual({
+      observedTables: [],
+      unscorableReason: expect.stringContaining('SQL parser could not resolve table references'),
+    });
+    expect(scoreTableSelection(known, sql, known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: null,
+      tableSelectionUnscorableReason: expect.stringContaining('could not resolve'),
+    });
+    expect(analyzeTablesInSql("SELECT 'open FROM analytics.fct_orders", known).unscorableReason)
+      .toContain('unterminated quoted token');
+    expect(analyzeTablesInSql('SELECT 1; SELECT * FROM analytics.fct_orders', known).unscorableReason)
+      .toBe('SQL is not a single statement');
+  });
+
+  it('still fails table selection for missing or wrong SQL and skips entries without expectations', () => {
+    const known = ['analytics.fct_orders', 'analytics.dim_users'];
+
+    expect(scoreTableSelection(['analytics.fct_orders'], null, known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: false,
+    });
+    expect(scoreTableSelection(['analytics.fct_orders'], 'SELECT * FROM analytics.dim_users', known)).toEqual({
+      observedTables: ['analytics.dim_users'],
+      tableSelectionPassed: false,
+    });
+    expect(scoreTableSelection(undefined, 'SELECT 1 |> WHERE x', known)).toEqual({
+      observedTables: [],
+      tableSelectionPassed: null,
+    });
   });
 
   it('preserves the observed tables in the accepted benchmark fixture', () => {
