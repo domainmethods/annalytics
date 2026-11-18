@@ -4,7 +4,7 @@ import type { DbtRunHistoryEntry } from '../state/dbtRunHistory.js';
 import { saveDbtRunResults } from '../state/dbtRunHistory.js';
 
 function mapStatus(status: string): DbtRunHistoryEntry['status'] {
-  if (status === 'pass') return 'success';
+  if (status === 'success' || status === 'pass') return 'success';
   if (status === 'fail' || status === 'error') return 'error';
   return 'skipped';
 }

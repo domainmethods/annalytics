@@ -170,15 +170,15 @@ describe('registerDbtRunIngestion', () => {
           results: [
             {
               unique_id: 'model.my_project.dim_customers',
-              status: 'pass',
+              status: 'success',
               execution_time: 12.5,
               message: '',
             },
             {
-              unique_id: 'model.my_project.fct_orders',
+              unique_id: 'test.my_project.orders_have_customers',
               status: 'fail',
               execution_time: 3.2,
-              message: 'Database error: relation does not exist',
+              message: 'Got 1 result, configured to fail if != 0',
             },
             {
               unique_id: 'model.my_project.stg_events',
@@ -187,10 +187,22 @@ describe('registerDbtRunIngestion', () => {
               message: 'Compilation error',
             },
             {
-              unique_id: 'model.my_project.dim_products',
+              unique_id: 'test.my_project.products_have_categories',
               status: 'warn',
               execution_time: 5.0,
               message: '',
+            },
+            {
+              unique_id: 'test.my_project.customers_have_unique_ids',
+              status: 'pass',
+              execution_time: 0.5,
+              message: null,
+            },
+            {
+              unique_id: 'model.my_project.dim_products',
+              status: 'skipped',
+              execution_time: 0,
+              message: null,
             },
           ],
         },
@@ -203,19 +215,20 @@ describe('registerDbtRunIngestion', () => {
       expect(mockSave).toHaveBeenCalledTimes(1);
 
       const entries = mockSave.mock.calls[0][0];
-      expect(entries).toHaveLength(4);
+      expect(entries).toHaveLength(6);
 
       // Model name extraction from unique_id (last segment after '.')
       expect(entries[0].model).toBe('dim_customers');
-      expect(entries[1].model).toBe('fct_orders');
+      expect(entries[1].model).toBe('orders_have_customers');
       expect(entries[2].model).toBe('stg_events');
-      expect(entries[3].model).toBe('dim_products');
+      expect(entries[3].model).toBe('products_have_categories');
 
-      // Status mapping: 'pass' → 'success', 'fail'/'error' → 'error', else → 'skipped'
       expect(entries[0].status).toBe('success');
       expect(entries[1].status).toBe('error');
       expect(entries[2].status).toBe('error');
       expect(entries[3].status).toBe('skipped');
+      expect(entries[4].status).toBe('success');
+      expect(entries[5].status).toBe('skipped');
 
       // executionTime
       expect(entries[0].executionTime).toBe(12.5);
@@ -230,7 +243,7 @@ describe('registerDbtRunIngestion', () => {
 
       // errorMessage only when status is error
       expect(entries[0].errorMessage).toBeUndefined();
-      expect(entries[1].errorMessage).toBe('Database error: relation does not exist');
+      expect(entries[1].errorMessage).toBe('Got 1 result, configured to fail if != 0');
       expect(entries[2].errorMessage).toBe('Compilation error');
       expect(entries[3].errorMessage).toBeUndefined();
     });
