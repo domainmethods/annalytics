@@ -499,6 +499,10 @@ Artifact Registry, then deploys Cloud Run with explicit project, region,
 service account, env vars, Secret Manager bindings, port, and unauthenticated
 Slack endpoint access.
 
+Both deploy commands add or update the listed environment variables and secret
+bindings. Redeploys preserve other entries, including `COST_GATE_MAX_BYTES`
+and `LIFECYCLE_SWEEP_SECRET`.
+
 Deployment still requires `dbt/manifest.json` and `dbt/catalog.json` to be
 present in the build workspace. The deploy job fails fast with a clear message
 if an implementation has not provided those artifacts.
@@ -533,8 +537,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --image "$REGION-docker.pkg.dev/$PROJECT_ID/anna-lytics/anna-lytics:latest" \
   --region "$REGION" \
   --service-account "$SERVICE_NAME@$PROJECT_ID.iam.gserviceaccount.com" \
-  --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
-  --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
+  --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
+  --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
   --port 3000 \
   --allow-unauthenticated
 ```
