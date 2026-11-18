@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -76,8 +76,8 @@ async function createRepoFixture(overrides: Partial<Record<string, string>> = {}
       '    --project "${PROJECT_ID}" \\',
       '    --region "${REGION}" \\',
       '    --service-account "anna-lytics@${PROJECT_ID}.iam.gserviceaccount.com" \\',
-      '    --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
-      '    --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
+      '    --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
+      '    --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
       '    --port 3000 \\',
       '    --allow-unauthenticated',
     ].join('\n'),
@@ -166,8 +166,8 @@ describe('runSetupCheck', () => {
         '    --project "${PROJECT_ID}" \\',
         '    --region "${REGION}" \\',
         '    --service-account "anna-lytics@${PROJECT_ID}.iam.gserviceaccount.com" \\',
-        '    --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
-        '    --set-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
+        '    --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},FILE_SEARCH_STORE_ID=${FILE_SEARCH_STORE_ID}" \\',
+        '    --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \\',
         '    --port 3000 \\',
         '    --allow-unauthenticated',
       ].join('\n'),
@@ -459,3 +459,16 @@ describe('runSetupCheck', () => {
     expect(output).not.toContain('slack-secret');
   });
 });
+
+it.each(['.github/workflows/deploy.yml', 'README.md'])(
+  'preserves service-specific Cloud Run settings in %s',
+  async (path) => {
+    const content = await readFile(new URL(`../../${path}`, import.meta.url), 'utf8');
+    const deploy = content.replace(/\\\r?\n/g, '').match(/^[ \t]*gcloud run deploy .+/m)?.[0] ?? '';
+
+    expect(deploy).toMatch(/ --update-env-vars[ =]/);
+    expect(deploy).toMatch(/ --update-secrets[ =]/);
+    expect(deploy).not.toMatch(/ --(?:env-vars-file|(?:set|clear|remove)-(?:env-vars|secrets))\b/);
+    expect(deploy).not.toMatch(/\b(?:COST_GATE_MAX_BYTES|LIFECYCLE_SWEEP_SECRET)=/);
+  },
+);

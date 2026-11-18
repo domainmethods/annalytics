@@ -231,8 +231,8 @@ async function checkDeployWorkflow(
     ['--project', 'Deploy workflow includes --project'],
     ['--region', 'Deploy workflow includes --region'],
     ['--service-account', 'Deploy workflow includes --service-account'],
-    ['--set-env-vars', 'Deploy workflow includes --set-env-vars'],
-    ['--set-secrets', 'Deploy workflow includes --set-secrets'],
+    ['--update-env-vars', 'Deploy workflow includes --update-env-vars'],
+    ['--update-secrets', 'Deploy workflow includes --update-secrets'],
     ['--port', 'Deploy workflow includes --port'],
     ['--allow-unauthenticated', 'Deploy workflow includes --allow-unauthenticated'],
   ];
