@@ -475,8 +475,9 @@ function expectedTablesAppearInText(sql: string, expectedTables: string[]): bool
     const name = normalizeTableName(table);
     if (!name) return false;
     // Same suffix rule as relation matching: a preceding qualifier (".") is allowed.
+    // A trailing "." means a qualified column (table.col), never a relation reference.
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`).test(text);
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`).test(text);
   });
 }
 

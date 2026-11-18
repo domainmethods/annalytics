@@ -479,6 +479,7 @@ describe('deterministic benchmark expectation helpers', () => {
     "SELECT 'analytics.fct_orders' AS label FROM wrong_ds.t GROUP BY ALL",
     'SELECT 1 FROM wrong_ds.t GROUP BY ALL -- FROM analytics.fct_orders',
     "SELECT 'open FROM analytics.fct_orders",
+    'SELECT analytics.fct_orders.id FROM wrong_ds.t GROUP BY ALL',
   ])('fails an unparsable query when an expected table is absent from its text: %s', (sql) => {
     const known = ['analytics.fct_orders'];
 
