@@ -197,6 +197,22 @@ describe('handleCsvOverride', () => {
     expect(csv).toContain('US,1000');
     expect(csv).toContain('EU,500');
   });
+
+  it('exports unsafe INT64 strings verbatim in scalar and nested cells', async () => {
+    mockExecute.mockResolvedValue({
+      ...queryResult,
+      rows: [{ id: '9007199254740993', nested: { ids: [42, '-9223372036854775808'] } }],
+      columnNames: ['id', 'nested'],
+      totalRows: 1,
+    });
+
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', [], mockClient, overrideConfig);
+
+    const uploadCall = mockClient.filesUploadV2.mock.calls[0][0];
+    expect(Buffer.from(uploadCall.file).toString()).toBe(
+      'id,nested\n9007199254740993,"{""ids"":[42,""-9223372036854775808""]}"',
+    );
+  });
 });
 
 describe('handleCsvOverride with BigQuery Date objects', () => {
