@@ -214,6 +214,12 @@ export async function handleSummaryOverride(
   }
 }
 
+/** One RFC 4180 field: quoted when it holds a comma, double quote, line feed or
+ *  carriage return (a bare CR is a record break to many CSV readers). */
+export function csvField(val: string): string {
+  return /[",\r\n]/.test(val) ? `"${val.replace(/"/g, '""')}"` : val;
+}
+
 export async function handleCsvOverride(
   compoundKey: string,
   channel: string,
@@ -228,14 +234,9 @@ export async function handleCsvOverride(
     const ctx = await loadContext(channel, compoundKey);
     const { result } = await reExecuteSql(ctx, config);
 
-    const header = result.columnNames.join(',');
+    const header = result.columnNames.map(csvField).join(',');
     const rows = result.rows.map(row =>
-      result.columnNames.map(col => {
-        const val = formatValue(row[col]);
-        return val.includes(',') || val.includes('"') || val.includes('\n')
-          ? `"${val.replace(/"/g, '""')}"`
-          : val;
-      }).join(','),
+      result.columnNames.map(col => csvField(formatValue(row[col]))).join(','),
     );
     const csv = [header, ...rows].join('\n');
 
