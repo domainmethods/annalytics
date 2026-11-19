@@ -15,6 +15,7 @@ import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningB
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride, notifyContextUnavailable, type OverrideViewer } from './handlers/responseOverrides.js';
+import { promptRefinement, REFINE_SAVE_FAILED_TEXT } from './handlers/refinePrompt.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
 import { handleClarificationCancel } from './handlers/clarificationCancel.js';
 import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
@@ -294,15 +295,17 @@ app.view(OTHER_NOTE_CALLBACK_ID, async ({ ack, body, view, client }) => {
 app.action('refine_assumptions', async ({ ack, body, client }) => {
   await ack();
   const message = (body as any).message;
-  const threadTs = message?.thread_ts || message?.ts;
+  const statusMsgTs = message?.ts;
+  const threadTs = message?.thread_ts || statusMsgTs;
   const channel = (body as any).channel?.id;
 
-  if (threadTs && channel) {
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: 'What should I change about my assumptions? Reply with your corrections and I\'ll re-run the query.',
-    });
+  if (threadTs && statusMsgTs && channel) {
+    const prompted = await promptRefinement({ channel, threadTs, statusMsgTs, userId: body.user.id, client });
+    if (!prompted) {
+      await client.chat.postEphemeral({
+        channel, user: body.user.id, thread_ts: threadTs, text: REFINE_SAVE_FAILED_TEXT,
+      }).catch(() => {});
+    }
   }
 });
 

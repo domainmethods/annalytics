@@ -132,6 +132,7 @@ vi.mock('../../src/handlers/followUpRouter.js', () => ({
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
 import { registerMentions } from '../../src/handlers/mentions.js';
 import { registerCommands } from '../../src/handlers/commands.js';
+import { promptRefinement } from '../../src/handlers/refinePrompt.js';
 import type { AppConfig } from '../../src/config.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
@@ -644,6 +645,119 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
 
       expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
       expect(mockRunPipeline).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── #51: a reply to a refine prompt refines the answer the user picked ──
+  describe('refine prompt targets the selected answer (#51)', () => {
+    const reply = (user: string, ts: string) => dmEvent('use net revenue instead', {
+      user,
+      thread_ts: '1700000000.000100',
+      ts,
+    });
+
+    beforeEach(() => {
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      mockClient.conversations.replies.mockResolvedValue({
+        messages: [
+          { user: 'U1', text: 'show revenue', ts: '1700000000.000100' },
+          { bot_id: 'B1', text: 'Answer A', ts: '1700000000.000110' },
+          { bot_id: 'B1', text: 'Answer B', ts: '1700000000.000130' },
+        ],
+      });
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'new_query', reasoning: 'test' });
+    });
+
+    it("routes the prompted user's next reply to the picked answer, once", async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+
+      await handleMessageEvent({ event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefine1'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('refinement');
+      expect(mockRouteFollowUp.mock.calls[0][8]).toEqual({ refinementTargetKey: '1700000000.000100_1700000000.000110' });
+
+      // The target is consumed: a later reply goes through normal classification.
+      // (The fake store keeps rate-limit timestamps as Dates, which the real
+      // limiter can't re-read; reset the window so the second message counts fresh.)
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      await handleMessageEvent({ event: reply('U1', '1700000000.000160'), body: bodyWithEventId('EvRefine2'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a short correction to the refinement, not an intake reply (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockClear();
+      // Intake would answer "thanks" itself if it ran.
+      await handleMessageEvent({
+        event: dmEvent('thanks', { user: 'U1', thread_ts: '1700000000.000100', ts: '1700000000.000150' }),
+        body: bodyWithEventId('EvRefineShort'), client: mockClient, config, getTables,
+      });
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+      expect(statusPosts()).toEqual([STATUS_TEXT]);
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('refinement');
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(false);
+    });
+
+    it('says so, keeps the target, and runs nothing when the target cannot be read (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockClear();
+      // Fail only the refine-target read; every other collection stays live.
+      const realCollection = mockDb.collection.getMockImplementation()!;
+      mockDb.collection.mockImplementation((name: string) => {
+        const chain = realCollection(name);
+        if (name !== 'refinement_targets') return chain;
+        return { ...chain, doc: (id: string) => ({ ...chain.doc(id), get: async () => { throw new Error('firestore down'); } }) };
+      });
+
+      await handleMessageEvent({ event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefineReadFail'), client: mockClient, config, getTables });
+      mockDb.collection.mockImplementation(realCollection);
+
+      expect(statusPosts()).toEqual([expect.stringContaining("couldn't load the answer you picked")]);
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(true);
+    });
+
+    it('keeps the target when the status post fails, so the retry refines the picked answer (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockRejectedValueOnce(new Error('slack down'));
+
+      await expect(handleMessageEvent({
+        event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefinePostFail'), client: mockClient, config, getTables,
+      })).rejects.toThrow('slack down');
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(true);
+
+      // Slack redelivers (the claim was released): same event, same picked answer.
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      await handleMessageEvent({
+        event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefinePostFail'), client: mockClient, config, getTables,
+      });
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][8]).toEqual({ refinementTargetKey: '1700000000.000100_1700000000.000110' });
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(false);
+    });
+
+    it("does not apply one user's refine prompt to another user's reply", async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      await handleMessageEvent({ event: reply('U2', '1700000000.000150'), body: bodyWithEventId('EvRefineOther'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
     });
   });
 });

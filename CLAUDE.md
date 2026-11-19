@@ -95,7 +95,7 @@ All entry points (commands, mentions, message handler) call `preflightChecks(cha
 
 ### Follow-Up Intent Routing
 
-Thread replies are classified by `followUpClassifier.ts` before entering the pipeline. The `followUpRouter.ts` handler dispatches:
+Thread replies are classified by `followUpClassifier.ts` before entering the pipeline, except a reply from a user with a pending `refinement_targets` doc (left by a refine prompt, `handlers/refinePrompt.ts`): that reply skips intake and classification and goes straight to `refinement` against the answer they clicked. Both the `message` path and @mention thread replies (`app_mention`) consume targets. If the target can't be saved, the prompt isn't posted and the user is asked to retry; if it can't be read, the user is told and nothing runs, and the target stays for their retry. The `followUpRouter.ts` handler dispatches:
 
 - **`meta_question`** → Flash LLM call with persisted ResponseContext (no SQL, no supervisor)
 - **`refinement`** → Full pipeline re-run with composite question + previous SQL as hint
@@ -131,6 +131,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
 | `feedback_notes` | `traceId_userId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
+| `refinement_targets` | `channel:threadTs_userId` | The answer a user picked to refine ("Wrong assumptions?" / "Not what I asked"); consumed by their next thread reply; `expiresAt` TTL (30m) |
 | `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 | `thread_participation` | `channel:threadTs` | Marks channel threads the bot replied in, written by mention replies and `/anna` status messages even when no answer is saved (greetings/help, errors), so unmentioned follow-ups there still reach the bot; checked before `response_context` (`expiresAt` TTL, same window as `response_context`) |
 | `whatsapp_event_dedupe` | event doc id | WhatsApp webhook delivery dedupe (gated prototype); `expiresAt` TTL |
