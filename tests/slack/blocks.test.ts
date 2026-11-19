@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { BigQueryDate } from '@google-cloud/bigquery';
 import {
   buildSingleValueBlocks,
   buildTableBlocks,
@@ -90,6 +91,24 @@ describe('formatValue', () => {
 
   it('unwraps a {value} object', () => {
     expect(formatValue({ value: '2026-01-15' })).toBe('2026-01-15');
+  });
+
+  it('unwraps a real SDK date wrapper', () => {
+    expect(formatValue(new BigQueryDate('2026-01-15'))).toBe('2026-01-15');
+  });
+
+  it('keeps every field of a STRUCT that has a value field (#67)', () => {
+    expect(formatValue({ value: 4, unit: 'hours' })).toBe('{"value":4,"unit":"hours"}');
+  });
+
+  it('renders a measurement STRUCT next to a date wrapper in a table (#67)', () => {
+    const blocks = buildTableBlocks(
+      [{ day: new BigQueryDate('2026-01-15'), duration: { value: 4, unit: 'hours' } }],
+      ['day', 'duration'],
+    );
+    const text = JSON.stringify(blocks);
+    expect(text).toContain('2026-01-15');
+    expect(text).toContain('hours');
   });
 
   it('renders null and undefined as an empty string', () => {

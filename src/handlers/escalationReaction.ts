@@ -3,7 +3,7 @@ import type { WebClient } from '@slack/web-api';
 import type { ReactionAddedEvent } from '@slack/types';
 import type { AppConfig } from '../config.js';
 import type { TableContext } from '../dbt/types.js';
-import { getEscalationByEscalationThread } from '../state/escalationState.js';
+import { escalationConversation, getEscalationByEscalationThread } from '../state/escalationState.js';
 import { resumeFromEscalation } from './escalationResponse.js';
 import { toPipelineConfig } from '../pipeline.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
@@ -38,8 +38,8 @@ export interface HandleEscalationReactionParams {
  * A ✅ reaction on a pending escalation card resolves the escalation as a
  * confirmation of the bot's own proposed SQL. Because the reaction carries no
  * new human-authored guidance, teaching-candidate harvesting is skipped.
- * Idempotency comes from `getEscalationByEscalationThread`, which only returns
- * states still `awaiting_human` — a second ✅ after resolution is a no-op.
+ * The shared resume handler claims the record transactionally before delivery;
+ * concurrent replies and reactions that lose the claim do nothing.
  */
 export async function handleEscalationReaction({
   event,
@@ -58,11 +58,13 @@ export async function handleEscalationReaction({
     && event.item.channel !== config.escalation.channelId
   ) return;
 
-  const lookup = await getEscalationByEscalationThread(event.item.ts);
-  if (!lookup) return; // not an escalation card, or already resolved/timed out
+  const lookup = await getEscalationByEscalationThread(
+    escalationConversation(event.item.channel, event.user),
+    event.item.ts,
+  );
+  if (!lookup) return; // not an escalation card here, or already resolved/timed out
 
   const { state } = lookup;
-  if (state.escalationChannel !== event.item.channel) return;
 
   if (lookup.status === 'expired_now') {
     await client.chat.postMessage({

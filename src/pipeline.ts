@@ -1,3 +1,4 @@
+import { validateSql } from './validation/pipeline.js';
 import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import type { TableContext } from './dbt/types.js';
@@ -21,10 +22,13 @@ import {
   buildFeedbackActions,
   overrideButtonsForResultShape,
   buildAssumptionBlocks,
+  formatValue,
+  EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
 import { saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
+import { conversationThreadKey } from './state/threadScope.js';
 import { getTeachingSummaries } from './teachings/summaryMap.js';
 import { getSampleRows } from './dbt/sampleRowCache.js';
 import { createTraceId, createLogger, logStage } from './logging.js';
@@ -75,6 +79,8 @@ const IDENTIFIER_START_RE = /[A-Za-z_]/;
 const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
 
 export interface PipelineInput {
+  /** Lease token from preflight; resume paths omit it and never release the thread lock. */
+  ownerToken?: string;
   question: string;
   channel: string;
   threadTs: string;
@@ -83,6 +89,12 @@ export interface PipelineInput {
   tables: TableContext[];
   config: PipelineConfig;
   refinementHint?: { previousSql: string };
+  /**
+   * The user's own wording for the SQL supervisor, when `question` is a
+   * rewritten composite (e.g. an escalation resume built from the clarified
+   * question). Defaults to `question`.
+   */
+  originalQuestion?: string;
 }
 
 export function toPipelineConfig(config: AppConfig): PipelineConfig {
@@ -155,11 +167,11 @@ function extractFallbackTableRefs(
     const datasetId = parts[parts.length - 2];
     const projectId = parts.length === 3 ? parts[0] : defaultProjectId;
     const displayName = `${datasetId}.${tableId}`;
-    const canBeCoveredByKnownTables = parts.length === 2 || projectId.toLowerCase() === defaultProjectId.toLowerCase();
+    const qualifiedName = `${projectId}.${displayName}`;
 
     if (
-      canBeCoveredByKnownTables
-      && knownTables.some((t) => t.name === ref || t.name === displayName || t.name.endsWith(`.${displayName}`))
+      knownTables.some((t) => t.name === qualifiedName
+        || (projectId.toLowerCase() === defaultProjectId.toLowerCase() && t.name === displayName))
     ) {
       continue;
     }
@@ -172,6 +184,7 @@ function extractFallbackTableRefs(
 
 export async function runPipeline(input: PipelineInput): Promise<void> {
   const { question, channel, threadTs, statusMsgTs, client, tables, config } = input;
+  const supervisorQuestion = input.originalQuestion ?? question;
   const traceId = createTraceId();
   const logger = createLogger(traceId);
   const startTime = Date.now();
@@ -235,8 +248,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         reasoning: ambiguity.reasoning,
       }, 'ambiguity.classified');
 
+      // Scoped to the conversation so same-timestamp threads in other channels
+      // can't overwrite or cancel this clarification.
+      const clarificationId = `clarify_${conversationThreadKey(channel, threadTs)}`;
       const blocks = buildClarificationBlocks({
-        clarificationId: `clarify_${threadTs}`,
+        clarificationId,
         clarifyingQuestions: clarification.clarifying_questions,
         originalQuestion: question,
       });
@@ -247,10 +263,12 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         blocks: blocks as unknown as KnownBlock[],
       });
       await saveClarificationState({
-        clarificationId: `clarify_${threadTs}`,
+        clarificationId,
         threadTs,
         channel,
         originalQuestion: question,
+        // Firestore rejects undefined: only store the wording when it differs.
+        ...(supervisorQuestion !== question ? { supervisorQuestion } : {}),
         ambiguities: clarification.ambiguities,
         ambiguityType: ambiguity.type,
         ambiguityDomain: ambiguity.domain,
@@ -282,8 +300,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       await saveResponseContext({
         responseId: traceId,
         threadTs,
+        channel,
         statusMsgTs,
         clarifiedQuestion: resolvedQuestion,
+        userQuestion: supervisorQuestion,
         assumptions: assumptions || [],
         reasoningChain: 'dbt_status route — no SQL generation',
         generatedSql: '',
@@ -304,6 +324,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         supervisorDecision: 'required',
         supervisorTriggers: ['dbt_status_route'],
         fastPathIneligibleReasons: ['not_data_query'],
+      }).catch(error => {
+        logger.error({ error, traceId }, 'Response context persistence failed after answer delivery');
       });
 
       logStage(logger, { traceId, stage: 'format', durationMs: Date.now() - startTime });
@@ -326,12 +348,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       }
     }
 
-    // Stage 2: Load sample rows (parallel fetch)
+    // Stage 2: Load sample rows (parallel fetch). Samples are optional prompt
+    // context: a failed read counts as a missing sample, not a pipeline error.
     const sampleRowsMap = new Map<string, { rows: Record<string, unknown>[]; stale: boolean }>();
     const sampleResults = await Promise.all(
       tables.map(async (table) => {
-        const cached = await getSampleRows(table.name);
-        return cached ? { name: table.name, data: cached } : null;
+        try {
+          const cached = await getSampleRows(table.name);
+          return cached ? { name: table.name, data: cached } : null;
+        } catch (err) {
+          logger.warn({ err, traceId, table: table.name }, 'pipeline.sample_rows_failed');
+          return null;
+        }
       }),
     );
     for (const r of sampleResults) {
@@ -340,7 +368,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
     // Stage 3: Unified Quality Loop (generate + validate + supervise)
-    const negativeExample = await getLatestNegativeFeedback(threadTs);
+    // Also optional prompt context: a failed read means no negative example.
+    const negativeExample = await getLatestNegativeFeedback(channel, threadTs).catch((err: unknown) => {
+      logger.warn({ err, traceId }, 'pipeline.negative_feedback_failed');
+      return null;
+    });
 
     let pipelineMode: 'full_quality_loop' | 'routine_fast_path' = 'full_quality_loop';
     let supervisorDecision: 'skipped' | 'required' = 'required';
@@ -352,9 +384,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     if (config.fastPath?.enabled) {
       const fastPathStartedAt = Date.now();
       const fastPath = await runRoutineFastPath({
+        executionDefaultProject: config.gcpProjectId,
         enabled: config.fastPath.enabled,
         requireSupervisor: config.fastPath.requireSupervisor,
-        question,
+        question: supervisorQuestion,
         clarifiedQuestion: resolvedQuestion,
         clarificationConfidence: clarification.confidence,
         route: clarification.route,
@@ -447,6 +480,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           onReview: () => updateStatus('Reviewing for accuracy...'),
           onRetry: () => updateStatus('Refining the approach...'),
         },
+        supervisorQuestion,
       );
     }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
@@ -491,9 +525,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       const stuckDescription = failureDiagnostics || qualityResult.supervisorNotes || 'Could not generate a confident answer';
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs help with: "${question}"`,
+        text: `Anna Lytics needs help with: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription,
@@ -510,7 +544,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'sql_generation',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,
@@ -537,6 +571,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       return;
     }
 
+    const finalValidation = await validateSql(qualityResult.sqlResult.sql, config.maxBytesProcessed);
+    if (!finalValidation.valid) {
+      await updateStatus(finalValidation.layer === 'L4-cost'
+        ? `This query would scan ${((finalValidation.bytesProcessed ?? 0) / (1024 ** 3)).toFixed(1)} GB (limit: ${(config.maxBytesProcessed / (1024 ** 3)).toFixed(1)} GB). Try narrowing with a date range or specific filter. (trace: ${traceId})`
+        : `I wasn't able to generate a valid query for that question. (trace: ${traceId})`);
+      return;
+    }
+
     // Stage 5: Execution
     await updateStatus('Retrieving the data...');
     const queryResult = await executeQuery(qualityResult.sqlResult.sql, {
@@ -552,8 +594,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       qualityResult.finalConfidence,
     );
 
+    // The generator can add assumptions (currency, population, date reading)
+    // the clarifier never made; the answer and its saved context show both.
+    const answerAssumptions = mergeAssumptions(assumptions, qualityResult.sqlResult.assumptions);
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, assumptions);
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
@@ -572,9 +617,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     await saveResponseContext({
       responseId: traceId,
       threadTs,
+      channel,
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
-      assumptions,
+      userQuestion: supervisorQuestion,
+      assumptions: answerAssumptions,
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
@@ -609,6 +656,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           dataType: c.dataType,
         })),
       })),
+    }).catch(error => {
+      logger.error({ error, traceId }, 'Response context persistence failed after answer delivery');
     });
 
     // Stage 7b: Chart generation (fire-and-forget — failures silently skipped)
@@ -646,9 +695,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     if (shouldEscalateAsync && escalationTarget) {
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs verification: "${question}"`,
+        text: `Anna Lytics needs verification: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription: qualityResult.supervisorNotes || 'Answer needs verification',
@@ -665,7 +714,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'supervisor_review',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,
@@ -685,7 +734,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       text: friendlyErrorMessage(error as Error, traceId),
     });
   } finally {
-    await releaseThreadLock(threadTs).catch(() => {});
+    // Only callers that acquired the lease in preflight pass a token; resume paths do not.
+    if (input.ownerToken) await releaseThreadLock(channel, threadTs, input.ownerToken).catch(() => {});
   }
 }
 
@@ -731,6 +781,11 @@ export function resolveEscalationTarget(
   return null;
 }
 
+/** Combine assumption lists in order, dropping blanks and exact duplicates. */
+export function mergeAssumptions(...groups: string[][]): string[] {
+  return [...new Set(groups.flat().filter(Boolean))];
+}
+
 export function buildResponseBlocks(
   format: string,
   gen: SqlGenerationResult,
@@ -752,7 +807,9 @@ export function buildResponseBlocks(
 
   switch (format) {
     case 'single_value': {
-      const value = String(Object.values(result.rows[0])[0]);
+      // BigQuery returns DATE/TIME/DATETIME/TIMESTAMP cells as `{ value }`
+      // wrappers; share the table formatter, and show a dash for an empty cell.
+      const value = formatValue(Object.values(result.rows[0])[0]) || EMPTY_VALUE;
       return [
         ...buildSingleValueBlocks(value, gen.headline),
         ...assumptionBlocks,
@@ -775,9 +832,14 @@ export function buildResponseBlocks(
       // No rows came back, so Table/Summary/CSV have nothing to render, explain,
       // or export (overrideButtonsForResultShape suppresses all three). Feedback
       // and the detail toggles stay — Reasoning/Show SQL answer "why no results?"
+      // The generator's assumptions are listed as the filters applied; show
+      // only the remaining ones in the assumptions line so none appears twice.
       return [
-        ...buildZeroRowBlocks(gen.assumptions),
-        ...assumptionBlocks,
+        ...buildZeroRowBlocks(mergeAssumptions(gen.assumptions)),
+        ...buildAssumptionBlocks(
+          (assumptions ?? []).filter((a) => !gen.assumptions.includes(a)),
+          traceId,
+        ),
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     default:

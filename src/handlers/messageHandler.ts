@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { App } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import type { MessageEvent } from '@slack/types';
@@ -22,10 +23,12 @@ import {
 } from '../state/slackEventDedupe.js';
 import { preflightChecks } from './preflightChecks.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
-import { classifyFollowUp } from '../agents/followUpClassifier.js';
+import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
+import { finishRefinementTarget, lookupRefinementTarget, REFINE_LOOKUP_FAILED_TEXT } from './refinePrompt.js';
 import { buildThreadContext } from '../slack/threadContext.js';
-import { rootLogger } from '../logging.js';
+import { createTraceId, rootLogger } from '../logging.js';
+import { friendlyErrorMessage } from '../errors.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 /**
@@ -66,6 +69,7 @@ export async function handleMessageEvent({
 
   const eventId = extractSlackEventId(body);
   let visibleResponse = false;
+  const ownerToken = randomUUID();
   let lockHeld = false;
   const shouldProcess = await claimSlackEvent(eventId);
   if (!shouldProcess) return;
@@ -84,6 +88,7 @@ export async function handleMessageEvent({
       // Resume pipeline with clarified question
       await runPipeline({
         question: clarificationReply.clarifiedQuestion,
+        originalQuestion: clarificationReply.originalQuestion,
         channel: clarificationReply.channel,
         threadTs: clarificationReply.threadTs,
         statusMsgTs: clarificationReply.clarifyingMessageTs,
@@ -135,18 +140,34 @@ export async function handleMessageEvent({
     }
 
     // Preflight: lock + clarification + escalation guards
-    const passed = await preflightChecks(msg.channel, threadTs, client);
+    const passed = await preflightChecks(msg.channel, threadTs, client, ownerToken);
     if (!passed) return;
     lockHeld = true;
 
-    const handledByIntake = await maybeHandleSlackIntake({
+    // A reply to a refine prompt is that user's correction to the answer they
+    // picked (#51). Take the target before intake so a short correction can't
+    // get a canned intake reply and leave the target to hijack a later message.
+    const refinementLookup = msg.thread_ts
+      ? await lookupRefinementTarget(msg.channel, threadTs, msg.user)
+      : { status: 'none' as const };
+    if (refinementLookup.status === 'failed') {
+      await client.chat.postMessage({ channel: msg.channel, thread_ts: threadTs, text: REFINE_LOOKUP_FAILED_TEXT });
+      visibleResponse = true;
+      await markSlackEventVisible(eventId).catch(() => {});
+      await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+      lockHeld = false;
+      return;
+    }
+    const refinementTargetKey = refinementLookup.status === 'found' ? refinementLookup.key : null;
+
+    const handledByIntake = !refinementTargetKey && await maybeHandleSlackIntake({
       text: msg.text || '',
       channel: msg.channel,
       threadTs,
       apiKey: config.gemini.apiKey,
       client,
       markVisible: () => markSlackEventVisible(eventId),
-      releaseLock: () => releaseThreadLock(threadTs),
+      releaseLock: () => releaseThreadLock(msg.channel, threadTs, ownerToken),
     });
     if (handledByIntake) {
       visibleResponse = true;
@@ -161,39 +182,62 @@ export async function handleMessageEvent({
     });
     visibleResponse = true;
     await markSlackEventVisible(eventId).catch(() => {});
+    // Consume the target only now that the reply is visibly underway (#51).
+    if (refinementTargetKey) await finishRefinementTarget(msg.channel, threadTs, msg.user, refinementTargetKey);
 
     // Follow-up intent routing for thread replies
     if (msg.thread_ts) {
-      try {
-        const threadMessages = await client.conversations.replies({
-          channel: msg.channel,
-          ts: threadTs,
-          oldest: threadTs,
-        });
-        const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
-          summarizeOlder: true,
-          stripQueryResults: true,
-          maxTokens: 1000,
-        });
-        if (threadContext.length > 0) {
-          const { intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
-          if (intent !== 'new_query') {
-            await routeFollowUp(
-              intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
-              client, toPipelineConfig(config), getTables(),
-            );
-            await releaseThreadLock(threadTs).catch(() => {});
-            lockHeld = false;
-            return;
+      // Only a failed *classification* falls back to the standard pipeline.
+      // Once a follow-up route is chosen, its failures must not start an
+      // unrelated SQL run (#48).
+      let intent: FollowUpIntent = 'new_query';
+      // A refine-prompt reply skips classification and refines the picked answer.
+      if (refinementTargetKey) {
+        intent = 'refinement';
+      } else {
+        try {
+          const threadMessages = await client.conversations.replies({
+            channel: msg.channel,
+            ts: threadTs,
+            oldest: threadTs,
+          });
+          const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
+            summarizeOlder: true,
+            stripQueryResults: true,
+            maxTokens: 1000,
+          });
+          if (threadContext.length > 0) {
+            ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));
           }
+        } catch {
+          // Classification failed — fall through to standard pipeline
         }
-      } catch {
-        // Classification failed — fall through to standard pipeline
+      }
+      if (intent !== 'new_query') {
+        try {
+          await routeFollowUp(
+            intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
+            client, toPipelineConfig(config), getTables(),
+            refinementTargetKey ? { refinementTargetKey } : {},
+          );
+        } catch (error) {
+          const traceId = createTraceId();
+          rootLogger.warn({ traceId, intent, err: (error as Error).message }, 'followup.route_failed');
+          await client.chat.update({
+            channel: msg.channel,
+            ts: statusMsg.ts!,
+            text: friendlyErrorMessage(error as Error, traceId),
+          }).catch(() => {});
+        }
+        await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+        lockHeld = false;
+        return;
       }
     }
 
     lockHeld = false;
     await runPipeline({
+      ownerToken,
       question: msg.text || '',
       channel: msg.channel,
       threadTs,
@@ -204,7 +248,7 @@ export async function handleMessageEvent({
     });
   } catch (error) {
     if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-    if (lockHeld) await releaseThreadLock(msg.thread_ts || msg.ts).catch(() => {});
+    if (lockHeld) await releaseThreadLock(msg.channel, msg.thread_ts || msg.ts, ownerToken).catch(() => {});
     throw error;
   }
 }

@@ -1,3 +1,5 @@
+vi.mock('../../src/validation/pipeline.js');
+import { validateSql } from '../../src/validation/pipeline.js';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { ChannelClient, ChannelMessage } from '../../src/channels/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
@@ -158,6 +160,7 @@ const baseQualityResult: QualityResult = {
 describe('runWhatsAppPipeline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all' });
   });
 
   it('acks, answers, renders, and saves WhatsApp response context', async () => {
@@ -390,6 +393,7 @@ describe('runWhatsAppPipeline', () => {
 describe('answerWhatsAppQuestion', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all' });
     mockGetTeachingSummaries.mockResolvedValue([]);
     mockGetSampleRows.mockResolvedValue(null);
     mockGetLatestNegativeFeedback.mockResolvedValue(null);
@@ -434,12 +438,31 @@ describe('answerWhatsAppQuestion', () => {
       'gemini-key',
       'What was revenue yesterday?',
       1_000,
+      undefined,
+      'What was revenue yesterday?',
     );
     expect(mockExecuteQuery).toHaveBeenCalledWith('SELECT 123 AS revenue', {
       maxRows: 10,
       timeoutMs: 30_000,
       maxBytes: 1_000,
     });
+  });
+
+  it('generates against the clarification but keeps the original wording for review (#44)', async () => {
+    mockClassifyQuestion.mockResolvedValue({ ...highClarification, resolved_question: 'What were orders yesterday?' });
+
+    await answerWhatsAppQuestion({
+      question: 'What were paid orders yesterday?',
+      conversationId: 'whatsapp:15551234567',
+      providerMessageId: 'wamid.inbound',
+      tables: [table],
+      config,
+    });
+
+    const call = mockQualityLoop.mock.calls[0];
+    expect(call[0].question).toBe('What were orders yesterday?');
+    expect(call[2]).toBe('What were orders yesterday?');
+    expect(call[5]).toBe('What were paid orders yesterday?');
   });
 
   it('returns a safe answer without executing when supervisor is exhausted', async () => {
@@ -464,6 +487,16 @@ describe('answerWhatsAppQuestion', () => {
     if (outcome.kind !== 'answer') throw new Error('Expected answer outcome');
     expect(outcome.explanation).toBe("I wasn't able to generate a valid query for that question.");
     expect(outcome.responseContext.supervisorVerdict).toBe('exhausted');
+  });
+
+  it.each(['L3-dryrun', 'L4-cost'] as const)('blocks execution when final validation fails at %s', async (layer) => {
+    vi.mocked(validateSql).mockResolvedValue({ valid: false, layer });
+    await expect(answerWhatsAppQuestion({
+      question: 'Revenue?', conversationId: 'whatsapp:test', providerMessageId: 'test',
+      tables: [table], config,
+    })).rejects.toThrow();
+    expect(validateSql).toHaveBeenCalledWith(baseQualityResult.sqlResult.sql, config.maxBytesProcessed);
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
   });
 
   it('returns cost gate text without executing when cost is exceeded', async () => {

@@ -119,3 +119,10 @@ describe('validateReferenceCardIntegrity', () => {
     expect(errors).toEqual([]);
   });
 });
+
+it.each(['analytics.fct_orders', 'proj.analytics.fct_orders'])('validates qualified compatibility %s', canonical_table => {
+  expect(validateReferenceCardIntegrity([card({ canonical_table, avoid_tables: [] })], { validTableNames: new Set(['proj.analytics.fct_orders']) })).toEqual([]);
+});
+it('rejects ambiguous legacy card references', () => {
+  expect(validateReferenceCardIntegrity([card({ avoid_tables: [] })], { validTableNames: new Set(['proj.analytics.fct_orders', 'other.analytics.fct_orders']) })).not.toEqual([]);
+});

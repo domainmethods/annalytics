@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { App } from '@slack/bolt';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
@@ -9,6 +10,7 @@ import { createTraceId } from '../logging.js';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
+import { markThreadParticipation } from './threadParticipationMark.js';
 
 // chat.postMessage into a conversation the bot is not a member of fails with one
 // of these platform errors. respond() (the command's response_url) still works
@@ -39,6 +41,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
     const config = getConfig();
     const traceId = createTraceId();
+    const ownerToken = randomUUID();
     let statusMsgTs: string | undefined;
 
     try {
@@ -67,11 +70,14 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
       const threadTs = statusMsg.ts!;
       statusMsgTs = statusMsg.ts!;
+      // The status message roots a thread; replies there are for the bot even
+      // if the run ends without a saved answer (#53).
+      await markThreadParticipation(command.channel_id, threadTs);
 
       // Preflight: lock + clarification + escalation guards. preflightChecks
       // posts its own threaded note explaining the block; update the placeholder
       // so it isn't left frozen on the placeholder.
-      const passed = await preflightChecks(command.channel_id, threadTs, client);
+      const passed = await preflightChecks(command.channel_id, threadTs, client, ownerToken);
       if (!passed) {
         await client.chat.update({
           channel: command.channel_id,
@@ -82,6 +88,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       }
 
       await runPipeline({
+        ownerToken,
         question: command.text,
         channel: command.channel_id,
         threadTs,
@@ -94,7 +101,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       // The lock is only ever taken after the placeholder exists; its ts is the
       // thread identity.
       if (statusMsgTs) {
-        await releaseThreadLock(statusMsgTs).catch(() => {});
+        await releaseThreadLock(command.channel_id, statusMsgTs, ownerToken).catch(() => {});
       }
 
       if (isChannelAccessError(error)) {

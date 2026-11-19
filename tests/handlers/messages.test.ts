@@ -59,11 +59,12 @@ describe('shouldRespond', () => {
   it('responds to thread reply where bot has participated', async () => {
     mockBotHasReplied.mockResolvedValue(true);
     const result = await shouldRespond({
+      channel: 'C1',
       channel_type: 'channel',
       thread_ts: 'thread-1',
     } as any);
     expect(result).toBe(true);
-    expect(mockBotHasReplied).toHaveBeenCalledWith('thread-1');
+    expect(mockBotHasReplied).toHaveBeenCalledWith('C1', 'thread-1');
   });
 
   it('ignores thread reply where bot has NOT participated', async () => {
@@ -128,5 +129,28 @@ describe('checkClarificationReply', () => {
     expect(result!.clarifiedQuestion).toContain('Show revenue');
     expect(result!.clarifiedQuestion).toContain('Last 30 days');
     expect(mockDeleteClarification).toHaveBeenCalledWith('clarify_thread-1');
+    // Legacy doc with no separate wording: review uses the same text.
+    expect(result!.originalQuestion).toBe(result!.clarifiedQuestion);
+  });
+
+  it("returns the user's wording plus the answer for review (#44)", async () => {
+    mockGetClarification.mockResolvedValue({
+      clarificationId: 'clarify_thread-1',
+      threadTs: 'thread-1',
+      channel: 'C1',
+      originalQuestion: 'What is paid revenue? (Refinement: last week)',
+      supervisorQuestion: 'What is paid revenue? (Refinement: only EMEA)',
+      ambiguities: ['time period'],
+      clarifyingMessageTs: 'status-1',
+      state: 'awaiting_reply',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 3600000),
+    });
+    mockDeleteClarification.mockResolvedValue(undefined);
+
+    const result = await checkClarificationReply({ channel: 'C1', thread_ts: 'thread-1', text: 'Q3' } as any);
+
+    expect(result!.clarifiedQuestion).toBe('What is paid revenue? (Refinement: last week) (Clarification: Q3)');
+    expect(result!.originalQuestion).toBe('What is paid revenue? (Refinement: only EMEA) (Clarification: Q3)');
   });
 });

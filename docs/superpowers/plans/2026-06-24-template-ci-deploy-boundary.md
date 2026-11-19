@@ -1,3 +1,5 @@
+> Historical plan: legacy GEMINI_MODEL / GEMINI_FLASH_MODEL examples below do not control current serving nodes. Follow README “Serving model overrides” for NODE_PROFILE_OVERRIDES / MODEL_ID_OVERRIDES.
+
 # Template CI/Deploy Boundary Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

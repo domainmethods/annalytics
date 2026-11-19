@@ -10,7 +10,8 @@ vi.mock('../../src/state/teachingCandidates.js', () => ({
   saveTeachingCandidate: vi.fn(),
 }));
 
-import { getEscalationByEscalationThread, resolveEscalation } from '../../src/state/escalationState.js';
+import { getEscalationByEscalationThread, claimEscalation, resolveEscalation } from '../../src/state/escalationState.js';
+import { handleEscalationReaction } from '../../src/handlers/escalationReaction.js';
 import { buildEscalationResolvedBlocks } from '../../src/slack/escalationBlocks.js';
 import { runPipeline } from '../../src/pipeline.js';
 import { checkEscalationResponse, resumeFromEscalation } from '../../src/handlers/escalationResponse.js';
@@ -84,12 +85,62 @@ describe('checkEscalationResponse', () => {
 describe('resumeFromEscalation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(claimEscalation).mockResolvedValue(true);
     mockResolve.mockResolvedValue(undefined);
     mockRunPipeline.mockResolvedValue(undefined);
     mockBuildResolved.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'resolved' } }] as any);
     mockClient.chat.postMessage.mockResolvedValue({});
     mockGenerateTeachingCandidate.mockResolvedValue({ candidateId: 'teach_default' } as any);
     mockSaveTeachingCandidate.mockResolvedValue(undefined);
+  });
+
+  it.each(['park_wait', 'best_effort_verify'] as const)(
+    'interleaves a text reply and checkmark with one delivery (%s)', async behavior => {
+      const state = { ...baseEscalation, behavior };
+      mockGetEscalation.mockResolvedValue({ status: 'pending', state });
+      let claimed = false;
+      vi.mocked(claimEscalation).mockImplementation(async () => {
+        if (claimed) return false;
+        claimed = true;
+        return true;
+      });
+      const lookup = await checkEscalationResponse({
+        channel: state.escalationChannel, thread_ts: state.escalationTs, text: 'Confirmed',
+      });
+      await Promise.all([
+        handleEscalationReaction({
+          event: { reaction: 'white_check_mark', item: {
+            type: 'message', channel: state.escalationChannel, ts: state.escalationTs,
+          } } as any,
+          client: mockClient, config: { escalation: { mode: 'channel' } } as any,
+          getTables: () => [],
+        }),
+        resumeFromEscalation(pendingContext(lookup), mockClient, [], {} as any),
+      ]);
+      expect(mockRunPipeline.mock.calls.length + mockClient.chat.postMessage.mock.calls.length).toBe(1);
+      expect(mockResolve).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does nothing when another analyst already claimed resolution', async () => {
+    vi.mocked(claimEscalation).mockResolvedValueOnce(false);
+    await resumeFromEscalation({
+      ...baseEscalation, humanGuidance: 'Confirmed',
+    }, mockClient, [], {} as any);
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it('park_wait: gives the supervisor the user\'s own wording, not the clarified rewrite (#44)', async () => {
+    await resumeFromEscalation({
+      ...baseEscalation,
+      context: { ...baseEscalation.context, userQuestion: 'What is paid revenue?' },
+      humanGuidance: 'Use the proposed SQL',
+    }, mockClient, [], {} as any);
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      question: 'What is revenue? (Data team guidance: Use the proposed SQL)',
+      originalQuestion: 'What is paid revenue? (Data team guidance: Use the proposed SQL)',
+    }));
   });
 
   it('park_wait: resumes pipeline with human guidance, resolves escalation', async () => {
@@ -112,6 +163,8 @@ describe('resumeFromEscalation', () => {
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         question: expect.stringContaining('Use LEFT JOIN on user_id'),
+        // The supervisor sees the user's own wording plus the guidance (#44).
+        originalQuestion: 'What is revenue? (Data team guidance: Use LEFT JOIN on user_id)',
         channel: 'C-ORIGINAL',
         threadTs: 'thread-1',
         statusMsgTs: 'status-1',

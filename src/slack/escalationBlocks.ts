@@ -1,3 +1,4 @@
+import { boundedText, SECTION_TEXT_LIMIT, sqlSections } from './limits.js';
 import type { KnownBlock, SectionBlock, HeaderBlock } from '@slack/types';
 
 export interface EscalationBlocksParams {
@@ -24,33 +25,27 @@ export function buildEscalationBlocks(params: EscalationBlocksParams): KnownBloc
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*User question:* "${params.userQuestion}"`,
+        text: `*User question:* "${boundedText(params.userQuestion, SECTION_TEXT_LIMIT - 20)}"`,
       },
     } as SectionBlock,
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Channel:* ${params.channelName} (<${params.threadLink}|view thread>)`,
+        text: `*Channel:* ${boundedText(params.channelName, 200)} (<${params.threadLink}|view thread>)`,
       },
     } as SectionBlock,
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*What I'm stuck on:* ${params.stuckDescription}`,
+        text: `*What I'm stuck on:* ${boundedText(params.stuckDescription, SECTION_TEXT_LIMIT - 22)}`,
       },
     } as SectionBlock,
   ];
 
   if (params.bestGuessSql) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `*My best guess:*\n\`\`\`${params.bestGuessSql}\`\`\``,
-      },
-    } as SectionBlock);
+    blocks.push(...sqlSections(params.bestGuessSql, '*My best guess:*\n'));
   }
 
   blocks.push({

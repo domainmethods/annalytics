@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../src/state/escalationState.js');
+vi.mock('../../src/state/escalationState.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/state/escalationState.js')>()),
+  getEscalationByEscalationThread: vi.fn(),
+}));
 vi.mock('../../src/handlers/escalationResponse.js');
 
 import type { ReactionAddedEvent } from '@slack/types';
@@ -141,7 +144,7 @@ describe('handleEscalationReaction', () => {
     );
 
     // dm mode skips the channel pre-filter and relies on the precise ts lookup.
-    expect(mockGetEscalation).toHaveBeenCalledWith('esc-ts-1');
+    expect(mockGetEscalation).toHaveBeenCalledWith({ channel: 'D-ANALYST-DM', user: 'U-ANALYST' }, 'esc-ts-1');
     expect(mockResume).not.toHaveBeenCalled();
   });
 
@@ -150,27 +153,17 @@ describe('handleEscalationReaction', () => {
 
     await callHandler(baseEvent);
 
-    expect(mockGetEscalation).toHaveBeenCalledWith('esc-ts-1');
+    expect(mockGetEscalation).toHaveBeenCalledWith({ channel: 'C-ESCALATION' }, 'esc-ts-1');
     expect(mockResume).not.toHaveBeenCalled();
     expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
   });
 
-  it('ignores a lookup hit whose escalation channel does not match the reacted message', async () => {
-    mockGetEscalation.mockResolvedValue({
-      status: 'pending',
-      state: {
-      ...baseEscalation,
-      escalationChannel: 'C-OTHER-CHANNEL',
-      },
-    });
+  it('channel mode: scopes the lookup to the reacted channel only (no user id)', async () => {
+    mockGetEscalation.mockResolvedValue(null);
 
-    await callHandler({
-      ...baseEvent,
-      item: { type: 'message', channel: 'C-ESCALATION', ts: 'esc-ts-1' },
-    });
+    await callHandler(baseEvent);
 
-    expect(mockResume).not.toHaveBeenCalled();
-    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(mockGetEscalation).toHaveBeenCalledWith({ channel: 'C-ESCALATION' }, 'esc-ts-1');
   });
 
   it('replies in the escalation thread (and does not resolve) when there is no proposed SQL', async () => {
@@ -246,7 +239,7 @@ describe('handleEscalationReaction', () => {
     );
   });
 
-  it('dm mode: resolves a pending escalation when ✅ lands on the analyst DM card', async () => {
+  it('dm mode: resolves when ✅ lands on a card whose escalationChannel is the analyst user id (not the D… channel)', async () => {
     const dmConfig: AppConfig = {
       ...baseConfig,
       escalation: {
@@ -260,7 +253,7 @@ describe('handleEscalationReaction', () => {
       status: 'pending',
       state: {
       ...baseEscalation,
-      escalationChannel: 'D-ANALYST-DM',
+      escalationChannel: 'U-ANALYST',
       },
     });
 
@@ -272,7 +265,7 @@ describe('handleEscalationReaction', () => {
       dmConfig,
     );
 
-    expect(mockGetEscalation).toHaveBeenCalledWith('esc-ts-1');
+    expect(mockGetEscalation).toHaveBeenCalledWith({ channel: 'D-ANALYST-DM', user: 'U-ANALYST' }, 'esc-ts-1');
     expect(mockResume).toHaveBeenCalledWith(
       expect.objectContaining({
         escalationId: 'esc_trace-1',

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('../src/validation/pipeline.js');
+import { validateSql } from '../src/validation/pipeline.js';
+
 // Mock all domain modules
 vi.mock('../src/agents/clarificationAgent.js');
 vi.mock('../src/agents/ambiguityClassifier.js');
@@ -25,7 +28,7 @@ vi.mock('../src/logging.js', () => ({
   logStage: vi.fn(),
 }));
 
-import { runPipeline, buildResponseBlocks } from '../src/pipeline.js';
+import { runPipeline, buildResponseBlocks, mergeAssumptions } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
@@ -39,7 +42,8 @@ import { saveClarificationState } from '../src/state/clarificationState.js';
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue } from '../src/slack/blocks.js';
+import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
 import { saveEscalationState } from '../src/state/escalationState.js';
@@ -80,6 +84,7 @@ const baseInput = {
   channel: 'C123',
   threadTs: 'thread-1',
   statusMsgTs: 'status-1',
+  ownerToken: 'lease-1',
   client: mockClient as any,
   tables: [],
   config: {
@@ -164,6 +169,7 @@ function setupHappyPath() {
 describe('runPipeline', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all' });
     setupHappyPath();
   });
 
@@ -175,6 +181,64 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLock).toHaveBeenCalledWith('C123', 'thread-1', 'lease-1');
+  });
+
+  it('treats a failed sample read as a missing sample and still answers (#68)', async () => {
+    const table = (name: string) => ({
+      name, schema: 'analytics', description: '', materialization: 'table',
+      columns: [], sampleDDL: '', dependsOn: [], tags: [],
+    });
+    const tables = [table('analytics.fct_orders'), table('analytics.dim_customers')];
+    const sample = { rows: [{ id: 1 }], stale: false };
+    mockGetSampleRows.mockImplementation(async (name: string) => {
+      if (name === 'analytics.fct_orders') throw new Error('firestore unavailable');
+      return sample;
+    });
+
+    await runPipeline({ ...baseInput, tables });
+
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+    const sampleRows = mockQualityLoop.mock.calls[0][0].sampleRows;
+    expect(sampleRows).toEqual(new Map([['analytics.dim_customers', sample]]));
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+  });
+
+  it('still answers when the negative-feedback read fails (#68)', async () => {
+    mockGetNegative.mockRejectedValue(new Error('firestore unavailable'));
+
+    await runPipeline(baseInput);
+
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop.mock.calls[0][0].negativeExample).toBeUndefined();
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not release the thread lock when no lease token was passed (resume paths)', async () => {
+    const { ownerToken: _ownerToken, ...resumeInput } = baseInput;
+    await runPipeline(resumeInput);
+    expect(mockReleaseLock).not.toHaveBeenCalled();
+  });
+
+  it('generates against the clarification but keeps the original wording for review (#44)', async () => {
+    await runPipeline(baseInput);
+
+    const call = mockQualityLoop.mock.calls[0];
+    expect(call[0].question).toBe('What is total revenue from all orders?');
+    expect(call[2]).toBe('What is total revenue from all orders?');
+    expect(call[5]).toBe('What is total revenue?');
+  });
+
+  it('reviews against input.originalQuestion when a resume supplies one (#44)', async () => {
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Data team guidance: x)' });
+
+    expect(mockQualityLoop.mock.calls[0][5]).toBe('What is paid revenue? (Data team guidance: x)');
+    // Persisted so a later refinement reviews against the same wording.
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
+      userQuestion: 'What is paid revenue? (Data team guidance: x)',
+    }));
   });
 
   it('MEDIUM confidence: includes assumptions in response', async () => {
@@ -188,6 +252,26 @@ describe('runPipeline', () => {
 
     expect(mockQualityLoop).toHaveBeenCalledTimes(1);
     expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows and saves assumptions from both clarification and SQL generation (#45)', async () => {
+    mockClassify.mockResolvedValue({
+      ...highClarification,
+      assumptions: ['Assuming this calendar month', 'Assuming USD'],
+    });
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
+      sqlResult: {
+        ...baseQualityResult.sqlResult,
+        assumptions: ['Assuming USD', 'Excluding test accounts'],
+      },
+    });
+
+    await runPipeline(baseInput);
+
+    const merged = ['Assuming this calendar month', 'Assuming USD', 'Excluding test accounts'];
+    expect(mockBuildAssumptions).toHaveBeenCalledWith(merged, expect.any(String));
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ assumptions: merged }));
   });
 
   it('LOW confidence: suspends pipeline, posts clarification', async () => {
@@ -218,6 +302,30 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it("LOW confidence: keeps the user's wording in clarification state on a refinement (#44)", async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Refinement: only EMEA)' });
+    expect(mockSaveClarification.mock.calls[0][0]).toMatchObject({
+      originalQuestion: baseInput.question,
+      supervisorQuestion: 'What is paid revenue? (Refinement: only EMEA)',
+    });
+
+    // No rewrite: nothing extra stored (Firestore rejects undefined fields).
+    await runPipeline(baseInput);
+    expect(mockSaveClarification.mock.calls[1][0]).not.toHaveProperty('supervisorQuestion');
+  });
+
+  it('LOW confidence: scopes the clarification id to the conversation', async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, channel: 'C_ONE' });
+    await runPipeline({ ...baseInput, channel: 'C_TWO' });
+
+    const ids = mockSaveClarification.mock.calls.map(([state]) => state.clarificationId);
+    expect(ids).toEqual([`clarify_C_ONE:${baseInput.threadTs}`, `clarify_C_TWO:${baseInput.threadTs}`]);
+  });
+
   it('quality loop fail_then_pass: proceeds to execution', async () => {
     mockQualityLoop.mockResolvedValue({
       ...baseQualityResult,
@@ -230,6 +338,13 @@ describe('runPipeline', () => {
 
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the posted answer when context persistence fails', async () => {
+    mockSaveCtx.mockRejectedValueOnce(new Error('write failed'));
+    await runPipeline(baseInput);
+    const updates = mockClient.chat.update.mock.calls;
+    expect(updates.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
   });
 
   it('cost_exceeded: shows actionable message, no execution', async () => {
@@ -338,6 +453,44 @@ describe('runPipeline', () => {
     );
   });
 
+  it.each(['L3-dryrun', 'L4-cost'] as const)('blocks best effort when %s fails', async (layer) => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, verdict: 'exhausted' });
+    mockDecideEscalation.mockReturnValue({ shouldEscalate: true, behavior: 'best_effort_verify', trigger: 'quality_loop_exhausted' });
+    vi.mocked(validateSql).mockResolvedValue({ valid: false, layer, bytesProcessed: baseInput.config.maxBytesProcessed * 2, error: 'Try narrowing with a date filter.' });
+    await runPipeline({ ...baseInput, config: { ...baseInput.config, escalation: { mode: 'channel', channelId: 'C-ESCALATION', timeoutHours: 4 } } });
+    expect(validateSql).toHaveBeenCalledWith(baseQualityResult.sqlResult.sql, baseInput.config.maxBytesProcessed);
+    expect(mockExecute).not.toHaveBeenCalled();
+    if (layer === 'L4-cost') expect(mockClient.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('Try narrowing with a date range or specific filter') }),
+    );
+  });
+
+  it("escalation state keeps the user's wording on a refinement (#44)", async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, verdict: 'exhausted' });
+    mockDecideEscalation.mockReturnValue({ shouldEscalate: true, behavior: 'park_wait', trigger: 'quality_loop_exhausted' });
+    await runPipeline({
+      ...baseInput,
+      question: 'What is revenue? (Refinement: last week)',
+      originalQuestion: 'What is paid revenue? (Refinement: last week)',
+      config: { ...baseInput.config, escalation: { mode: 'channel', channelId: 'C-ESCALATION', timeoutHours: 4 } },
+    });
+
+    expect(mockSaveEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          userQuestion: 'What is paid revenue? (Refinement: last week)',
+        }),
+      }),
+      4,
+    );
+    expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({ userQuestion: 'What is paid revenue? (Refinement: last week)' }),
+    );
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Anna Lytics needs help with: "What is paid revenue? (Refinement: last week)"',
+    }));
+  });
+
   it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {
     mockQualityLoop.mockResolvedValue({
       ...baseQualityResult,
@@ -373,6 +526,8 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockBuildCaveat).toHaveBeenCalledWith('Uncertain about join logic');
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+    // Overrides recover the verification warning from this verdict (#47).
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ supervisorVerdict: 'exhausted' }));
     expect(mockSaveEscalation).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: 'best_effort_verify',
@@ -535,6 +690,12 @@ describe('runPipeline', () => {
   });
 });
 
+describe('mergeAssumptions', () => {
+  it('keeps first-seen order and drops blanks and exact duplicates', () => {
+    expect(mergeAssumptions(['a', '', 'b'], ['b', 'c', 'a'])).toEqual(['a', 'b', 'c']);
+  });
+});
+
 describe('buildResponseBlocks', () => {
   // blocks.js is module-mocked for the runPipeline suite above; this unit test
   // verifies the real block ORDER, so route the builders to their actual
@@ -546,6 +707,22 @@ describe('buildResponseBlocks', () => {
     mockBuildSingleValue.mockImplementation(actual.buildSingleValueBlocks);
     mockBuildAssumptions.mockImplementation(actual.buildAssumptionBlocks);
     mockBuildFeedback.mockImplementation(actual.buildFeedbackActions);
+    vi.mocked(formatValue).mockImplementation(actual.formatValue);
+  });
+
+  it('zero_rows: lists generator assumptions once, as the filters applied (#45)', async () => {
+    const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+    vi.mocked(buildZeroRowBlocks).mockImplementation(actual.buildZeroRowBlocks);
+    const blocks = buildResponseBlocks(
+      'zero_rows',
+      { headline: 'h', explanation: 'e', assumptions: ['Excluding test accounts', 'Excluding test accounts'] } as any,
+      { rows: [], columnNames: [], totalRows: 0 } as any,
+      'trace-1', 'T1', 'S1', ['Assuming USD', 'Excluding test accounts'],
+    );
+    const text = JSON.stringify(blocks);
+    expect(text.match(/Excluding test accounts/g)).toHaveLength(1);
+    expect(text).toContain('Filters applied:* Excluding test accounts');
+    expect(text).toContain('Assumptions:* Assuming USD');
   });
 
   it('single_value: answer first, then assumptions, then feedback actions', () => {
@@ -562,5 +739,25 @@ describe('buildResponseBlocks', () => {
     expect(assumptionIdx).toBeGreaterThan(0); // assumptions after the answer
     expect(feedbackIdx).toBeGreaterThan(assumptionIdx); // feedback is last
     expect((blocks[0] as any).text.text).toBe('*90*\nunique visitors this month');
+  });
+
+  it('single_value: formats a BigQuery DATE wrapper like table cells (#34)', () => {
+    const blocks = buildResponseBlocks(
+      'single_value',
+      { headline: 'first order date', explanation: '', assumptions: [] } as any,
+      { rows: [{ d: BigQuery.date('2026-11-01') }], columnNames: ['d'], totalRows: 1 } as any,
+      'trace-1', 'T1', 'S1', [],
+    );
+    expect((blocks[0] as any).text.text).toBe('*2026-11-01*\nfirst order date');
+  });
+
+  it('single_value: shows a dash for an empty cell (#34)', () => {
+    const blocks = buildResponseBlocks(
+      'single_value',
+      { headline: 'latest refund', explanation: '', assumptions: [] } as any,
+      { rows: [{ d: null }], columnNames: ['d'], totalRows: 1 } as any,
+      'trace-1', 'T1', 'S1', [],
+    );
+    expect((blocks[0] as any).text.text).toBe('*—*\nlatest refund');
   });
 });

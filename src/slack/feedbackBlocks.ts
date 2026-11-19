@@ -22,12 +22,18 @@ export function feedbackReasonById(id: string): FeedbackReason | undefined {
   return FEEDBACK_REASONS.find(r => r.id === id);
 }
 
+/** Default prompt above the 👎 reason buttons. */
+const DEFAULT_REASON_PROMPT = 'Thanks for the flag — what was off? This routes it to the right fix.';
+
 /**
  * Ephemeral prompt shown after a negative-feedback click. Each button carries the
  * compound key (`${threadTs}_${statusMsgTs}`) as its value so the reason handler
  * can load the persisted ResponseContext; the reason id is encoded in the action_id.
  */
-export function buildFeedbackReasonBlocks(compoundKey: string): KnownBlock[] {
+export function buildFeedbackReasonBlocks(
+  compoundKey: string,
+  prompt = DEFAULT_REASON_PROMPT,
+): KnownBlock[] {
   const elements: ActionsBlock['elements'] = FEEDBACK_REASONS.map(reason => ({
     type: 'button',
     action_id: `${FEEDBACK_REASON_PREFIX}${reason.id}`,
@@ -39,7 +45,7 @@ export function buildFeedbackReasonBlocks(compoundKey: string): KnownBlock[] {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: 'Thanks for the flag — what was off? This routes it to the right fix.',
+        text: prompt,
       },
     },
     {

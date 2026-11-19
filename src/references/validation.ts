@@ -1,3 +1,4 @@
+import { matchesRelation } from '../dbt/relationMatching.js';
 import type { ReferenceCard } from './types.js';
 
 export interface ReferenceCardIntegrityOptions {
@@ -108,12 +109,12 @@ function validateTables(
 ): void {
   if (!options.validTableNames) return;
 
-  if (!options.validTableNames.has(card.canonical_table)) {
+  if (!matchesRelation(card.canonical_table, options.validTableNames)) {
     errors.push(`Reference card ${card.id} references unknown canonical table: ${card.canonical_table}`);
   }
 
   for (const table of card.avoid_tables) {
-    if (!options.validTableNames.has(table)) {
+    if (!matchesRelation(table, options.validTableNames)) {
       errors.push(`Reference card ${card.id} references unknown avoid table: ${table}`);
     }
   }

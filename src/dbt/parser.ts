@@ -19,6 +19,9 @@ interface ManifestNode {
   resource_type?: unknown;
   name?: unknown;
   schema?: unknown;
+  database?: unknown;
+  alias?: unknown;
+  relation_name?: unknown;
   description?: unknown;
   columns?: unknown;
   config?: unknown;
@@ -201,6 +204,7 @@ export function parseDbtArtifacts(
     if (!isRecord(rawNode) || rawNode.resource_type !== 'model') continue;
 
     const node = rawNode as ManifestNode;
+    if (materializationFor(node) === 'ephemeral') continue;
     const catalogNode = catalogNodes[nodeId] as CatalogNode | undefined;
 
     // Normalize catalog column keys to lowercase - BigQuery's catalog.json
@@ -228,16 +232,24 @@ export function parseDbtArtifacts(
     const withinCap = documented.length + undocumented.length <= maxColumnsPerTable;
     const columns = withinCap ? [...documented, ...undocumented] : documented;
     const omittedColumnCount = withinCap ? 0 : undocumented.length;
-    const schema = stringValue(node.schema);
-    const name = stringValue(node.name, nodeId);
+    const relation = stringValue(node.relation_name).replace(/[`"\s]/g, '').split('.');
+    const hasRelation = Boolean(stringValue(node.relation_name).trim());
+    if (hasRelation && (relation.length !== 3 || relation.some(part => !part))) {
+      console.warn('Invalid dbt relation_name: skipping node; expected three non-empty identifiers');
+      continue;
+    }
+    const schema = (hasRelation ? relation.at(-2) : stringValue(node.schema)) || '';
+    const name = (hasRelation ? relation.at(-1) : stringValue(node.alias)) || stringValue(node.name, nodeId);
+    const database = hasRelation ? (relation.length === 3 ? relation[0] : '') : stringValue(node.database);
+    const qualifiedSchema = database ? `${database}.${schema}` : schema;
 
     const table: TableContext = {
-      name: `${schema}.${name}`,
+      name: `${qualifiedSchema}.${name}`,
       schema,
       description: stringValue(node.description),
       materialization: materializationFor(node),
       columns,
-      sampleDDL: generateDDL(schema, name, columns, omittedColumnCount),
+      sampleDDL: generateDDL(qualifiedSchema, name, columns, omittedColumnCount),
       dependsOn: dependsOnFor(node),
       tags: tagsFor(node),
     };

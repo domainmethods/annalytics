@@ -38,6 +38,8 @@ describe('infra/firestore.ttls.json', () => {
       { collectionGroup: 'whatsapp_action_context', field: 'expiresAt' },
       { collectionGroup: 'whatsapp_pending_feedback_notes', field: 'expiresAt' },
       { collectionGroup: 'pending_notifications', field: 'expiresAt' },
+      { collectionGroup: 'thread_participation', field: 'expiresAt' },
+      { collectionGroup: 'refinement_targets', field: 'expiresAt' },
     ];
 
     expect(manifest.ttls).toEqual(expected);

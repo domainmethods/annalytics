@@ -1,3 +1,4 @@
+import { conversationThreadKey } from './threadScope.js';
 import { getDb } from './firestore.js';
 
 const COLLECTION = 'feedback_notes';
@@ -43,11 +44,17 @@ function toStoredFeedbackNote(id: string, data: Record<string, unknown>): Stored
 }
 
 export async function saveFeedbackNote(note: FeedbackNote): Promise<void> {
-  // Doc id: traceId when available (stable, joinable to the answer), else the
-  // thread+user pair. createdAt stamped client-side as a Date to match
-  // responseContext.ts's convention. status seeds the review queue so the note
-  // is discoverable by getPendingFeedbackNotes.
-  const docId = note.traceId ?? `${note.threadTs}_${note.userId}`;
+  // Doc id: one note per reporter per answer. With a traceId, the answer's trace
+  // plus the reporter, so two people correcting the same answer keep separate
+  // notes while a retry of one person's submission stays a single doc (#55);
+  // the traceId field remains the join key to the answer. Without one, the
+  // conversation+thread+user triple (thread timestamps repeat across channels).
+  // createdAt stamped client-side as a Date to match responseContext.ts's
+  // convention. status seeds the review queue so the note is discoverable by
+  // getPendingFeedbackNotes.
+  const docId = note.traceId
+    ? `${note.traceId}_${note.userId}`
+    : `${conversationThreadKey(note.channel, note.threadTs)}_${note.userId}`;
   await getDb()
     .collection(COLLECTION)
     .doc(docId)

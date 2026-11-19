@@ -69,6 +69,20 @@ describe('buildRefinementInput', () => {
     expect(result.compositeQuestion).toContain('Break it down by region');
     expect(result.previousSql).toBe('SELECT SUM(amount) FROM orders');
   });
+
+  it('reviews against the stored user wording, not the clarified rewrite (#44)', () => {
+    const result = buildRefinementInput('break it down by week', {
+      ...baseCtx, clarifiedQuestion: 'orders this month', userQuestion: 'paid orders this month',
+    });
+    expect(result.compositeQuestion).toBe('orders this month (Refinement: break it down by week)');
+    expect(result.originalQuestion).toBe('paid orders this month (Refinement: break it down by week)');
+  });
+
+  it('falls back to the clarified question for legacy contexts without userQuestion', () => {
+    expect('userQuestion' in baseCtx).toBe(false);
+    const result = buildRefinementInput('by week', baseCtx);
+    expect(result.originalQuestion).toBe(result.compositeQuestion);
+  });
 });
 
 describe('generateSql with refinement hint', () => {

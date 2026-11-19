@@ -23,17 +23,25 @@ export interface ValidationResult {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   columnNames: string[];
-  totalRows: number;          // from job metadata (not COUNT(*))
+  totalRows: number;          // full result count from the results response (at least rows.length)
   bytesProcessed: number;
-  truncated: boolean;         // true if totalRows > maxResultRows
+  truncated: boolean;         // true if the result holds more rows than were returned
 }
 
 export interface ResponseContext {
   responseId: string;
   threadTs: string;
+  /** Conversation that owns `threadTs`. Absent on legacy records, which thread lookups never reuse. */
+  channel?: string;
   statusMsgTs: string;
   surface?: 'slack' | 'whatsapp';
   clarifiedQuestion: string;
+  /**
+   * The user's own wording as given to the SQL supervisor, which clarification
+   * may have narrowed. Refinements review against it (#44). Absent on legacy
+   * records; readers fall back to `clarifiedQuestion`.
+   */
+  userQuestion?: string;
   assumptions: string[];
   reasoningChain: string;
   generatedSql: string;
@@ -62,6 +70,7 @@ export interface ResponseContext {
   fastPathIneligibleReasons?: string[];
   failureHistory?: FailureRecord[];
   negativeFeedback?: boolean;
+  schemaDetailsTrimmed?: boolean;
   retrievedSchema?: {
     name: string;
     description: string;
@@ -73,7 +82,7 @@ export interface EscalationState {
   escalationId: string;
   originalThreadTs: string;
   originalChannel: string;
-  pipelineState: 'awaiting_human' | 'resolved' | 'timed_out';
+  pipelineState: 'awaiting_human' | 'resolving' | 'resolved' | 'timed_out';
   trigger: 'supervisor_exhausted' | 'mid_pipeline_ambiguity' | 'quality_loop_exhausted' | 'user_negative_feedback';
   behavior: 'best_effort_verify' | 'park_wait';
   stageToResume: 'sql_generation' | 'supervisor_review';

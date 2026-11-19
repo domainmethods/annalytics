@@ -270,8 +270,9 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(sqlGenResponse())
       .mockResolvedValueOnce(supervisorResponse());
 
-    // BigQuery: dry run → execution
+    // BigQuery: quality-loop dry run → final dry run → execution
     mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
 
@@ -279,8 +280,8 @@ describe('Pipeline — Integration', () => {
 
     // 3 Gemini calls: clarification, SQL gen, supervisor
     expect(mockGenerateContent).toHaveBeenCalledTimes(3);
-    // 2 BigQuery calls: dry run, execution
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    // 3 BigQuery calls: quality-loop dry run, final dry run, execution
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // Final Slack update contains blocks with the result
     const updateCalls = mockClient.chat.update.mock.calls;
@@ -332,6 +333,7 @@ describe('Pipeline — Integration', () => {
 
     mockCreateQueryJob
       .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
 
     // Cosmetic status updates are text-only chat.update calls. Simulate Slack
@@ -347,7 +349,7 @@ describe('Pipeline — Integration', () => {
     await expect(runPipeline(makeInput())).resolves.toBeUndefined();
 
     // The query still ran end-to-end despite the failing status updates.
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // The final answer (with blocks) was still posted — not a friendly error.
     const finalUpdate = mockClient.chat.update.mock.calls
@@ -377,13 +379,14 @@ describe('Pipeline — Integration', () => {
 
     mockCreateQueryJob
       .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
 
     await runPipeline(makeInput());
 
     // Should still proceed through full pipeline
     expect(mockGenerateContent).toHaveBeenCalledTimes(3);
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // Final response includes assumptions and refine button
     const updateCalls = mockClient.chat.update.mock.calls;
@@ -485,14 +488,15 @@ describe('Pipeline — Integration', () => {
     mockCreateQueryJob
       .mockResolvedValueOnce(dryRunResult())   // L3 dry run attempt 1
       .mockResolvedValueOnce(dryRunResult())   // L3 dry run attempt 2
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 15 }]));
 
     await runPipeline(makeInput());
 
     // 5 Gemini calls: clarify + gen1 + supervisor(FAIL) + gen2 + supervisor(PASS)
     expect(mockGenerateContent).toHaveBeenCalledTimes(5);
-    // 3 BigQuery calls: 2 dry runs (one per attempt) + 1 execution
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
+    // 4 BigQuery calls: 2 attempt dry runs + final dry run + execution
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(4);
 
     // ResponseContext saved with fail_then_pass verdict
     const savedKeys = [...firestoreStore.keys()].filter(k =>
@@ -582,8 +586,9 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(sqlGenResponse({ confidence: 'medium' }))
       .mockResolvedValueOnce(supervisorResponse({ verdict: 'FAIL', issues: ['Exhausted'] }));
 
-    // BigQuery: 3 dry runs (one per attempt) + 1 execution
+    // BigQuery: 3 attempt dry runs + final dry run + execution
     mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
@@ -595,8 +600,8 @@ describe('Pipeline — Integration', () => {
 
     // 7 Gemini calls (clarify + 3 gen + 3 supervisor)
     expect(mockGenerateContent).toHaveBeenCalledTimes(7);
-    // 4 BigQuery calls — 3 dry runs + 1 execution (best_effort_verify proceeds)
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(4);
+    // 5 BigQuery calls — 4 dry runs + execution (best_effort_verify proceeds)
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(5);
 
     // Response shown with caveat
     const updateCalls = mockClient.chat.update.mock.calls;
@@ -629,6 +634,7 @@ describe('Pipeline — Integration', () => {
       docs: [
         {
           data: () => ({
+            channel: 'C123',
             generatedSql: 'SELECT bad_column FROM `analytics.fct_orders`',
             explanation: 'Wrong approach to counting orders',
             tablesUsed: ['analytics.fct_orders'],
@@ -643,6 +649,7 @@ describe('Pipeline — Integration', () => {
       .mockResolvedValueOnce(supervisorResponse());
 
     mockCreateQueryJob
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([{ order_count: 42 }]));
 

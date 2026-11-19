@@ -19,9 +19,10 @@ export async function preflightChecks(
   channel: string,
   threadTs: string,
   client: WebClient,
+  ownerToken: string,
 ): Promise<boolean> {
   // Guard 1: Thread lock
-  const locked = await acquireThreadLock(threadTs);
+  const locked = await acquireThreadLock(channel, threadTs, ownerToken);
   if (!locked) {
     await client.chat.postMessage({
       channel,
@@ -45,7 +46,7 @@ export async function preflightChecks(
     // is still open. Returning false silently here left the user with no feedback
     // at all (indistinguishable from the bot being down). Surface the block the
     // same way Guards 1 and 3 do: a structured log plus a user-visible nudge.
-    const pendingClarification = await getClarificationState(threadTs);
+    const pendingClarification = await getClarificationState(channel, threadTs);
     if (pendingClarification) {
       rootLogger.warn({ threadTs }, 'preflight.pending_clarification_block');
       await client.chat.postMessage({
@@ -54,15 +55,16 @@ export async function preflightChecks(
         text: PENDING_CLARIFICATION_TEXT,
         blocks: buildPendingClarificationBlocks({
           clarificationId: pendingClarification.clarificationId,
-          originalQuestion: pendingClarification.originalQuestion,
+          // Echo the user's own wording, not a refinement's rewritten question (#44).
+          originalQuestion: pendingClarification.supervisorQuestion ?? pendingClarification.originalQuestion,
         }) as unknown as KnownBlock[],
       });
-      await releaseThreadLock(threadTs);
+      await releaseThreadLock(channel, threadTs, ownerToken);
       return false;
     }
 
     // Guard 3: Pending escalation
-    const escalationLookup = await getEscalationByThread(threadTs);
+    const escalationLookup = await getEscalationByThread(channel, threadTs);
     if (escalationLookup?.status === 'expired_now') {
       await notifyEscalationTimeout(escalationLookup.state, client);
     }
@@ -72,7 +74,7 @@ export async function preflightChecks(
         thread_ts: threadTs,
         text: "I'm still waiting for the data team on your previous question.",
       });
-      await releaseThreadLock(threadTs);
+      await releaseThreadLock(channel, threadTs, ownerToken);
       return false;
     }
 
@@ -80,7 +82,7 @@ export async function preflightChecks(
   } catch (error) {
     // A guard (Firestore read or Slack post) failed after the lock was acquired.
     // Release before propagating so the thread is not wedged for the lock TTL.
-    await releaseThreadLock(threadTs).catch(() => {});
+    await releaseThreadLock(channel, threadTs, ownerToken).catch(() => {});
     throw error;
   }
 }

@@ -1,4 +1,5 @@
 import { getDb } from './firestore.js';
+import { findOwnedDoc } from './threadScope.js';
 
 export const CLARIFICATION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -7,6 +8,12 @@ export interface ClarificationState {
   threadTs: string;
   channel: string;
   originalQuestion: string;
+  /**
+   * The user's own wording when it differs from `originalQuestion` (a refinement
+   * or resume rewrote the question), so the clarification reply can hand it back
+   * to the supervisor (#44). Absent when the two are the same and on legacy docs.
+   */
+  supervisorQuestion?: string;
   ambiguities: string[];
   ambiguityType?: 'user_intent' | 'org_knowledge';
   ambiguityDomain?: string;
@@ -33,18 +40,20 @@ export async function saveClarificationState(
 }
 
 export async function getClarificationState(
+  channel: string,
   threadTs: string,
 ): Promise<ClarificationState | null> {
   const db = getDb();
-  const snapshot = await db.collection(COLLECTION)
-    .where('threadTs', '==', threadTs)
-    .where('state', '==', 'awaiting_reply')
-    .limit(1)
-    .get();
+  const doc = await findOwnedDoc(
+    db.collection(COLLECTION)
+      .where('threadTs', '==', threadTs)
+      .where('state', '==', 'awaiting_reply'),
+    'channel',
+    channel,
+  );
+  if (!doc) return null;
 
-  if (snapshot.empty) return null;
-
-  const data = snapshot.docs[0].data() as ClarificationState & {
+  const data = doc.data() as ClarificationState & {
     expiresAt: Date | { toDate: () => Date };
   };
 
@@ -53,7 +62,7 @@ export async function getClarificationState(
     : (data.expiresAt as { toDate: () => Date }).toDate();
 
   if (expiresAt < new Date()) {
-    await snapshot.docs[0].ref.delete();
+    await doc.ref.delete();
     return null;
   }
 

@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
@@ -102,8 +103,8 @@ async function main() {
   console.log(`Corpus file: ${corpusPath}`);
   const corpusRaw = await readFile(corpusPath, 'utf-8');
   const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
-  const resolvedManifestPath = join(root, manifestPath);
-  const resolvedCatalogPath = join(root, catalogPath);
+  const resolvedManifestPath = resolveDbtArtifactPath(manifestPath, root);
+  const resolvedCatalogPath = resolveDbtArtifactPath(catalogPath, root);
   const manifestExists = await fileExists(resolvedManifestPath);
   const catalogExists = await fileExists(resolvedCatalogPath);
   const inputErrors = validateBenchmarkAcceptanceInputs({
@@ -141,12 +142,8 @@ async function main() {
     console.warn(`Warning: Could not load dbt artifacts: ${(err as Error).message}. Running without schema context.`);
   }
 
-  const knownBenchmarkTables = [
-    ...new Set([
-      ...tables.map(table => table.name),
-      ...corpus.flatMap(entry => entry.expectedTables ?? []),
-    ]),
-  ];
+  // No advertised schema means no inferred inventory from expectation or card labels.
+  const knownBenchmarkTables = tables.map(table => table.name);
   console.log(`Corpus: ${corpus.length} questions\n`);
   const packageJson = await readFile(join(root, 'package.json'), 'utf-8');
   const metadata = buildBenchmarkMetadata({
@@ -267,6 +264,8 @@ async function main() {
         apiKey!,                        // supervisor uses same API key
         clarification.resolved_question || entry.question,
         MAX_BYTES,
+        undefined,
+        entry.question,
       );
       const loopMs = Date.now() - loopStart;
       const totalMs = Date.now() - totalStart;

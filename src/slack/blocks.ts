@@ -1,14 +1,19 @@
+import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
+import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
-/** Safely format a BigQuery cell value. Order matters: real JS Date before the
- *  `{value}` unwrap, because a Date is an object whose `.value` is undefined and
- *  would otherwise fall through to JSON.stringify and render a quoted ISO string. */
+/** Display for an empty single-value answer. */
+export const EMPTY_VALUE = '—';
+
+/** Safely format a BigQuery cell value. A real JS Date renders as ISO; an SDK
+ *  scalar wrapper (BigQueryDate etc.) renders its text; any other object — a
+ *  STRUCT, even one with a `value` field — renders as JSON so no field is lost. */
 export function formatValue(val: unknown): string {
   if (val === null || val === undefined) return '';
   if (val instanceof Date) return val.toISOString();
   if (typeof val === 'object') {
-    const wrapped = (val as { value?: unknown }).value;
-    return wrapped != null ? String(wrapped) : JSON.stringify(val);
+    const wrapped = unwrapBigQueryScalar(val);
+    return wrapped !== undefined ? String(wrapped) : JSON.stringify(val);
   }
   return String(val);
 }
@@ -38,6 +43,8 @@ export function buildAssumptionBlocks(assumptions: string[], traceId: string): K
   ];
 }
 
+const HEADLINE_LIMIT = 500;
+
 export function buildSingleValueBlocks(value: string, headline: string): KnownBlock[] {
   // Section only — the caller (buildResponseBlocks) appends assumptions and the
   // feedback actions row, uniform with every other content builder. The value is
@@ -45,12 +52,13 @@ export function buildSingleValueBlocks(value: string, headline: string): KnownBl
   return [
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*${value}*\n${headline}` },
+      // Bound each part separately so truncation never drops the closing bold marker.
+      text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(headline, HEADLINE_LIMIT)}` },
     } as SectionBlock,
   ];
 }
 
-const NATIVE_TABLE_MAX_COLS = 20; // Slack native table block hard cap.
+const NATIVE_TABLE_MAX_COLS = TABLE_COLUMN_LIMIT; // Slack native table block hard cap.
 
 export function buildTableBlocks(
   rows: Record<string, unknown>[],
@@ -68,10 +76,16 @@ export function buildTableBlocks(
   });
   const header = columnNames.map((c) => cell(c));
   const dataRows = rows.map((row) => columnNames.map((col) => cell(formatValue(row[col]))));
-  return [{ type: 'table', rows: [header, ...dataRows] } satisfies TableBlock];
+  const tableRows = [header, ...dataRows];
+  // Oversized tables fall back to the bounded text preview (which points to CSV)
+  // rather than silently dropping rows or cells from the native table.
+  const tableChars = tableRows.flat().reduce((sum, c) => sum + c.text.length, 0);
+  if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(rows, columnNames);
+  return [{ type: 'table', rows: tableRows } satisfies TableBlock];
 }
 
-// Legacy monospace renderer, retained as the >20-column fallback.
+// Legacy monospace renderer: the fallback for >20 columns and for tables over
+// Slack's native row or character limits.
 function buildCodeBlockTable(
   rows: Record<string, unknown>[],
   columnNames: string[],
@@ -85,7 +99,7 @@ function buildCodeBlockTable(
     columnNames.map((col, i) => formatValue(row[col]).padEnd(widths[i])).join(' | '),
   );
   const tableText = [header, separator, ...dataRows].join('\n');
-  return [{ type: 'section', text: { type: 'mrkdwn', text: `\`\`\`\n${tableText}\n\`\`\`` } } as SectionBlock];
+  return [{ type: 'section', text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
 }
 
 export function buildZeroRowBlocks(

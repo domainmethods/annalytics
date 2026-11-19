@@ -9,9 +9,9 @@ This document records the current development trajectory for Anna Lytics. Read *
 
 Update this document whenever a major product direction, feature deferral, benchmark result, or adversarial audit changes the trajectory — and when you do, update the head sections (Current State, Current Decision, Deferred Work) rather than only appending a dated entry. Dated entries go in the Evidence Log.
 
-## Current State (as of 2026-07-02)
+## Current State (as of 2026-11-19)
 
-The codebase is healthy: typecheck clean, the test suite passing, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships. The 2026-07-02 reconciliation (Evidence Log) records the first realized instance of that risk, in channel form: the WhatsApp prototype grew an interactive control surface (commit `b7a6158`) without the same-change-set governance update the Maintenance Protocol requires; the prototype is now capped until its manual acceptance evidence is recorded (Current Decision #5).
+The codebase is healthy: typecheck clean, the test suite passing, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships. The 2026-07-02 reconciliation (Evidence Log) records the first realized instance of that risk, in channel form: the WhatsApp prototype grew an interactive control surface (commit `b7a6158`) without the same-change-set governance update the Maintenance Protocol requires; the prototype is now capped until its manual acceptance evidence is recorded (Current Decision #5). A 2026-11-18 full-codebase audit filed its findings as issues and the resulting defect-fix tranche (PRs #126–#149: transactional thread leases and rate limits, conversation-scoped thread state, the escalation resolution claim, bounded response persistence, final-SQL revalidation, expired-context handling, export quoting) is trust maintenance under guardrail #1; it changes no tranche, gate, or deferral (Evidence Log 2026-11-19).
 
 | Area | Status |
 |---|---|
@@ -134,12 +134,13 @@ Verified 2026-06-09; later additions dated inline. Maintenance items — address
 | Item | Location | Note |
 |---|---|---|
 | ~~Duplicated L1→L3 validation ladder~~ (RESOLVED 2026-06-19) | `src/routineFastPath.ts`, `src/qualityLoop.ts`, `src/validation/pipeline.ts` (`validateSql`) | Was three call sites (not two) running the identical static→AST→dry-run ladder. Extracted into `src/validation/core.ts` (`runCoreValidation`); each caller keeps its own L4 cost-gate placement. See 2026-06-19 Evidence Log entry. |
-| `pipeline.ts` responsibility sprawl | `src/pipeline.ts` (720 lines, ~13 concerns) | Every feature lands here, so it compounds. Decompose opportunistically (escalation orchestration, formatting, persistence). |
+| `pipeline.ts` responsibility sprawl | `src/pipeline.ts` (852 lines as of 2026-11-19, ~13 concerns) | Every feature lands here, so it compounds. Decompose opportunistically (escalation orchestration, formatting, persistence). |
 | BQML plumbing for a deferred feature | `src/agents/sqlGenerator.ts`, `src/agents/clarificationAgent.ts`, `src/agents/types.ts`, `src/pipeline.ts`, `src/routineFastPath.ts` (`bqml_hint` plumbing spans 5 files, not 2; `src/agents/supervisorAgent.ts` also references ML/forecast vocabulary) | BQML expansion is deferred, but the prompt branches and fast-path triggers ship today. **Decision (2026-06-19): KEEP, removal deferred.** Removing the prompt branches changes the prompts that produced the `ACCEPTED` 2026-06-12 run, which would force a fresh acceptance run (Guardrail #5). Revisit only at a tranche boundary that already plans an acceptance run. |
 | Benchmark `generatedSql === null` overloaded (abstention vs crash) | `scripts/benchmark.ts`, `scripts/benchmark-calibration.ts` | `generatedSql === null` marks BOTH correct LOW-clarification abstentions and crash failures. The 2026-06-19 calibration fix excludes `null` rows from confidence buckets, which now also silently drops crash rows — so a partial-crash run could report falsely-clean calibration. Add an explicit `abstained` discriminator at the producer (`benchmark.ts`) so calibration excludes abstentions only. Bounded: no effect on green (crash-free) runs, which feed acceptance decisions. Found 2026-06-19 during the code-debt tranche (Task 5 review). |
-| Untyped Slack payloads | `src/app.ts` (32 `as any` casts) | Define typed Slack action/interactivity payload interfaces to centralize the assertions. |
+| Untyped Slack payloads | `src/app.ts` (39 `as any` casts as of 2026-11-19) | Define typed Slack action/interactivity payload interfaces to centralize the assertions. |
 | Lifecycle-sweep phases share one failure domain | `src/handlers/lifecycleSweep.ts` | `checkOverdueEscalations()` and `deliverPendingNotifications()` run sequentially; an exception in the first aborts the second and fails the whole sweep. Isolating per-phase failures changes the endpoint's status-code contract with Cloud Scheduler (any failure → non-200 → retry), so decide the contract first. Found 2026-06-10 during the final UX-trust review. |
-| Untyped clarification block builders | `src/slack/clarificationBlocks.ts` | Builders return `Record<string, unknown>[]`, forcing three load-bearing `as unknown as KnownBlock[]` casts — `src/pipeline.ts:168`, `src/handlers/clarificationCancel.ts:44`, and `src/handlers/preflightChecks.ts:58` (confirmed 2026-06-19: Task 4's cast cleanup left exactly these three as load-bearing) — the same debt Task 10's `KnownBlock[]` retype removed for `helpBlocks.ts`. Retype when next touching the clarification surfaces (ripples through the implementation plan's parity blocks). Found 2026-06-10 during the final UX-trust review. |
+| Untyped clarification block builders | `src/slack/clarificationBlocks.ts` | Builders return `Record<string, unknown>[]`, forcing three load-bearing `as unknown as KnownBlock[]` casts — `src/pipeline.ts:263`, `src/handlers/clarificationCancel.ts:44`, and `src/handlers/preflightChecks.ts:60` (line numbers refreshed 2026-11-19; confirmed 2026-06-19: Task 4's cast cleanup left exactly these three as load-bearing) — the same debt Task 10's `KnownBlock[]` retype removed for `helpBlocks.ts`. Retype when next touching the clarification surfaces (ripples through the implementation plan's parity blocks). Found 2026-06-10 during the final UX-trust review. |
+| Duplicated refinement-target routing | `src/handlers/mentions.ts`, `src/handlers/messageHandler.ts` | Both entry points carry the same consume-refinement-target branch (read target, error/retry handling, `refinement` dispatch), so a fix to one can miss the other. Extract a shared helper (#152). Found 2026-11-18 during the audit defect-fix tranche. |
 
 ## Completed Foundations
 
@@ -207,6 +208,7 @@ Do not let direction live only in dated entries — that is how this document de
 
 ## Relationship to Existing Docs
 
+- `CHANGELOG.md` records template release history and action-required update notes; README remains the command authority.
 - `README.md` is the product overview and command authority for the public template. (`.spec-workflow/steering/product.md`, if present, is the operator-local product brief and is gitignored.)
 - `CLAUDE.md` remains the agent-facing implementation guide.
 - `docs/superpowers/specs/2026-06-07-feedback-loop-system-design.md` designs the full side bar; treat it as **pre-implementation** — only the prerequisite classifier exists in code.
@@ -468,6 +470,81 @@ Enabling WhatsApp requires at least one tester ID. Text, unsupported messages, a
 - The benchmark and node sweep now score warehouse relation references using GoogleSQL query scope. New evaluation scaffolding remains deferred under T3 #4.
 - Parser coverage: a pre-scrub adapts BigQuery syntax the installed parser rejects (IGNORE/RESPECT NULLS, NULLS FIRST/LAST, ORDER BY/LIMIT/DISTINCT inside aggregate calls, TABLESAMPLE, four-part INFORMATION_SCHEMA paths). SQL that still cannot be parsed falls back to a text check (literals and comments scrubbed): if any expected table is absent it is a definite `table_mismatch`; only when every expected table appears is it recorded as unscorable (`tableSelectionPassed: null` with `tableSelectionUnscorableReason`), which earns no table credit, is not counted as a failure, and is listed in the acceptance report. Blank, comment-only, DML and multi-statement SQL score as misses. Recorded results carry no reason field, so their verdicts are unchanged.
 - Evidence comes from offline regression tests and the committed mock acceptance fixture.
+
+### 2026-11-18 - dbt artifact path repair (#36)
+
+Existing benchmark, node sweep, startup, setup-check, and knowledge validation paths now preserve absolute artifact paths and resolve relative paths against the working directory. This repairs existing instruments; no new evaluation scaffolding or product tranche is activated. Coverage uses synthetic paths only; client artifacts and benchmark evidence remain operator-local.
+
+### 2026-11-18 - WhatsApp allowlist normalization (#110)
+
+Formatted tester IDs now normalize to digits; invalid entries fail startup naming the variable. All three sender checks share the same normalization. Offline regression tests cover formatted IDs and invalid entries. This repairs the shipped surface; the prototype cap and manual acceptance gate remain in place.
+
+### 2026-11-18 - Final execution validation (#90)
+
+The Slack and WhatsApp pipelines now run the shared L1–L4 validator on the final SQL immediately before execution, including Slack best-effort escalation. Failed validation prevents submission; Slack cost failures retain narrowing guidance. Caller review confirmed discrepancy queries and both format overrides already use that validator, while refinements and escalation resumes enter the shared Slack pipeline. This is maintenance of existing trust controls; WhatsApp's manual acceptance gate and deferred scope remain unchanged. Offline regression tests cover rejection at L3 and L4.
+
+### 2026-11-18 — Model configuration documentation (#70)
+
+Corrected deployment guidance to use node profiles and model-ID overrides; documented residual legacy script/config consumers. Documentation maintenance only; no model defaults, sizing evidence, runtime behavior, or tranche order changed.
+
+### 2026-11-18 - Infrastructure validation CI maintenance (#109)
+
+- Under Current Decision #6, infrastructure reference validation now runs on PRs and main pushes with pinned Terraform 1.9.8, without GCP credentials or backend initialization. Missing Terraform/OpenTofu fails locally and in CI so success means the checks ran. Deploy opt-in behavior and manual provisioning remain unchanged.
+
+### 2026-11-18 — dbt run status defect repair (#108)
+
+- Partial success and runtime error now persist as error and appear in the existing failure query. Warnings persist distinctly as warn; only literal skipped maps to skipped.
+- Unknown or missing statuses conservatively map to error on ingestion and readback so unexpected outcomes remain visible for investigation. Existing success/error/skipped documents retain their meaning; previously misclassified skipped documents require re-ingestion because the original status was not retained.
+- This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.
+
+- PR #116 review correction: preserve dbt no-op and reused as distinct non-failure outcomes in ingestion, stored-history readback, and dbt_status formatting. Unknown and missing statuses still map conservatively to error. Regression tests cover failure-query exclusion and formatter guidance. Queries and composite indexes are unchanged.
+
+### 2026-11-18 - dbt physical relation identity (#42, #43)
+
+- Schema and sampling inputs now use dbt `relation_name` (normalized for whitespace and identifier quotes) or, only when it is absent/empty, database/schema/alias. A malformed non-empty `relation_name` skips the node with a warning. Ephemeral nodes are excluded from the queryable schema; dependency node IDs remain intact for lineage. INFORMATION_SCHEMA contexts retain project qualification.
+- Physical three-part names are authoritative for identity matching (ReferenceCards, teachings, feedback attribution, benchmark and node-sweep scoring, fast-path reported/canonical names). A legacy `dataset.table` resolves only when it is unique across the complete advertised physical inventory; cross-project ambiguity is rejected or left unattributed. Expectation and card labels are never inventory candidates. Feedback reports without dbt artifacts warn and keep only fully qualified attribution. Migrate knowledge and expectations to three-part names.
+- SQL authorization in the routine fast path is separate from identity matching: two-part SQL references resolve only in the BigQuery execution default project and are rejected when that project is not configured, so inventory uniqueness can never authorize a cross-project table.
+- Defect repair of existing trust instruments only; no tranche change. Synthetic offline regressions only; no cloud resources or client evidence. Deployment and production acceptance remain outside this change.
+
+### 2026-11-18 - v0.1.0 template release
+
+- Finalized the 0.1.0 baseline (merged history through #119) as the first
+  tagged template release, `v0.1.0`; Unreleased is empty. Release hygiene only;
+  no tranche change.
+
+### 2026-11-18 - Template release and update process
+
+- Added a proposed 0.1.0 baseline aligned with package.json, based on merged PR
+  history, plus implementation sync and maintainer release instructions. No tag
+  or release is created by this change. This is template trust maintenance, not
+  a product tranche; existing gates and deferred work remain in force.
+- Evidence: merged PRs #96–#107, #111–#117 and #119, and git history; changelog notes identify operator
+  actions for validation, admission, deployment billing, ingestion, sampling,
+  and corrected acceptance semantics. No implementation evidence is included.
+
+### 2026-11-18 - Escalation resolution claim (#50)
+
+- Trust maintenance: text replies and checkmarks claim an awaiting escalation transactionally before resuming a query or posting a confirmation. Timeout transitions also check the current state.
+- Delivery is at most once. A crash or delivery error leaves a resolving record; neither event retries nor the lifecycle sweep reclaim it, since a remote operation may already have succeeded. Recovery is an explicit fresh question or direct analyst assistance, not replay of the old claim. Resolved and resolving records stay outside awaiting-only reminder/timeout queries; existing query shapes and indexes remain unchanged.
+- No product tranche or deferred feature is activated. Evidence is synthetic concurrency and state regression coverage; no live services are changed.
+
+### 2026-11-18 - Bounded response persistence (#84)
+
+- Shared response persistence now budgets serialized context bytes and trims schema column details while retaining considered table names. Meta-question prompts disclose missing detail; SQL, reasoning and override inputs remain intact. Slack persistence failure preserves the delivered answer, matching WhatsApp. This repairs the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic large-schema and write-failure regressions cover the defect.
+
+### 2026-11-18 - Conversation-scoped thread state (#30)
+
+- Thread locks, clarifications, escalation guards and response-context lookups are now scoped to the conversation as well as the thread timestamp. WhatsApp passes its conversation id for both, and its saved response contexts now record that owner (WhatsApp document ids are unchanged; they were already conversation-unique). This repairs shared state used by the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic same-timestamp, two-conversation regressions cover the defect.
+
+### 2026-11-18 - Supervisor original-question repair (#44)
+
+The full-path quality loop passed the clarified question to the supervisor twice. Slack, WhatsApp, the benchmark and the node sweep now also pass the user's original wording, which the routine fast path already did. A parked Slack escalation resumed by analyst guidance also gives the supervisor the user's original question plus that guidance, not the clarified rewrite. Slack refinements likewise review against the user's wording, now persisted as an optional `userQuestion` on the response context (legacy records fall back to the clarified question). This repairs an existing trust control on the shipped WhatsApp surface and an existing instrument. The prototype cap, manual acceptance gate and T3 #4 remain unchanged. Synthetic regression tests capture the supervisor input.
+
+### 2026-11-19 - Audit defect-fix tranche and doc sync
+
+- A full-codebase audit on 2026-11-18 filed each finding as a GitHub issue. The highest-priority defects were fixed in PRs #126–#149, each reviewed before merge, with the per-fix entries above. Follow-ups are filed as #150–#153 (WhatsApp scalar unwrapping, pagination coverage for expired-context readers, a duplicated refinement-target branch, CSV formula injection).
+- This is trust maintenance under guardrail #1. No product tranche, gate, or deferred item changes. The WhatsApp cap and manual acceptance gate stay as they are, and second-domain selection still waits on production feedback.
+- CLAUDE.md, the README TTL note and the Code Debt Register were synced to the shipped behavior: transactional thread leases and rate limits, Slack event dedupe, the sample-row cache, the escalation resolution claim and bounded sweep, final-SQL revalidation, and expired-context handling. The refinement-target branch duplicated between `src/handlers/mentions.ts` and `src/handlers/messageHandler.ts` (#152) joins the debt register.
 
 ### 2026-11-18 - Template model refresh activation
 

@@ -269,13 +269,13 @@ describe('deterministic benchmark expectation helpers', () => {
     expect(tableSelectionPassed(expected, extractTablesFromSql('SELECT revenue FROM orders', expected))).toBe(true);
   });
 
-  it('matches table names at the qualification level supplied by the expectation', () => {
+  it('matches identities only when inventory qualification is unambiguous', () => {
     const known = ['orders', 'analytics.orders', 'demo-project.analytics.orders', 'other-project.analytics.orders'];
 
     expect(extractTablesFromSql('SELECT * FROM `demo-project` . `Analytics` . `Orders`', known))
-      .toEqual(known.slice(0, 3));
-    expect(extractTablesFromSql('SELECT * FROM analytics.orders', known)).toEqual(known.slice(0, 2));
-    expect(extractTablesFromSql('SELECT * FROM other_dataset.orders', known)).toEqual(['orders']);
+      .toEqual(['demo-project.analytics.orders']);
+    expect(extractTablesFromSql('SELECT * FROM analytics.orders', known)).toEqual([]);
+    expect(extractTablesFromSql('SELECT * FROM other_dataset.orders', known)).toEqual([]);
     expect(extractTablesFromSql('SELECT * FROM orders', known)).toEqual(['orders']);
   });
 
@@ -420,17 +420,17 @@ describe('deterministic benchmark expectation helpers', () => {
       .toEqual(['analytics.fct_orders', 'analytics.dim_users']);
   });
 
-  it('scores INFORMATION_SCHEMA views as relations at any qualification', () => {
+  it('scores INFORMATION_SCHEMA views only at advertised qualification', () => {
     const known = ['analytics.INFORMATION_SCHEMA.TABLES', 'region-us.INFORMATION_SCHEMA.JOBS', 'analytics.fct_orders'];
 
     expect(extractTablesFromSql('SELECT table_name FROM analytics.INFORMATION_SCHEMA.TABLES', known))
       .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
     expect(extractTablesFromSql('SELECT * FROM proj.analytics.INFORMATION_SCHEMA.TABLES', known))
-      .toEqual(['analytics.INFORMATION_SCHEMA.TABLES']);
+      .toEqual([]);
     expect(extractTablesFromSql('SELECT * FROM `region-us`.INFORMATION_SCHEMA.JOBS', known))
       .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
     expect(extractTablesFromSql('SELECT * FROM `proj.region-us.INFORMATION_SCHEMA.JOBS`', known))
-      .toEqual(['region-us.INFORMATION_SCHEMA.JOBS']);
+      .toEqual([]);
   });
 
   it('leaves parser-gap keywords inside strings and comments untouched', () => {
@@ -633,3 +633,8 @@ describe('corpusHashMatches', () => {
     expect(corpusHashMatches(corpusRaw, null)).toBe(true);
   });
 });
+
+ it('scores unique legacy SQL identities using the complete inventory', () => {
+ expect(scoreTableSelection(['p.ds.tbl'], 'SELECT * FROM ds.tbl', ['p.ds.tbl']).tableSelectionPassed).toBe(true);
+ expect(scoreTableSelection(['p.ds.tbl'], 'SELECT * FROM ds.tbl', ['p.ds.tbl', 'q.ds.tbl']).tableSelectionPassed).toBe(false);
+ });

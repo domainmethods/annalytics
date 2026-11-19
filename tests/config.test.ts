@@ -172,3 +172,50 @@ describe('loadConfig whatsapp', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('WhatsApp allowlist normalization', () => {
+  beforeEach(() => { vi.unstubAllEnvs(); baseEnv(); });
+  it('normalizes presentation separators', () => {
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', '+1 (555) 000-00.01');
+    expect(loadConfig().whatsapp.allowedWaIds).toEqual(['15550000001']);
+  });
+  it.each(['alice', '+ ()-.', '15550000001x'])('rejects invalid entry %s', (entry) => {
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', entry);
+    expect(() => loadConfig()).toThrow(/WHATSAPP_ALLOWED_WA_IDS/);
+  });
+});
+
+describe('numeric startup settings', () => {
+  const settings = ['COST_GATE_MAX_BYTES', 'QUERY_TIMEOUT_MS', 'MAX_RESULT_ROWS',
+    'RATE_LIMIT_PER_HOUR', 'ESCALATION_REMINDER_MINUTES', 'ESCALATION_TIMEOUT_HOURS',
+    'FAST_PATH_MAX_BYTES', 'PORT', 'RESPONSE_CONTEXT_RETENTION_DAYS'];
+  beforeEach(() => { vi.unstubAllEnvs(); baseEnv(); });
+  for (const name of settings) {
+    it.each(['oops', 'NaN', 'Infinity', '-Infinity', '-1', '0', '1.5', '9007199254740992'])(`${name} rejects %s`, value => {
+      vi.stubEnv(name, value);
+      expect(() => loadConfig()).toThrow(name);
+    });
+    it('accepts a positive integer', () => {
+      vi.stubEnv(name, '42');
+      expect(() => loadConfig()).not.toThrow();
+    });
+    it.each(['', '  ', undefined])(`${name} defaults for blank or unset %s`, value => {
+      const expected = { costGateMaxBytes: 10737418240, queryTimeoutMs: 30000, maxResultRows: 1000, rateLimitPerHour: 30 };
+      vi.stubEnv(name, value);
+      const config = loadConfig();
+      expect(config.limits).toEqual(expected);
+      expect(config.port).toBe(3000);
+      expect(config.escalation.reminderIntervalMinutes).toBe(30);
+      expect(config.escalation.timeoutHours).toBe(4);
+      expect(config.fastPath.maxBytesProcessed).toBe(1073741824);
+    });
+  }
+  it('rejects ports outside the TCP range', () => {
+    vi.stubEnv('PORT', '65536');
+    expect(() => loadConfig()).toThrow('PORT');
+  });
+});
+
+it.each([['ESCALATION_REMINDER_MINUTES', 525600], ['ESCALATION_TIMEOUT_HOURS', 8760], ['RESPONSE_CONTEXT_RETENTION_DAYS', 36500]] as const)('%s duration boundary', (name, max) => {
+ vi.unstubAllEnvs(); baseEnv(); vi.stubEnv(name, String(max)); expect(() => loadConfig()).not.toThrow(); vi.stubEnv(name, String(max + 1)); expect(() => loadConfig()).toThrow(name); vi.unstubAllEnvs();
+});

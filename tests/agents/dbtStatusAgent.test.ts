@@ -55,6 +55,22 @@ describe('handleDbtStatus', () => {
     expect(contents).toContain('How is the dim_customers model doing?');
   });
 
+  it('passes warnings distinctly to the formatter with warning guidance', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'The check completed with a warning.' });
+    await handleDbtStatus('Any warnings?', [{ ...sampleHistory[0], status: 'warn' }], 'test-key');
+    const args = mockGenerateContent.mock.calls[0][0];
+    expect(args.contents).toContain('"status": "warn"');
+    expect(args.config.systemInstruction).toContain('Treat warn as a completed check');
+  });
+
+  it.each(['no-op', 'reused'] as const)('formats %s as a non-failure', async (status) => {
+    mockGenerateContent.mockResolvedValue({ text: 'No failure.' });
+    expect(await handleDbtStatus('Status?', [{ ...sampleHistory[0], status }], 'test-key')).toBe('No failure.');
+    const args = mockGenerateContent.mock.calls[0][0];
+    expect(args.contents).toContain(JSON.stringify(status));
+    expect(args.config.systemInstruction).toContain('Treat no-op as no operation needed and reused as a reused result; neither is a failure.');
+  });
+
   it('returns hardcoded message when runHistory is empty (no LLM call)', async () => {
     const result = await handleDbtStatus(
       'What is the status of stg_orders?',

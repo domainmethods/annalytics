@@ -1,6 +1,6 @@
 {
   "name": "annalytics",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "",
   "main": "index.js",
   "directories": {
@@ -16,7 +16,7 @@
     "knowledge:validate": "tsx scripts/validate-knowledge.ts",
     "knowledge:sync": "tsx scripts/sync-knowledge.ts",
     "setup:check": "tsx scripts/setup-check.ts",
-    "infra:validate": "sh -c 'cd infra && if command -v terraform >/dev/null 2>&1; then terraform fmt -check && terraform init -backend=false && terraform validate; elif command -v tofu >/dev/null 2>&1; then tofu fmt -check && tofu init -backend=false && tofu validate; else echo \"Terraform/OpenTofu not installed; skipping infra validation\"; fi'",
+    "infra:validate": "sh scripts/validate-infra.sh",
     "lint": "eslint src/ tests/ scripts/",
     "lint:fix": "eslint --fix src/ tests/ scripts/",
     "promote": "tsx scripts/promote-teachings.ts",

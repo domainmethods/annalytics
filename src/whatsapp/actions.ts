@@ -1,3 +1,4 @@
+import { normalizeWaId } from './waId.js';
 import type { WhatsAppClient } from './client.js';
 import type { WhatsAppInteractiveAction } from './payload.js';
 import type { TableContext } from '../dbt/types.js';
@@ -188,7 +189,7 @@ export async function handleWhatsAppActions(
   deps: HandleWhatsAppActionsDeps,
 ): Promise<void> {
   for (const action of actions) {
-    if (!deps.allowedWaIds.includes(action.conversation.userId)) continue;
+    if (!deps.allowedWaIds.includes(normalizeWaId(action.conversation.userId))) continue;
 
     const claimed = await claimWhatsAppEvent(action.providerMessageId);
     if (!claimed) continue;

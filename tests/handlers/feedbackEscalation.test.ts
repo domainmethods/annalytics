@@ -7,8 +7,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../src/state/responseContext.js');
 vi.mock('../../src/state/escalationState.js');
 vi.mock('../../src/state/feedbackNotes.js');
+vi.mock('../../src/state/refinementTarget.js');
 
-import { getResponseContext } from '../../src/state/responseContext.js';
+import { getSlackResponseContext } from '../../src/state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../../src/state/escalationState.js';
 import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
 import {
@@ -19,7 +20,8 @@ import {
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ResponseContext } from '../../src/types.js';
 
-const mockGetResponseContext = vi.mocked(getResponseContext);
+import { saveRefinementTarget } from '../../src/state/refinementTarget.js';
+const mockGetResponseContext = vi.mocked(getSlackResponseContext);
 const mockHasPendingEscalation = vi.mocked(hasPendingEscalation);
 const mockSaveEscalationState = vi.mocked(saveEscalationState);
 const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
@@ -86,7 +88,7 @@ describe('handleFeedbackReason', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // makeCtx() returns only the fields the handler reads; cast to satisfy the
-    // mocked getResponseContext return type (Promise<ResponseContext | null>).
+    // mocked getSlackResponseContext return type (Promise<ResponseContext | null>).
     mockGetResponseContext.mockResolvedValue(makeCtx() as unknown as ResponseContext);
     mockHasPendingEscalation.mockResolvedValue(false);
     mockSaveEscalationState.mockResolvedValue(undefined);
@@ -123,12 +125,37 @@ describe('handleFeedbackReason', () => {
     expect(state.context.feedbackReason).toBe('Wrong number');
     expect(state.context.feedbackUserId).toBe('U1');
     expect(state.context.previousSql).toBe('SELECT 1');
+    // Legacy answers without a stored user question fall back to the clarified one.
+    expect(state.context.userQuestion).toBe('unique visitors last month');
     expect(timeoutHours).toBe(4);
 
     expect(respond).toHaveBeenCalledTimes(1);
     expect(respond.mock.calls[0][0].replace_original).toBe(true);
     // Issue #3: the success ack must thread to the original answer, not DM root.
     expect(respond.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
+  });
+
+  it("escalates with the user's stored wording when the answer saved it (#44)", async () => {
+    mockGetResponseContext.mockResolvedValue({
+      ...makeCtx(),
+      userQuestion: 'paid unique visitors last month',
+    } as unknown as ResponseContext);
+    const client = makeClient();
+    await handleFeedbackReason({
+      reasonId: 'wrong_number',
+      compoundKey,
+      userId: 'U1',
+      channel: 'C1',
+      client,
+      respond: vi.fn().mockResolvedValue(undefined),
+      config: makeConfig(),
+    });
+
+    const [state] = mockSaveEscalationState.mock.calls[0];
+    expect(state.context.userQuestion).toBe('paid unique visitors last month');
+    expect(state.context.clarifiedQuestion).toBe('unique visitors last month');
+    expect(JSON.stringify(client.chat.postMessage.mock.calls[0][0].blocks)).toContain('paid unique visitors last month');
+    expect(client.chat.postMessage.mock.calls[0][0].text).toBe('Anna Lytics flagged answer: "paid unique visitors last month"');
   });
 
   it('degrades gracefully when the escalation card posted but the state save fails', async () => {
@@ -206,6 +233,26 @@ describe('handleFeedbackReason', () => {
     // Refine prompt posted publicly in-thread.
     expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(client.chat.postMessage.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
+    // ...and remembers which answer the reason was given on (#51).
+    expect(vi.mocked(saveRefinementTarget)).toHaveBeenCalledWith({
+      channel: 'C1', threadTs: '1700000000.000100', userId: 'U1', responseKey: compoundKey,
+    });
+  });
+
+  it('never acknowledges a refine that could not be set up (#51)', async () => {
+    vi.mocked(saveRefinementTarget).mockRejectedValueOnce(new Error('firestore down'));
+    const client = makeClient();
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'not_asked', compoundKey, userId: 'U1', channel: 'C1', client, respond, config: makeConfig(),
+    });
+    // No prompt in the thread, and the reason buttons come back for a retry.
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledTimes(1);
+    const reply = respond.mock.calls[0][0];
+    expect(reply.text).toMatch(/couldn't set up that correction/);
+    expect(reply.text).not.toMatch(/let me know what to change/i);
+    expect(reply.blocks).toBeDefined();
   });
 
   it('threads the refine ack with thread_ts', async () => {
@@ -246,11 +293,11 @@ describe('handleFeedbackReason', () => {
     expect(respond).not.toHaveBeenCalled(); // modal opening replaces the ack
   });
 
-  it('degrades to the record-only ack when opening the Other-note modal fails', async () => {
+  it('says the form failed and keeps the reason buttons when opening the Other-note modal fails', async () => {
     // trigger_id is valid for ~3s; views.open also fails on any Slack API error.
     // An unguarded throw leaves the user with no acknowledgement, so the handler
-    // must log and fall back to the same record-only ack it would have given
-    // without the modal — never a silent drop.
+    // must log and tell the user honestly (nothing was saved), keeping the
+    // reason buttons so a fresh click can retry — never a silent drop.
     const viewsOpen = vi.fn().mockRejectedValue(new Error('expired_trigger_id'));
     const respond = vi.fn().mockResolvedValue(undefined);
     const client = { views: { open: viewsOpen }, chat: {} } as any;
@@ -263,11 +310,24 @@ describe('handleFeedbackReason', () => {
     ).resolves.toBeUndefined();
 
     expect(viewsOpen).toHaveBeenCalledTimes(1);
-    // Degrade fired with the record-only ack.
     expect(respond).toHaveBeenCalledTimes(1);
-    expect(respond.mock.calls[0][0]).toEqual({
+    const msg = respond.mock.calls[0][0];
+    expect(msg).toMatchObject({ replace_original: true, thread_ts: 'T1' });
+    expect(msg.text).toContain("couldn't open the note form");
+    expect(msg.text).not.toContain('logged this for review');
+    const actions = msg.blocks.find((b: any) => b.type === 'actions');
+    expect(actions.elements.map((e: any) => e.action_id)).toContain('fb_reason_other');
+  });
+
+  it('acks "Other" without a triggerId neutrally, claiming nothing was saved', async () => {
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'other', compoundKey: 'T1_S1', userId: 'U1', channel: 'C1',
+      client: { chat: {} } as any, respond, config: {} as any,
+    });
+    expect(respond).toHaveBeenCalledWith({
       replace_original: true,
-      text: 'Thanks — noted. I logged this for review.',
+      text: 'Thanks for the feedback.',
       thread_ts: 'T1',
     });
   });
@@ -392,7 +452,7 @@ describe('handleOtherNoteSubmission', () => {
     },
   );
 
-  it('still acks when saveFeedbackNote throws (save failure does not short-circuit ack)', async () => {
+  it('tells the user the save failed (not "logged") when saveFeedbackNote throws', async () => {
     mockSaveFeedbackNote.mockRejectedValue(new Error('firestore down'));
     const postEphemeral = vi.fn().mockResolvedValue({});
     const client = { chat: { postEphemeral } } as any;
@@ -405,7 +465,10 @@ describe('handleOtherNoteSubmission', () => {
       }),
     ).resolves.toBeUndefined();
     expect(mockSaveFeedbackNote).toHaveBeenCalled();
-    expect(postEphemeral).toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledTimes(1);
+    const { text } = postEphemeral.mock.calls[0][0];
+    expect(text).toContain("couldn't save your note");
+    expect(text).not.toContain('logged this for review');
   });
 
   it('does not throw on non-JSON private_metadata (logs and returns)', async () => {

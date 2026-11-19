@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants, existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
@@ -738,6 +739,8 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
               apiKey,
               resolved,
               maxBytes,
+              undefined,
+              entry.question,
             );
             const tableScore = scoreTableSelection(entry.expectedTables, quality.sqlResult.sql, knownBenchmarkTables);
             result = buildResult(entry, quality.sqlResult.sql, {
@@ -1000,8 +1003,8 @@ export async function main(argv = process.argv.slice(2), templateResultsDir = jo
   console.log(`Loaded ${knowledgeSummaries.length} local knowledge summaries`);
 
   // Load dbt artifacts when available (tolerate missing — empty tables[]).
-  const resolvedManifestPath = join(root, manifestPath);
-  const resolvedCatalogPath = join(root, catalogPath);
+  const resolvedManifestPath = resolveDbtArtifactPath(manifestPath, root);
+  const resolvedCatalogPath = resolveDbtArtifactPath(catalogPath, root);
   let tables: TableContext[] = [];
   if (await fileExists(resolvedManifestPath) && await fileExists(resolvedCatalogPath)) {
     try {
@@ -1021,12 +1024,8 @@ export async function main(argv = process.argv.slice(2), templateResultsDir = jo
     console.warn('Warning: dbt artifacts not found. Running without schema context.');
   }
 
-  const knownBenchmarkTables = [
-    ...new Set([
-      ...tables.map(table => table.name),
-      ...corpus.flatMap(entry => entry.expectedTables ?? []),
-    ]),
-  ];
+  // No advertised schema means no inferred inventory from expectation or card labels.
+  const knownBenchmarkTables = tables.map(table => table.name);
 
   if (args.bypassClarification) {
     console.log('⚠ Clarification gate BYPASSED: every entry runs the quality loop (SQL-path node sizing mode).');

@@ -1,3 +1,4 @@
+import { matchesRelation } from './dbt/relationMatching.js';
 import type { ClarificationResult } from './agents/types.js';
 import type { GenerateSqlOptions } from './agents/sqlGenerator.js';
 import { generateSql } from './agents/sqlGenerator.js';
@@ -32,6 +33,7 @@ export type RoutineFastPathResult =
     };
 
 export interface RoutineFastPathInput {
+  executionDefaultProject?: string;
   enabled: boolean;
   requireSupervisor: boolean;
   question: string;
@@ -109,7 +111,7 @@ export async function runRoutineFastPath(input: RoutineFastPathInput): Promise<R
     };
   }
 
-  const tableReasons = tableIneligibleReasons(sqlResult, input.tables);
+  const tableReasons = tableIneligibleReasons(sqlResult, input.tables, input.executionDefaultProject);
   if (tableReasons.length > 0) {
     return {
       kind: 'fallback',
@@ -125,7 +127,7 @@ export async function runRoutineFastPath(input: RoutineFastPathInput): Promise<R
     };
   }
 
-  const groundingReasons = groundingIneligibleReasons(sqlResult, input.knowledgeSummaries);
+  const groundingReasons = groundingIneligibleReasons(sqlResult, input.knowledgeSummaries, input.tables, input.executionDefaultProject);
   if (groundingReasons.length > 0) {
     return {
       kind: 'fallback',
@@ -223,23 +225,24 @@ function initialIneligibleReasons(input: RoutineFastPathInput): string[] {
   return reasons;
 }
 
-function tableIneligibleReasons(sqlResult: QualityResult['sqlResult'], tables: TableContext[]): string[] {
+function tableIneligibleReasons(sqlResult: QualityResult['sqlResult'], tables: TableContext[], defaultProject?: string): string[] {
   const allowed = tables.map(table => table.name);
   const reportedTables = sqlResult.tablesUsed.map(normalizeTableName).filter(Boolean);
-  const sqlTables = extractTableReferences(sqlResult.sql);
-  const allGeneratedTables = [...new Set([...reportedTables, ...sqlTables])];
+  const sqlTables = extractTableReferences(sqlResult.sql).map(table => resolveSqlReference(table, defaultProject));
+  const sqlAllowed = allowed.map(table => resolveSqlReference(table, defaultProject)).filter(Boolean);
 
   const reasons: string[] = [];
-  if (allGeneratedTables.some(table => !isAllowedTable(table, allowed))) {
+  if (reportedTables.some(table => !matchesRelation(table, allowed, allowed))
+    || sqlTables.some(table => !table || !sqlAllowed.some(allowedTable => normalizeTableName(allowedTable).toLowerCase() === table.toLowerCase()))) {
     reasons.push('table_outside_retrieved_schema');
   }
-  if (sqlTables.some(table => !reportedTables.some(reported => sameTableReference(reported, table)))) {
+  if (sqlTables.some(table => !reportedTables.some(reported => matchesRelation(reported, [table], sqlAllowed)))) {
     reasons.push('missing_tables_used');
   }
   return reasons;
 }
 
-function groundingIneligibleReasons(sqlResult: QualityResult['sqlResult'], summaries: KnowledgeSummary[]): string[] {
+function groundingIneligibleReasons(sqlResult: QualityResult['sqlResult'], summaries: KnowledgeSummary[], tables: TableContext[], defaultProject?: string): string[] {
   const referenceIds = extractReferenceIdsFromCitations(sqlResult.groundingCitations);
   const teachingIds = extractTeachingIdsFromCitations(sqlResult.groundingCitations);
   const referenceSummaries = summaries.filter(summary => summary.kind === 'reference_card' && summary.id);
@@ -259,11 +262,11 @@ function groundingIneligibleReasons(sqlResult: QualityResult['sqlResult'], summa
 
   const generatedTables = [...new Set([
     ...sqlResult.tablesUsed.map(normalizeTableName).filter(Boolean),
-    ...extractTableReferences(sqlResult.sql),
+    ...extractTableReferences(sqlResult.sql).map(table => resolveSqlReference(table, defaultProject)),
   ])];
   for (const id of recognizedReferenceIds) {
     const summary = referenceSummaries.find(item => item.id === id);
-    if (summary?.canonical_table && !generatedTables.some(table => sameTableReference(table, summary.canonical_table))) {
+    if (summary?.canonical_table && !generatedTables.some(table => matchesRelation(table, [summary.canonical_table!], tables.map(item => item.name)))) {
       reasons.push('reference_card_canonical_table_mismatch');
       break;
     }
@@ -342,12 +345,7 @@ function normalizeTableName(value: string | undefined): string {
   return (value ?? '').replace(/`/g, '').trim();
 }
 
-function isAllowedTable(candidate: string, allowedTables: string[]): boolean {
-  return allowedTables.some(allowed => sameTableReference(candidate, allowed));
-}
-
-function sameTableReference(left: string, right: string): boolean {
-  const normalizedLeft = normalizeTableName(left).toLowerCase();
-  const normalizedRight = normalizeTableName(right).toLowerCase();
-  return normalizedLeft === normalizedRight || normalizedLeft.endsWith(`.${normalizedRight}`);
+function resolveSqlReference(reference: string, defaultProject?: string): string {
+  if (reference.split('.').length === 3) return reference;
+  return defaultProject ? `${defaultProject}.${reference}` : '';
 }

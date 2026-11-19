@@ -2,7 +2,7 @@ import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import type { PipelineConfig } from '../pipeline.js';
 import { resolveEscalationTarget } from '../pipeline.js';
-import { getResponseContext } from '../state/responseContext.js';
+import { getSlackResponseContext } from '../state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../state/escalationState.js';
 import { buildEscalationBlocks } from '../slack/escalationBlocks.js';
 import {
@@ -13,6 +13,11 @@ import {
 import { buildOtherNoteModal } from '../slack/feedbackModals.js';
 import { saveFeedbackNote, type FeedbackNote } from '../state/feedbackNotes.js';
 import { rootLogger } from '../logging.js';
+import { promptRefinement, REFINE_SAVE_FAILED_TEXT } from './refinePrompt.js';
+
+/** Shown when the "Other" note modal fails to open; the reason buttons are re-rendered for a retry. */
+const OTHER_FORM_FAILED_MESSAGE =
+  "Sorry — I couldn't open the note form. Click *Other* again to retry.";
 
 /**
  * Shown when we can no longer reconstruct an answer's details (malformed
@@ -96,23 +101,29 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     } catch (err) {
       // trigger_id is valid for ~3s; views.open also throws on any Slack API
       // error. An uncaught rejection leaves the user with no acknowledgement.
-      // Mirror the escalate path's log-and-degrade idiom: log identifiers only,
-      // then fall through to the same record-only ack the user would have gotten
-      // without the modal — never a silent drop.
+      // Log identifiers only, then say honestly that the form didn't open and
+      // keep the reason buttons so a fresh click (new trigger_id) can retry.
+      // Nothing was saved, so never claim the note was logged.
       rootLogger.error(
         { error: (err as Error).message, channel, compoundKey },
         'feedback.other_note.modal_open_failed',
       );
-      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+      await respond({
+        replace_original: true,
+        text: OTHER_FORM_FAILED_MESSAGE,
+        blocks: buildFeedbackReasonBlocks(compoundKey, OTHER_FORM_FAILED_MESSAGE),
+        thread_ts: earlyThreadTs,
+      } as any);
       return;
     }
   }
 
   const reason = feedbackReasonById(reasonId);
 
-  // Unknown reason id → treat as record-only.
+  // Unknown reason id → treat as record-only. Nothing is persisted on this
+  // path, so the ack must not claim anything was recorded or logged.
   if (!reason || reason.route === 'record') {
-    await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+    await respond({ replace_original: true, text: 'Thanks for the feedback.', thread_ts: earlyThreadTs } as any);
     return;
   }
 
@@ -128,13 +139,20 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   const [threadTs, statusMsgTs] = parts;
 
   if (reason.route === 'refine') {
-    // Reuse the exact wording of the existing `refine_assumptions` handler in
-    // app.ts so the refine UX is consistent regardless of entry point.
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "What should I change about my assumptions? Reply with your corrections and I'll re-run the query.",
-    });
+    // Same prompt as the `refine_assumptions` button, and it remembers which
+    // answer this reason was given on (#51).
+    const prompted = await promptRefinement({ channel, threadTs, statusMsgTs, userId, client });
+    if (!prompted) {
+      // Nothing was set up, so never claim it was. Keep the reason buttons
+      // so a fresh click can retry.
+      await respond({
+        replace_original: true,
+        text: REFINE_SAVE_FAILED_TEXT,
+        blocks: buildFeedbackReasonBlocks(compoundKey, REFINE_SAVE_FAILED_TEXT),
+        thread_ts: threadTs,
+      } as any);
+      return;
+    }
     await respond({ replace_original: true, text: 'Got it — let me know what to change in the thread.', thread_ts: threadTs } as any);
     return;
   }
@@ -147,13 +165,13 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     return;
   }
 
-  const ctx = await getResponseContext(compoundKey);
+  const ctx = await getSlackResponseContext(channel, compoundKey);
   if (!ctx) {
     await respond({ replace_original: true, text: REASK_MESSAGE, thread_ts: threadTs } as any);
     return;
   }
 
-  if (await hasPendingEscalation(threadTs)) {
+  if (await hasPendingEscalation(channel, threadTs)) {
     await respond({ replace_original: true, text: '✅ This thread is already flagged for the data team.', thread_ts: threadTs } as any);
     return;
   }
@@ -172,11 +190,14 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   // accepted v1 tradeoff — the user still gets the re-ask degrade, and a re-click
   // re-posts rather than silently dropping. (hasPendingEscalation stays false.)
   try {
+    // The user's own wording (#44); answers saved before it was persisted
+    // fall back to the clarified question.
+    const userQuestion = ctx.userQuestion ?? ctx.clarifiedQuestion;
     const escalationMsg = await client.chat.postMessage({
       channel: target,
-      text: `Anna Lytics flagged answer: "${ctx.clarifiedQuestion}"`,
+      text: `Anna Lytics flagged answer: "${userQuestion}"`,
       blocks: buildEscalationBlocks({
-        userQuestion: ctx.clarifiedQuestion,
+        userQuestion,
         channelName: `<#${channel}>`,
         threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
         stuckDescription: `User flagged this answer as "${reason.label}". Please verify and reply with a correction.`,
@@ -193,12 +214,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
       stageToResume: 'supervisor_review',
       context: {
         clarifiedQuestion: ctx.clarifiedQuestion,
-        // ResponseContext does not persist the raw user question, so both
-        // fields intentionally collapse to clarifiedQuestion. The downstream
-        // teaching candidate's "original vs clarified" distinction is lost for
-        // feedback-triggered escalations — acceptable given it's the best
-        // available data; revisit if ResponseContext starts persisting the raw question.
-        userQuestion: ctx.clarifiedQuestion,
+        userQuestion,
         groundingCitations: ctx.groundingCitations,
         previousSql: ctx.generatedSql,
         supervisorNotes: ctx.supervisorNotes,
@@ -277,7 +293,7 @@ export async function handleOtherNoteSubmission(
 
   // ResponseContext is best-effort enrichment; a missing/evicted doc must not
   // block recording the user's note.
-  const ctx = await getResponseContext(compoundKey).catch(() => null);
+  const ctx = await getSlackResponseContext(channel, compoundKey).catch(() => null);
 
   // Firestore is not configured with ignoreUndefinedProperties, so a literal
   // `undefined` field value would reject the write. Build the note with the
@@ -287,14 +303,19 @@ export async function handleOtherNoteSubmission(
   if (ctx?.clarifiedQuestion !== undefined) note.clarifiedQuestion = ctx.clarifiedQuestion;
   if (ctx?.traceId !== undefined) note.traceId = ctx.traceId;
 
+  // Only claim the note was logged when the write actually succeeded; on a
+  // failed write, say so honestly so the user can resubmit.
+  let ackText: string;
   try {
     await saveFeedbackNote(note);
     rootLogger.info({ userId, traceId: ctx?.traceId, threadTs }, 'feedback.other_note.saved');
+    ackText = 'Thanks — noted. I logged this for review.';
   } catch (err) {
     rootLogger.error(
       { error: (err as Error).message, userId, threadTs },
       'feedback.other_note.save_failed',
     );
+    ackText = "Sorry — I couldn't save your note. Click *Other* again to reopen the form and resubmit it.";
   }
 
   await client.chat
@@ -302,7 +323,7 @@ export async function handleOtherNoteSubmission(
       channel,
       user: userId,
       thread_ts: threadTs,
-      text: 'Thanks — noted. I logged this for review.',
+      text: ackText,
     })
     .catch((err) =>
       rootLogger.warn(

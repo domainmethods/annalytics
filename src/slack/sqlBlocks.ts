@@ -1,4 +1,5 @@
-import type { KnownBlock, SectionBlock } from '@slack/types';
+import { sqlSections } from './limits.js';
+import type { KnownBlock } from '@slack/types';
 import type { ResponseContext } from '../types.js';
 
 // Block-id prefix for the on-demand SQL panel, mirroring REASONING_BLOCK_PREFIX.
@@ -12,11 +13,5 @@ export const SQL_BLOCK_PREFIX = 'sql_';
 // no re-query — so the answer's clutter stays low while the exact query remains
 // one click away for trust and verification.
 export function buildSqlBlocks(ctx: ResponseContext): KnownBlock[] {
-  return [
-    {
-      type: 'section',
-      block_id: `${SQL_BLOCK_PREFIX}query`,
-      text: { type: 'mrkdwn', text: `\`\`\`${ctx.generatedSql}\`\`\`` },
-    } as SectionBlock,
-  ];
+  return sqlSections(ctx.generatedSql, '', `${SQL_BLOCK_PREFIX}query`);
 }

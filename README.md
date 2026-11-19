@@ -2,6 +2,12 @@
 
 Anna Lytics is a Slack bot that answers business questions by translating natural-language questions into read-only BigQuery SQL. It uses dbt metadata as the semantic layer, configurable Gemini model aliases for generation and review, and Gemini File Search for domain-specific knowledge.
 
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) for release history and update notes, and [Updating from the template](IMPLEMENTATION.md#updating-from-the-template)
+for syncing an existing implementation. Releases are cut by maintainers as
+`vX.Y.Z` tags; the first is `v0.1.0`.
+
 ## Architecture
 
 Users ask questions in Slack via `@Anna Lytics`, `/anna`, DMs, or thread replies. Each request flows through `src/pipeline.ts`:
@@ -214,6 +220,8 @@ The webhook URL is:
 https://<your-cloud-run-url>/whatsapp/webhook
 ```
 
+Comma-separated international sender IDs including country code (digits recommended, e.g. 15550000001). Plus signs, spaces, dashes, dots and parentheses are removed; other characters cause a startup error.
+
 Keep `WHATSAPP_ALLOWED_WA_IDS` set during the prototype so only explicit test
 numbers can invoke the analytics pipeline. Do not commit WABA IDs, phone number
 IDs, tokens, phone numbers, or pilot transcripts to the template repo.
@@ -272,7 +280,13 @@ Persistent GCP setup is provisioned manually with `gcloud`. The Terraform config
 in `infra/` is **not** the assumed deploy path — it is retained only as an
 optional, declarative reference (and `infra/firestore.indexes.json` doubles as
 the canonical list of required Firestore indexes). Nothing in this repo runs
-`terraform apply`; CI and the runtime deploy use `gcloud` only.
+`terraform apply`; runtime deployment uses `gcloud` only.
+
+Run `npm run infra:validate` for formatting, backend-disabled initialization, and
+validation without GCP credentials. Terraform or OpenTofu must be installed;
+the command fails if neither is available, including locally, so a successful
+exit always means validation ran. PRs and pushes to main run this check with
+Terraform 1.9.8. This does not plan or apply infrastructure.
 
 The persistent resources, all created once per project:
 
@@ -415,8 +429,17 @@ scheduler in place, the worst-case timeout-notification latency roughly equals
 the sweep interval (10 minutes as configured above; the in-module 60s throttle
 can add up to a minute when an event-driven sweep collides with a scheduled
 tick). The endpoint returns the sweep counts as JSON; a `throttled: true`
-response means a recent sweep already ran — try again in a minute — not that
-nothing was pending.
+response means a recent sweep already ran (or one is still running) — try
+again in a minute — not that nothing was pending.
+
+Each sweep reads every pending escalation but performs at most 100 Slack
+actions (reminders plus timeouts), most overdue first; the response's
+`deferred` count is the due work left for the next sweep. That latency bound
+holds while fewer than about 100 escalations come due per sweep interval
+(600 an hour at 10 minutes); beyond that, raise the scheduler frequency.
+Each reminder is claimed in a Firestore transaction before it is posted, so
+overlapping sweeps or instances do not post it twice; a failed post waits one
+reminder interval instead of retrying immediately.
 
 ## Deployment
 
@@ -426,12 +449,14 @@ The standard region is `us-west1`.
 
 The runtime writes a retention timestamp on every document in a growth-prone
 collection. A few collections are intentionally unbounded and absent from the
-manifest: `rate_limits` (bounded sliding window, overwritten in place per
-user), `teaching_candidates` and `feedback_notes` (human-drained queues), and
+manifest: `rate_limits` (fixed one-hour window, overwritten in place per
+user), `sample_rows` (one doc per sampled table, overwritten in place on
+refresh), `teaching_candidates` and `feedback_notes` (human-drained queues), and
 `config` (singleton metadata docs). Most
 collections (locks, clarification state, caches, Slack event dedupe, dbt run
-history, `response_context`, `pending_notifications` queue) use `expiresAt`;
-for `response_context` the window
+history, `response_context`, `thread_participation`, `pending_notifications`
+queue, `refinement_targets`) use `expiresAt`; for `response_context` and
+`thread_participation` the window
 is `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90 days). `escalation_state`
 retention uses `retainUntil` (fixed 90 days) because its `expiresAt` is the
 escalation timeout, not a retention deadline. The manifest
@@ -544,7 +569,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --region "$REGION" \
   --no-cpu-throttling \
   --service-account "$SERVICE_NAME@$PROJECT_ID.iam.gserviceaccount.com" \
-  --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
+  --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID" \
   --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
   --port 3000 \
   --allow-unauthenticated
@@ -572,8 +597,10 @@ All configuration is via environment variables. See `.env.example` for the local
 | `SLACK_SIGNING_SECRET` | Yes | | Slack request signing secret |
 | `GEMINI_API_KEY` | Yes | | Gemini Developer API key |
 | `GCP_PROJECT_ID` | Yes | | GCP project for BigQuery and Firestore |
-| `GEMINI_MODEL` | No | `gemini-3.1-pro-preview` | SQL generation and supervisor model |
-| `GEMINI_FLASH_MODEL` | No | `gemini-3-flash-preview` | Lightweight classification and summary model |
+| `NODE_PROFILE_OVERRIDES` | No | nodeProfiles registry | Per-node tier, version and thinking level for serving generation |
+| `MODEL_ID_OVERRIDES` | No | modelConfig registry | Map tier/version pairs to exact model IDs |
+| `GEMINI_MODEL` | No | `gemini-3.1-pro-preview` | Legacy config value; benchmark metadata and direct benchmark probes; judge fallback. Ignored by serving nodes |
+| `GEMINI_FLASH_MODEL` | No | `gemini-3-flash-preview` | Legacy benchmark model-availability preflight alias; ignored by serving nodes |
 | `GEMINI_JUDGE_MODEL` | No | `GEMINI_MODEL` | Benchmark judge model |
 | `FILE_SEARCH_STORE_ID` | No for runtime, yes for sync/acceptance | | Gemini File Search store for ReferenceCards and teachings |
 | `DBT_MANIFEST_PATH` | No | `./dbt/manifest.json` | Path to dbt manifest |
@@ -614,3 +641,16 @@ infra/               Optional persistent GCP setup, not runtime deploy
 ```text
 GET /health -> 200 OK
 ```
+
+### Serving model overrides
+
+Production generation uses `generateForNode` and the registry in `src/agents/nodeProfiles.ts`. For example, `NODE_PROFILE_OVERRIDES='{"sqlGenerator":{"tier":"flash","version":"3","thinkingLevel":"low"}}'` selects the registered Flash 3 model for SQL generation. Set JSON values through your deployment environment file (Cloud Run `--env-vars-file`) to preserve commas. Re-measure quality on your domain before changing profiles. `MODEL_ID_OVERRIDES` remaps a tier/version for every node using that pair; it does not validate model availability.
+
+The legacy aliases do not select serving SQL, supervisor, classifier, or summary models. `GEMINI_MODEL` is still loaded into AppConfig/PipelineConfig, but serving generation does not consume it. `scripts/benchmark.ts` reads it for metadata and direct probes and reads `GEMINI_FLASH_MODEL` for model-availability preflight. `GEMINI_JUDGE_MODEL` selects judges in benchmark, benchmark-judge, node-sweep and node-sweep-smoke scripts, falling back to `GEMINI_MODEL`, then the default Pro ID.
+### dbt physical relation names
+
+Logical model aliases now resolve to physical relation names; `relation_name` takes precedence over database/schema/alias fields. Update ReferenceCard canonical/avoid tables, teaching model references and SQL, and benchmark expectations to physical names, preferably `project.dataset.table`. Legacy `dataset.table` references remain compatible when exactly one advertised relation has that suffix; ambiguous cross-project references require full qualification. Resync File Search after refreshing dbt artifacts and knowledge files.
+
+For historical identity matching, legacy `dataset.table` names resolve only when unique across the complete advertised dbt inventory, even when an answer uses only one project. Ambiguous names are rejected or left unattributed; migrate cards, teachings and benchmark expectations to physical three-part names. Manifest `relation_name` strips whitespace, backticks and double quotes. A non-empty malformed relation (anything other than three non-empty dot-separated identifiers) skips the node with a warning; component reconstruction is reserved for absent/empty relations.
+
+SQL allowlisting resolves two-part references in the configured BigQuery execution default project; without that project, three-part SQL references are required. Inventory uniqueness never authorizes a SQL reference in another project. Feedback reports warn when dbt artifacts are missing and disable legacy attribution until the inventory is available.

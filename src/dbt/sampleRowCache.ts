@@ -1,4 +1,5 @@
 import { getDb } from '../state/firestore.js';
+import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { SampleRowResult } from './sampleRows.js';
 
 const STALENESS_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -38,13 +39,8 @@ function serializeSampleValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(item => serializeSampleValue(item));
   if (typeof value !== 'object') return value;
 
-  const wrapperValue = (value as { value?: unknown }).value;
-  if (
-    wrapperValue !== undefined
-    && (typeof wrapperValue !== 'object' || wrapperValue === null)
-  ) {
-    return wrapperValue;
-  }
+  const wrapperValue = unwrapBigQueryScalar(value);
+  if (wrapperValue !== undefined) return wrapperValue;
 
   const prototype = Object.getPrototypeOf(value);
   if (prototype === Object.prototype || prototype === null) {

@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { BigQuery } from '@google-cloud/bigquery';
 import { routeFollowUp } from '../../src/handlers/followUpRouter.js';
 import type { ResponseContext } from '../../src/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 
 const mockGetLatestResponseContext = vi.fn();
+const mockGetSlackResponseContext = vi.fn();
 vi.mock('../../src/state/responseContext.js', () => ({
   getLatestResponseContext: (...args: unknown[]) => mockGetLatestResponseContext(...args),
+  getSlackResponseContext: (...args: unknown[]) => mockGetSlackResponseContext(...args),
 }));
 
 const mockHandleMetaQuestion = vi.fn();
@@ -113,6 +116,7 @@ describe('routeFollowUp', () => {
   it('refinement — builds composite question and runs pipeline with refinement hint', async () => {
     mockBuildRefinementInput.mockReturnValue({
       compositeQuestion: 'What is total revenue? (Refinement: break down by region)',
+      originalQuestion: 'What is total paid revenue? (Refinement: break down by region)',
       previousSql: 'SELECT SUM(revenue) FROM fct_orders',
     });
     mockRunPipeline.mockResolvedValue(undefined);
@@ -126,9 +130,52 @@ describe('routeFollowUp', () => {
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         question: 'What is total revenue? (Refinement: break down by region)',
+        originalQuestion: 'What is total paid revenue? (Refinement: break down by region)',
         refinementHint: { previousSql: 'SELECT SUM(revenue) FROM fct_orders' },
       }),
     );
+  });
+
+  it('refinement of an older answer uses that answer, not the newest (#51)', async () => {
+    const answerA = { ...baseCtx, statusMsgTs: '1234.5679', generatedSql: 'SELECT a FROM t', clarifiedQuestion: 'Question A' };
+    const answerB = { ...baseCtx, statusMsgTs: '1234.9999', generatedSql: 'SELECT b FROM t', clarifiedQuestion: 'Question B' };
+    mockGetLatestResponseContext.mockResolvedValue(answerB);
+    mockGetSlackResponseContext.mockResolvedValue(answerA);
+    mockBuildRefinementInput.mockImplementation((text: string, ctx: ResponseContext) => ({
+      compositeQuestion: `${ctx.clarifiedQuestion} (Refinement: ${text})`,
+      previousSql: ctx.generatedSql,
+    }));
+    mockRunPipeline.mockResolvedValue(undefined);
+
+    await routeFollowUp(
+      'refinement', 'use net revenue',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+      { refinementTargetKey: '1234.5678_1234.5679' },
+    );
+
+    expect(mockGetSlackResponseContext).toHaveBeenCalledWith('C123', '1234.5678_1234.5679');
+    expect(mockGetLatestResponseContext).not.toHaveBeenCalled();
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      question: 'Question A (Refinement: use net revenue)',
+      refinementHint: { previousSql: 'SELECT a FROM t' },
+    }));
+  });
+
+  it('says so, instead of refining another answer, when the picked answer is gone (#51)', async () => {
+    mockGetLatestResponseContext.mockResolvedValue(baseCtx);
+    mockGetSlackResponseContext.mockResolvedValue(null);
+
+    await routeFollowUp(
+      'refinement', 'use net revenue',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+      { refinementTargetKey: '1234.5678_1234.5679' },
+    );
+
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+    expect(mockClient.chat.update).toHaveBeenCalledWith(expect.objectContaining({
+      ts: 'status-ts',
+      text: expect.stringContaining("can't find the answer you asked to refine"),
+    }));
   });
 
   it('discrepancy — generates diagnostic SQL, validates, executes, posts findings', async () => {
@@ -166,6 +213,31 @@ describe('routeFollowUp', () => {
         text: expect.stringContaining('Breaking down by region to check APAC'),
       }),
     );
+  });
+
+  it('discrepancy — formats BigQuery DATE wrappers in the row summary (#34)', async () => {
+    mockGenerateDiagnosticSql.mockResolvedValue({
+      diagnosticSql: 'SELECT MAX(order_date) AS last_order FROM fct_orders',
+      explanation: 'Checking the latest order date',
+    });
+    mockValidateSql.mockResolvedValue({ valid: true, layer: 'L4', bytesProcessed: 500 });
+    mockReviewSql.mockResolvedValue({ verdict: 'PASS', confidence: 'high', issues: [], suggestions: [], teaching_compliance: 'no_relevant_teaching' });
+    mockExecuteQuery.mockResolvedValue({
+      rows: [{ last_order: BigQuery.date('2026-11-01') }],
+      columnNames: ['last_order'],
+      totalRows: 1,
+      bytesProcessed: 500,
+      truncated: false,
+    });
+
+    await routeFollowUp(
+      'discrepancy', 'Why is the last order so old?',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+    );
+
+    const text = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0]);
+    expect(text).toContain('last_order: 2026-11-01');
+    expect(text).not.toContain('[object Object]');
   });
 
   it('new_query — runs standard pipeline', async () => {

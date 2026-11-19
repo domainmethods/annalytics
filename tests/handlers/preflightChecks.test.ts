@@ -54,18 +54,18 @@ describe('preflightChecks', () => {
   });
 
   it('returns true when all guards pass', async () => {
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(true);
-    expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678');
-    expect(mockGetClarificationState).toHaveBeenCalledWith('1234.5678');
-    expect(mockGetEscalationByThread).toHaveBeenCalledWith('1234.5678');
+    expect(mockAcquireThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
+    expect(mockGetClarificationState).toHaveBeenCalledWith('C123', '1234.5678');
+    expect(mockGetEscalationByThread).toHaveBeenCalledWith('C123', '1234.5678');
   });
 
   it('returns false and posts message when lock fails', async () => {
     mockAcquireThreadLock.mockResolvedValue(false);
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     expect(mockPostMessage).toHaveBeenCalledWith(
@@ -82,7 +82,7 @@ describe('preflightChecks', () => {
   it('returns false, posts a nudge, and releases lock when pending clarification', async () => {
     mockGetClarificationState.mockResolvedValue(pendingClarificationFixture());
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     // Must surface the block to the user — never a silent drop (a regression
@@ -113,9 +113,22 @@ describe('preflightChecks', () => {
         ]),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
     // Should not check escalation
     expect(mockGetEscalationByThread).not.toHaveBeenCalled();
+  });
+
+  it("echoes the user's own wording when a refinement rewrote the question (#44)", async () => {
+    mockGetClarificationState.mockResolvedValue(pendingClarificationFixture({
+      originalQuestion: 'show me orders by region',
+      supervisorQuestion: 'show me paid orders by region',
+    }));
+
+    await preflightChecks('C123', '1234.5678', mockClient, 'owner');
+
+    const text = JSON.stringify(mockPostMessage.mock.calls[0][0].blocks);
+    expect(text).toContain('show me paid orders by region');
+    expect(text).not.toContain('_show me orders by region_');
   });
 
   it('returns false and posts message when pending escalation', async () => {
@@ -127,7 +140,7 @@ describe('preflightChecks', () => {
       },
     });
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     expect(mockPostMessage).toHaveBeenCalledWith(
@@ -137,7 +150,7 @@ describe('preflightChecks', () => {
         text: expect.stringContaining('still waiting for the data team'),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the clarification guard throws', async () => {
@@ -146,17 +159,17 @@ describe('preflightChecks', () => {
     // preflightChecks must release on the throw path itself.
     mockGetClarificationState.mockRejectedValue(new Error('Firestore error'));
 
-    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+    await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the escalation guard throws', async () => {
     mockGetEscalationByThread.mockRejectedValue(new Error('Firestore error'));
 
-    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+    await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('returns true and notifies when escalation expires during preflight', async () => {
@@ -170,7 +183,7 @@ describe('preflightChecks', () => {
       },
     });
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(true);
     expect(mockPostMessage).toHaveBeenCalledWith(

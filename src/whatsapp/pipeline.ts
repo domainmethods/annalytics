@@ -1,3 +1,4 @@
+import { validateSql } from '../validation/pipeline.js';
 import type { ChannelClient, ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
@@ -132,6 +133,7 @@ export async function runWhatsAppPipeline(
     const savedContext: ResponseContext = {
       ...outcome.responseContext,
       threadTs: conversationId,
+      channel: conversationId,
       statusMsgTs: sent.messageId,
       surface: 'whatsapp',
     };
@@ -273,6 +275,8 @@ export async function answerWhatsAppQuestion(
     config.geminiApiKey,
     resolvedQuestion,
     config.maxBytesProcessed,
+    undefined,
+    input.question,
   );
   logStage(logger, {
     traceId,
@@ -328,6 +332,9 @@ export async function answerWhatsAppQuestion(
       clarificationConfidence: clarification.confidence,
     });
   }
+
+  const finalValidation = await validateSql(qualityResult.sqlResult.sql, config.maxBytesProcessed);
+  if (!finalValidation.valid) throw new Error('Final SQL validation failed');
 
   const result = await executeQuery(qualityResult.sqlResult.sql, {
     maxRows: config.maxResultRows,
@@ -387,7 +394,7 @@ async function loadNegativeFeedback(
   logger: ReturnType<typeof createLogger>,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {
   try {
-    return await getLatestNegativeFeedback(conversationId);
+    return await getLatestNegativeFeedback(conversationId, conversationId);
   } catch (err) {
     logger.warn({ err }, 'whatsapp.negative_feedback_failed');
     return null;

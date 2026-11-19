@@ -1,3 +1,4 @@
+import { loadDbtTableNames } from '../src/teachings/validation.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initFirestore } from '../src/state/firestore.js';
@@ -26,7 +27,10 @@ async function main() {
     .map((c) => ({ table: c.canonical_table, domain: c.domain }));
 
   const docs = await getResponseContextsSince(windowDays);
-  const records = toFeedbackRecords(docs, domainMap);
+  const tableNames = await loadDbtTableNames(process.cwd());
+  if (!tableNames) console.warn('dbt inventory unavailable: legacy domain attribution is disabled; provide manifest and catalog for complete attribution.');
+  const inventory = tableNames ? [...tableNames] : [];
+  const records = toFeedbackRecords(docs, domainMap, inventory);
 
   console.log(formatReport(
     getDomainPainRanking(records),

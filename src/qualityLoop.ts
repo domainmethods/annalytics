@@ -44,6 +44,13 @@ export async function qualityLoop(
   clarifiedQuestion: string,
   maxBytesProcessed: number,
   callbacks?: StatusCallbacks,
+  /**
+   * The user's own wording, before clarification. SQL is generated against
+   * the clarified question, but the supervisor checks metric fidelity against
+   * both, so a qualifier dropped in clarification stays visible. Defaults to
+   * the generation question when the caller has no separate original.
+   */
+  originalQuestion?: string,
 ): Promise<QualityResult> {
   const failureHistory: FailureRecord[] = [];
   const validationHistory: ValidationLayerRecord[] = [];
@@ -98,7 +105,7 @@ export async function qualityLoop(
     // 5. Supervisor review (only for structurally valid SQL)
     await callbacks?.onReview?.();
     const supervisorInput: SupervisorInput = {
-      userQuestion: options.question,
+      userQuestion: originalQuestion ?? options.question,
       clarifiedQuestion,
       generatedSql: sqlResult.sql,
       explanation: sqlResult.explanation,

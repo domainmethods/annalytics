@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const {
   mockGenerateContent,
   mockRunPipeline,
+  mockClassifyFollowUp,
+  mockRouteFollowUp,
   firestoreStore,
   firestoreQueryResults,
   loggerWarn,
@@ -13,6 +15,8 @@ const {
 } = vi.hoisted(() => {
   const mockGenerateContent = vi.fn();
   const mockRunPipeline = vi.fn(async () => {});
+  const mockClassifyFollowUp = vi.fn();
+  const mockRouteFollowUp = vi.fn();
   const firestoreStore = new Map<string, any>();
   const firestoreQueryResults = new Map<string, any>();
   const loggerWarn = vi.fn();
@@ -45,7 +49,18 @@ const {
     };
   }
 
+  let transactionQueue = Promise.resolve();
   const mockDb = {
+    runTransaction: vi.fn((callback: (tx: any) => Promise<any>) => {
+      const result = transactionQueue.then(() => callback({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any) => ref.set(data),
+        update: (ref: any, data: any) => ref.update(data),
+        delete: (ref: any) => ref.delete(),
+      }));
+      transactionQueue = result.then(() => undefined, () => undefined);
+      return result;
+    }),
     doc: vi.fn((path: string) => createDocRef(...(path.split('/') as [string, string]))),
     collection: vi.fn((name: string) => {
       const chain: any = {};
@@ -64,6 +79,8 @@ const {
   return {
     mockGenerateContent,
     mockRunPipeline,
+    mockClassifyFollowUp,
+    mockRouteFollowUp,
     firestoreStore,
     firestoreQueryResults,
     loggerWarn,
@@ -102,8 +119,20 @@ vi.mock('../../src/pipeline.js', async (importOriginal) => {
   return { ...actual, runPipeline: mockRunPipeline };
 });
 
+// Follow-up routing is exercised at the seam only: classification and the
+// chosen route are spies so tests can fail either one independently.
+vi.mock('../../src/agents/followUpClassifier.js', () => ({
+  classifyFollowUp: mockClassifyFollowUp,
+}));
+vi.mock('../../src/handlers/followUpRouter.js', () => ({
+  routeFollowUp: mockRouteFollowUp,
+}));
+
 // ─── Real imports (system under test + real collaborators) ───────
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
+import { registerMentions } from '../../src/handlers/mentions.js';
+import { registerCommands } from '../../src/handlers/commands.js';
+import { promptRefinement } from '../../src/handlers/refinePrompt.js';
 import type { AppConfig } from '../../src/config.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
@@ -175,6 +204,8 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     mockGenerateContent.mockReset();
     mockRunPipeline.mockReset();
     mockRunPipeline.mockResolvedValue(undefined);
+    mockClassifyFollowUp.mockReset().mockResolvedValue({ intent: 'new_query', reasoning: 'test' });
+    mockRouteFollowUp.mockReset().mockResolvedValue(undefined);
     firestoreStore.clear();
     firestoreQueryResults.clear();
     loggerWarn.mockReset();
@@ -340,6 +371,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
     expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
       question: 'revenue? (Clarification: last quarter)',
+      originalQuestion: 'revenue? (Clarification: last quarter)',
       threadTs: '1700000000.000900',
       statusMsgTs: '1700000000.000800',
     });
@@ -390,6 +422,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
   });
 
   it('notifies both threads and skips the pipeline when an analyst reply arrives after timeout', async () => {
+    firestoreStore.set('escalation_state/esc-late', { pipelineState: 'awaiting_human' });
     firestoreQueryResults.set('escalation_state', {
       empty: false,
       docs: [{
@@ -448,5 +481,283 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     );
     expect(statusPosts()).not.toContain(STATUS_TEXT);
     expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  // ── #48: a failed follow-up route must not fall through into SQL generation ──
+  describe('follow-up routing failures (#48)', () => {
+    const threadReply = () => dmEvent('how was that calculated?', {
+      thread_ts: '1700000000.000100',
+      ts: '1700000000.000150',
+    });
+
+    beforeEach(() => {
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      mockClient.conversations.replies.mockResolvedValue({
+        messages: [
+          { user: 'U1', text: 'show revenue last month', ts: '1700000000.000100' },
+          { bot_id: 'B1', text: 'Revenue last month was 42.', ts: '1700000000.000120' },
+        ],
+      });
+    });
+
+    it('reports a recoverable error and runs no pipeline when the explanation route fails', async () => {
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+      mockRouteFollowUp.mockRejectedValue(new Error('Firestore unavailable'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvMetaFail'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('meta_question');
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      const update = mockClient.chat.update.mock.calls.at(-1)?.[0];
+      expect(update).toMatchObject({ channel: 'D123', ts: '1700000000.000200' });
+      expect(update.text).toContain('trace-msg');
+      expect(update.text).not.toContain('Firestore unavailable');
+      expect([...firestoreStore.keys()].some(k => k.startsWith('processing_threads/'))).toBe(false);
+    });
+
+    it('still releases the lock and runs no pipeline when the error update also fails', async () => {
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+      mockRouteFollowUp.mockRejectedValue(new Error('Slack update failed'));
+      mockClient.chat.update.mockRejectedValue(new Error('Slack down'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvMetaFailUpdate'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      expect([...firestoreStore.keys()].some(k => k.startsWith('processing_threads/'))).toBe(false);
+    });
+
+    it('falls back to the standard pipeline only when classification itself fails', async () => {
+      mockClassifyFollowUp.mockRejectedValue(new Error('Gemini unavailable'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvClassifyFail'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('mention greeting then an unmentioned question (#53)', () => {
+    it('treats the greeted thread as one the bot is in, so the question enters intake', async () => {
+      let mentionHandler: any;
+      const app = { event: vi.fn((_name: string, h: any) => { mentionHandler = h; }) } as any;
+      registerMentions(app, () => config, getTables);
+
+      await mentionHandler({
+        event: { type: 'app_mention', text: '<@UBOT> hi', user: 'U1', channel: 'C-CHAN', ts: '1700000000.000100' },
+        body: bodyWithEventId('EvMentionHi'),
+        client: mockClient,
+      });
+      expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // The greeting saved no answer, only the participation mark.
+      expect([...firestoreStore.keys()].some(k => k.startsWith('response_context/'))).toBe(false);
+      expect(firestoreStore.has('thread_participation/C-CHAN:1700000000.000100')).toBe(true);
+
+      // The fake store's rate-limit doc holds a plain Date; clear it between users' messages.
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+
+      await handleMessageEvent({
+        event: {
+          type: 'message',
+          channel_type: 'channel',
+          channel: 'C-CHAN',
+          user: 'U1',
+          text: 'show leads last month by channel',
+          ts: '1700000000.000300',
+          thread_ts: '1700000000.000100',
+        } as any,
+        body: bodyWithEventId('EvUnmentioned'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockGenerateContent).toHaveBeenCalled(); // intake classified it
+      expect(statusPosts()).toContain(STATUS_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a /anna greeting as rooting a thread the bot is in (#53)', async () => {
+      let commandHandler: any;
+      const app = { command: vi.fn((_name: string, h: any) => { commandHandler = h; }) } as any;
+      registerCommands(app, () => config, getTables);
+      // Not a canned greeting, so the model's immediate reply is what posts.
+      mockGenerateContent.mockResolvedValue(intakeResponse('immediate_response', 'Happy to help — ask me about a metric.'));
+
+      await commandHandler({
+        command: { channel_id: 'C-CHAN', user_id: 'U1', text: 'hey anna, what can you do' },
+        ack: vi.fn(), respond: vi.fn(), client: mockClient,
+      });
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // The greeting posted top-level as 1700000000.000200, rooting a new thread.
+      expect(firestoreStore.has('thread_participation/C-CHAN:1700000000.000200')).toBe(true);
+
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      await handleMessageEvent({
+        event: {
+          type: 'message', channel_type: 'channel', channel: 'C-CHAN', user: 'U1',
+          text: 'show leads last month by channel', ts: '1700000000.000300', thread_ts: '1700000000.000200',
+        } as any,
+        body: bodyWithEventId('EvCommandFollowUp'), client: mockClient, config, getTables,
+      });
+      expect(statusPosts()).toContain(STATUS_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('still ignores an unmentioned reply in a thread the bot never answered', async () => {
+      await handleMessageEvent({
+        event: {
+          type: 'message',
+          channel_type: 'channel',
+          channel: 'C-CHAN',
+          user: 'U1',
+          text: 'show leads last month by channel',
+          ts: '1700000000.000300',
+          thread_ts: '1700000000.000100',
+        } as any,
+        body: bodyWithEventId('EvStranger'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── #51: a reply to a refine prompt refines the answer the user picked ──
+  describe('refine prompt targets the selected answer (#51)', () => {
+    const reply = (user: string, ts: string) => dmEvent('use net revenue instead', {
+      user,
+      thread_ts: '1700000000.000100',
+      ts,
+    });
+
+    beforeEach(() => {
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      mockClient.conversations.replies.mockResolvedValue({
+        messages: [
+          { user: 'U1', text: 'show revenue', ts: '1700000000.000100' },
+          { bot_id: 'B1', text: 'Answer A', ts: '1700000000.000110' },
+          { bot_id: 'B1', text: 'Answer B', ts: '1700000000.000130' },
+        ],
+      });
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'new_query', reasoning: 'test' });
+    });
+
+    it("routes the prompted user's next reply to the picked answer, once", async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+
+      await handleMessageEvent({ event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefine1'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('refinement');
+      expect(mockRouteFollowUp.mock.calls[0][8]).toEqual({ refinementTargetKey: '1700000000.000100_1700000000.000110' });
+
+      // The target is consumed: a later reply goes through normal classification.
+      // (The fake store keeps rate-limit timestamps as Dates, which the real
+      // limiter can't re-read; reset the window so the second message counts fresh.)
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      await handleMessageEvent({ event: reply('U1', '1700000000.000160'), body: bodyWithEventId('EvRefine2'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a short correction to the refinement, not an intake reply (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockClear();
+      // Intake would answer "thanks" itself if it ran.
+      await handleMessageEvent({
+        event: dmEvent('thanks', { user: 'U1', thread_ts: '1700000000.000100', ts: '1700000000.000150' }),
+        body: bodyWithEventId('EvRefineShort'), client: mockClient, config, getTables,
+      });
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+      expect(statusPosts()).toEqual([STATUS_TEXT]);
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('refinement');
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(false);
+    });
+
+    it('says so, keeps the target, and runs nothing when the target cannot be read (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockClear();
+      // Fail only the refine-target read; every other collection stays live.
+      const realCollection = mockDb.collection.getMockImplementation()!;
+      mockDb.collection.mockImplementation((name: string) => {
+        const chain = realCollection(name);
+        if (name !== 'refinement_targets') return chain;
+        return { ...chain, doc: (id: string) => ({ ...chain.doc(id), get: async () => { throw new Error('firestore down'); } }) };
+      });
+
+      await handleMessageEvent({ event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefineReadFail'), client: mockClient, config, getTables });
+      mockDb.collection.mockImplementation(realCollection);
+
+      expect(statusPosts()).toEqual([expect.stringContaining("couldn't load the answer you picked")]);
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(true);
+    });
+
+    it('keeps the target when the status post fails, so the retry refines the picked answer (#51)', async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      mockClient.chat.postMessage.mockRejectedValueOnce(new Error('slack down'));
+
+      await expect(handleMessageEvent({
+        event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefinePostFail'), client: mockClient, config, getTables,
+      })).rejects.toThrow('slack down');
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(true);
+
+      // Slack redelivers (the claim was released): same event, same picked answer.
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      await handleMessageEvent({
+        event: reply('U1', '1700000000.000150'), body: bodyWithEventId('EvRefinePostFail'), client: mockClient, config, getTables,
+      });
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][8]).toEqual({ refinementTargetKey: '1700000000.000100_1700000000.000110' });
+      expect(firestoreStore.has('refinement_targets/D123:1700000000.000100_U1')).toBe(false);
+    });
+
+    it("does not apply one user's refine prompt to another user's reply", async () => {
+      await promptRefinement({
+        channel: 'D123', threadTs: '1700000000.000100', statusMsgTs: '1700000000.000110', userId: 'U1', client: mockClient,
+      });
+      await handleMessageEvent({ event: reply('U2', '1700000000.000150'), body: bodyWithEventId('EvRefineOther'), client: mockClient, config, getTables });
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+    });
   });
 });
