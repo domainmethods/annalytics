@@ -2,7 +2,45 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { parseDbtArtifacts } from '../../../src/dbt/parser.js';
 import { loadLocalKnowledgeSummaries } from '../../../scripts/benchmarkInputs.js';
-import { buildArtifacts, TV_ROOT, viewDdl } from '../../../scripts/template-validation/warehouse.js';
+import { buildArtifacts, checkSchemaDrift, TV_ROOT, TV_TABLES, viewDdl } from '../../../scripts/template-validation/warehouse.js';
+
+describe('warehouse schema drift', () => {
+  const modelsYaml = JSON.stringify({
+    models: TV_TABLES.map((name) => ({ name, columns: [{ name: 'id' }, { name: 'created_at' }] })),
+  });
+  const liveColumns = TV_TABLES.flatMap((table) => [
+    { table, column: 'id', dataType: 'INT64' },
+    { table, column: 'created_at', dataType: 'TIMESTAMP' },
+  ]);
+
+  it('reports no drift when all documented columns match the live views', () => {
+    expect(checkSchemaDrift(modelsYaml, liveColumns)).toEqual([]);
+  });
+
+  it('lists each documented column absent from live metadata', () => {
+    const columns = liveColumns.filter(({ table, column }) =>
+      column !== 'created_at' || (table !== 'orders' && table !== 'order_items'),
+    );
+    expect(checkSchemaDrift(modelsYaml, columns)).toEqual([
+      'Missing live column: orders.created_at',
+      'Missing live column: order_items.created_at',
+    ]);
+  });
+
+  it('lists each live column missing from YAML', () => {
+    const columns = [...liveColumns, { table: 'order_items', column: 'sale_price', dataType: 'FLOAT64' }];
+    expect(checkSchemaDrift(modelsYaml, columns)).toEqual(['Undocumented live column: order_items.sale_price']);
+  });
+
+  it('names an expected view with no live rows and lists its missing columns', () => {
+    const columns = liveColumns.filter(({ table }) => table !== 'events');
+    expect(checkSchemaDrift(modelsYaml, columns)).toEqual(expect.arrayContaining([
+      'Missing live view: events',
+      'Missing live column: events.id',
+      'Missing live column: events.created_at',
+    ]));
+  });
+});
 
 describe('template validation warehouse', () => {
   it('round-trips generated artifacts through parseDbtArtifacts', () => {

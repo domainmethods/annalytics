@@ -22,6 +22,21 @@ export function viewDdl(projectId: string, table: string): string {
   return `CREATE OR REPLACE VIEW \`${projectId}.${TV_DATASET}.${table}\` AS SELECT * FROM \`bigquery-public-data.thelook_ecommerce.${table}\``;
 }
 
+export function checkSchemaDrift(modelsYaml: string, columns: Column[]): string[] {
+  const { models } = parse(modelsYaml) as { models: Model[] };
+  const liveTables = new Set(columns.map(({ table }) => table));
+  const liveColumns = new Set(columns.map(({ table, column }) => `${table}.${column}`));
+  const documentedColumns = new Set(models.flatMap(({ name, columns }) =>
+    columns.map((column) => `${name}.${column.name}`),
+  ));
+
+  return [
+    ...TV_TABLES.filter((table) => !liveTables.has(table)).map((table) => `Missing live view: ${table}`),
+    ...[...documentedColumns].filter((column) => !liveColumns.has(column)).map((column) => `Missing live column: ${column}`),
+    ...[...liveColumns].filter((column) => !documentedColumns.has(column)).map((column) => `Undocumented live column: ${column}`),
+  ];
+}
+
 export function buildArtifacts(modelsYaml: string, columns: Column[]) {
   const { models } = parse(modelsYaml) as { models: Model[] };
   const manifest = {
@@ -81,6 +96,13 @@ async function main(): Promise<void> {
     params: { tables: [...TV_TABLES] },
     location,
   });
+
+  const drift = checkSchemaDrift(modelsYaml, columns);
+  if (drift.length > 0) {
+    console.error(['Template validation warehouse schema drift. Artifacts were not written.', ...drift].join('\n'));
+    process.exitCode = 1;
+    return;
+  }
 
   const artifacts = buildArtifacts(modelsYaml, columns);
   for (const [name, artifact] of Object.entries(artifacts)) {
