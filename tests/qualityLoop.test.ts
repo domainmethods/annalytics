@@ -74,6 +74,29 @@ describe('qualityLoop', () => {
     mockReviewSql.mockResolvedValue(passVerdict);
   });
 
+  it('gives the supervisor the original wording and the clarified question (#44)', async () => {
+    await qualityLoop(
+      { ...baseOptions, question: 'How many orders this month?' },
+      'supervisor-key', 'How many orders this month?', 1_000_000, undefined,
+      'How many paid orders this month?',
+    );
+
+    expect(mockGenerateSql).toHaveBeenCalledWith(expect.objectContaining({ question: 'How many orders this month?' }));
+    expect(mockReviewSql).toHaveBeenCalledWith(expect.objectContaining({
+      userQuestion: 'How many paid orders this month?',
+      clarifiedQuestion: 'How many orders this month?',
+    }));
+  });
+
+  it('falls back to the generation question when no original is given', async () => {
+    await qualityLoop(baseOptions, 'supervisor-key', 'total revenue?', 1_000_000);
+
+    expect(mockReviewSql).toHaveBeenCalledWith(expect.objectContaining({
+      userQuestion: baseOptions.question,
+      clarifiedQuestion: 'total revenue?',
+    }));
+  });
+
   // 1. Happy path — pass on first try
   it('returns pass verdict when all checks succeed on first attempt', async () => {
     const result = await qualityLoop(baseOptions, 'supervisor-key', 'total revenue?', 1_000_000);

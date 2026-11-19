@@ -118,6 +118,19 @@ describe('preflightChecks', () => {
     expect(mockGetEscalationByThread).not.toHaveBeenCalled();
   });
 
+  it("echoes the user's own wording when a refinement rewrote the question (#44)", async () => {
+    mockGetClarificationState.mockResolvedValue(pendingClarificationFixture({
+      originalQuestion: 'show me orders by region',
+      supervisorQuestion: 'show me paid orders by region',
+    }));
+
+    await preflightChecks('C123', '1234.5678', mockClient, 'owner');
+
+    const text = JSON.stringify(mockPostMessage.mock.calls[0][0].blocks);
+    expect(text).toContain('show me paid orders by region');
+    expect(text).not.toContain('_show me orders by region_');
+  });
+
   it('returns false and posts message when pending escalation', async () => {
     mockGetEscalationByThread.mockResolvedValue({
       status: 'pending',

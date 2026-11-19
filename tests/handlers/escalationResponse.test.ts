@@ -131,6 +131,18 @@ describe('resumeFromEscalation', () => {
     expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
   });
 
+  it('park_wait: gives the supervisor the user\'s own wording, not the clarified rewrite (#44)', async () => {
+    await resumeFromEscalation({
+      ...baseEscalation,
+      context: { ...baseEscalation.context, userQuestion: 'What is paid revenue?' },
+      humanGuidance: 'Use the proposed SQL',
+    }, mockClient, [], {} as any);
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      question: 'What is revenue? (Data team guidance: Use the proposed SQL)',
+      originalQuestion: 'What is paid revenue? (Data team guidance: Use the proposed SQL)',
+    }));
+  });
+
   it('park_wait: resumes pipeline with human guidance, resolves escalation', async () => {
     mockGetEscalation.mockResolvedValue({ status: 'pending', state: baseEscalation });
     const lookup = await checkEscalationResponse({
@@ -151,6 +163,8 @@ describe('resumeFromEscalation', () => {
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         question: expect.stringContaining('Use LEFT JOIN on user_id'),
+        // The supervisor sees the user's own wording plus the guidance (#44).
+        originalQuestion: 'What is revenue? (Data team guidance: Use LEFT JOIN on user_id)',
         channel: 'C-ORIGINAL',
         threadTs: 'thread-1',
         statusMsgTs: 'status-1',

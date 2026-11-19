@@ -190,6 +190,25 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).not.toHaveBeenCalled();
   });
 
+  it('generates against the clarification but keeps the original wording for review (#44)', async () => {
+    await runPipeline(baseInput);
+
+    const call = mockQualityLoop.mock.calls[0];
+    expect(call[0].question).toBe('What is total revenue from all orders?');
+    expect(call[2]).toBe('What is total revenue from all orders?');
+    expect(call[5]).toBe('What is total revenue?');
+  });
+
+  it('reviews against input.originalQuestion when a resume supplies one (#44)', async () => {
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Data team guidance: x)' });
+
+    expect(mockQualityLoop.mock.calls[0][5]).toBe('What is paid revenue? (Data team guidance: x)');
+    // Persisted so a later refinement reviews against the same wording.
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
+      userQuestion: 'What is paid revenue? (Data team guidance: x)',
+    }));
+  });
+
   it('MEDIUM confidence: includes assumptions in response', async () => {
     mockClassify.mockResolvedValue({
       ...highClarification,
@@ -249,6 +268,20 @@ describe('runPipeline', () => {
       ambiguityDomain: 'revenue',
     }));
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it("LOW confidence: keeps the user's wording in clarification state on a refinement (#44)", async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Refinement: only EMEA)' });
+    expect(mockSaveClarification.mock.calls[0][0]).toMatchObject({
+      originalQuestion: baseInput.question,
+      supervisorQuestion: 'What is paid revenue? (Refinement: only EMEA)',
+    });
+
+    // No rewrite: nothing extra stored (Firestore rejects undefined fields).
+    await runPipeline(baseInput);
+    expect(mockSaveClarification.mock.calls[1][0]).not.toHaveProperty('supervisorQuestion');
   });
 
   it('LOW confidence: scopes the clarification id to the conversation', async () => {
@@ -398,6 +431,32 @@ describe('runPipeline', () => {
     if (layer === 'L4-cost') expect(mockClient.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining('Try narrowing with a date range or specific filter') }),
     );
+  });
+
+  it("escalation state keeps the user's wording on a refinement (#44)", async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, verdict: 'exhausted' });
+    mockDecideEscalation.mockReturnValue({ shouldEscalate: true, behavior: 'park_wait', trigger: 'quality_loop_exhausted' });
+    await runPipeline({
+      ...baseInput,
+      question: 'What is revenue? (Refinement: last week)',
+      originalQuestion: 'What is paid revenue? (Refinement: last week)',
+      config: { ...baseInput.config, escalation: { mode: 'channel', channelId: 'C-ESCALATION', timeoutHours: 4 } },
+    });
+
+    expect(mockSaveEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          userQuestion: 'What is paid revenue? (Refinement: last week)',
+        }),
+      }),
+      4,
+    );
+    expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({ userQuestion: 'What is paid revenue? (Refinement: last week)' }),
+    );
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Anna Lytics needs help with: "What is paid revenue? (Refinement: last week)"',
+    }));
   });
 
   it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {

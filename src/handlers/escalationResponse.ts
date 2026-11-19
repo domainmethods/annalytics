@@ -85,8 +85,12 @@ export async function resumeFromEscalation(
   if (!await claimEscalation(ctx.escalationId)) return;
 
   if (ctx.behavior === 'park_wait') {
+    const guidance = `(Data team guidance: ${ctx.humanGuidance})`;
     await runPipeline({
-      question: `${ctx.context.clarifiedQuestion} (Data team guidance: ${ctx.humanGuidance})`,
+      question: `${ctx.context.clarifiedQuestion} ${guidance}`,
+      // The supervisor must judge against the user's own wording, which the
+      // clarified rewrite may have dropped qualifiers from (#44).
+      originalQuestion: `${ctx.context.userQuestion} ${guidance}`,
       channel: ctx.originalChannel,
       threadTs: ctx.originalThreadTs,
       statusMsgTs: ctx.statusMsgTs,

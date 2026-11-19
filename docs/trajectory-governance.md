@@ -531,3 +531,7 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 ### 2026-11-18 - Conversation-scoped thread state (#30)
 
 - Thread locks, clarifications, escalation guards and response-context lookups are now scoped to the conversation as well as the thread timestamp. WhatsApp passes its conversation id for both, and its saved response contexts now record that owner (WhatsApp document ids are unchanged; they were already conversation-unique). This repairs shared state used by the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic same-timestamp, two-conversation regressions cover the defect.
+
+### 2026-11-18 - Supervisor original-question repair (#44)
+
+The full-path quality loop passed the clarified question to the supervisor twice. Slack, WhatsApp, the benchmark and the node sweep now also pass the user's original wording, which the routine fast path already did. A parked Slack escalation resumed by analyst guidance also gives the supervisor the user's original question plus that guidance, not the clarified rewrite. Slack refinements likewise review against the user's wording, now persisted as an optional `userQuestion` on the response context (legacy records fall back to the clarified question). This repairs an existing trust control on the shipped WhatsApp surface and an existing instrument. The prototype cap, manual acceptance gate and T3 #4 remain unchanged. Synthetic regression tests capture the supervisor input.

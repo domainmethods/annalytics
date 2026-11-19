@@ -89,6 +89,12 @@ export interface PipelineInput {
   tables: TableContext[];
   config: PipelineConfig;
   refinementHint?: { previousSql: string };
+  /**
+   * The user's own wording for the SQL supervisor, when `question` is a
+   * rewritten composite (e.g. an escalation resume built from the clarified
+   * question). Defaults to `question`.
+   */
+  originalQuestion?: string;
 }
 
 export function toPipelineConfig(config: AppConfig): PipelineConfig {
@@ -178,6 +184,7 @@ function extractFallbackTableRefs(
 
 export async function runPipeline(input: PipelineInput): Promise<void> {
   const { question, channel, threadTs, statusMsgTs, client, tables, config } = input;
+  const supervisorQuestion = input.originalQuestion ?? question;
   const traceId = createTraceId();
   const logger = createLogger(traceId);
   const startTime = Date.now();
@@ -260,6 +267,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         threadTs,
         channel,
         originalQuestion: question,
+        // Firestore rejects undefined: only store the wording when it differs.
+        ...(supervisorQuestion !== question ? { supervisorQuestion } : {}),
         ambiguities: clarification.ambiguities,
         ambiguityType: ambiguity.type,
         ambiguityDomain: ambiguity.domain,
@@ -294,6 +303,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel,
         statusMsgTs,
         clarifiedQuestion: resolvedQuestion,
+        userQuestion: supervisorQuestion,
         assumptions: assumptions || [],
         reasoningChain: 'dbt_status route — no SQL generation',
         generatedSql: '',
@@ -367,7 +377,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         executionDefaultProject: config.gcpProjectId,
         enabled: config.fastPath.enabled,
         requireSupervisor: config.fastPath.requireSupervisor,
-        question,
+        question: supervisorQuestion,
         clarifiedQuestion: resolvedQuestion,
         clarificationConfidence: clarification.confidence,
         route: clarification.route,
@@ -460,6 +470,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           onReview: () => updateStatus('Reviewing for accuracy...'),
           onRetry: () => updateStatus('Refining the approach...'),
         },
+        supervisorQuestion,
       );
     }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
@@ -504,9 +515,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       const stuckDescription = failureDiagnostics || qualityResult.supervisorNotes || 'Could not generate a confident answer';
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs help with: "${question}"`,
+        text: `Anna Lytics needs help with: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription,
@@ -523,7 +534,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'sql_generation',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,
@@ -599,6 +610,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       channel,
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
+      userQuestion: supervisorQuestion,
       assumptions: answerAssumptions,
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
@@ -673,9 +685,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     if (shouldEscalateAsync && escalationTarget) {
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs verification: "${question}"`,
+        text: `Anna Lytics needs verification: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription: qualityResult.supervisorNotes || 'Answer needs verification',
@@ -692,7 +704,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'supervisor_review',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,

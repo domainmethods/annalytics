@@ -55,7 +55,8 @@ export async function preflightChecks(
         text: PENDING_CLARIFICATION_TEXT,
         blocks: buildPendingClarificationBlocks({
           clarificationId: pendingClarification.clarificationId,
-          originalQuestion: pendingClarification.originalQuestion,
+          // Echo the user's own wording, not a refinement's rewritten question (#44).
+          originalQuestion: pendingClarification.supervisorQuestion ?? pendingClarification.originalQuestion,
         }) as unknown as KnownBlock[],
       });
       await releaseThreadLock(channel, threadTs, ownerToken);

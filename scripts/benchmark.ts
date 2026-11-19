@@ -264,6 +264,8 @@ async function main() {
         apiKey!,                        // supervisor uses same API key
         clarification.resolved_question || entry.question,
         MAX_BYTES,
+        undefined,
+        entry.question,
       );
       const loopMs = Date.now() - loopStart;
       const totalMs = Date.now() - totalStart;

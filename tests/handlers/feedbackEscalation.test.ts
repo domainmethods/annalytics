@@ -123,12 +123,37 @@ describe('handleFeedbackReason', () => {
     expect(state.context.feedbackReason).toBe('Wrong number');
     expect(state.context.feedbackUserId).toBe('U1');
     expect(state.context.previousSql).toBe('SELECT 1');
+    // Legacy answers without a stored user question fall back to the clarified one.
+    expect(state.context.userQuestion).toBe('unique visitors last month');
     expect(timeoutHours).toBe(4);
 
     expect(respond).toHaveBeenCalledTimes(1);
     expect(respond.mock.calls[0][0].replace_original).toBe(true);
     // Issue #3: the success ack must thread to the original answer, not DM root.
     expect(respond.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
+  });
+
+  it("escalates with the user's stored wording when the answer saved it (#44)", async () => {
+    mockGetResponseContext.mockResolvedValue({
+      ...makeCtx(),
+      userQuestion: 'paid unique visitors last month',
+    } as unknown as ResponseContext);
+    const client = makeClient();
+    await handleFeedbackReason({
+      reasonId: 'wrong_number',
+      compoundKey,
+      userId: 'U1',
+      channel: 'C1',
+      client,
+      respond: vi.fn().mockResolvedValue(undefined),
+      config: makeConfig(),
+    });
+
+    const [state] = mockSaveEscalationState.mock.calls[0];
+    expect(state.context.userQuestion).toBe('paid unique visitors last month');
+    expect(state.context.clarifiedQuestion).toBe('unique visitors last month');
+    expect(JSON.stringify(client.chat.postMessage.mock.calls[0][0].blocks)).toContain('paid unique visitors last month');
+    expect(client.chat.postMessage.mock.calls[0][0].text).toBe('Anna Lytics flagged answer: "paid unique visitors last month"');
   });
 
   it('degrades gracefully when the escalation card posted but the state save fails', async () => {

@@ -9,6 +9,8 @@ interface MessageEvent {
 
 export interface ClarificationReply {
   clarifiedQuestion: string;
+  /** The user's wording plus their answer, for supervisor review (#44). */
+  originalQuestion: string;
   channel: string;
   threadTs: string;
   clarifyingMessageTs: string;
@@ -28,13 +30,17 @@ export async function checkClarificationReply(
   if (!state) return null;
 
   // Merge user reply into clarified question
-  const clarifiedQuestion = `${state.originalQuestion} (Clarification: ${event.text || ''})`;
+  const answer = ` (Clarification: ${event.text || ''})`;
+  const clarifiedQuestion = `${state.originalQuestion}${answer}`;
+  // Legacy docs (and unrewritten questions) carry no separate user wording.
+  const originalQuestion = `${state.supervisorQuestion ?? state.originalQuestion}${answer}`;
 
   // Delete clarification state — it's been answered
   await deleteClarificationState(state.clarificationId);
 
   return {
     clarifiedQuestion,
+    originalQuestion,
     channel: event.channel,
     threadTs,
     clarifyingMessageTs: state.clarifyingMessageTs,
