@@ -21,6 +21,7 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 - Thread leases now use transactional ownership checks, preventing expired-lease contenders and late cleanup from deleting another request's lock. Existing thread keys and five-minute expiry remain unchanged; no operator action is required.
 - Escalation replies and checkmarks now share an atomic resolution claim, and the original thread stays guarded for up to five minutes while a claimed resolution re-runs. Delivery is at most once: interrupted delivery is not retried automatically. If a response is missing, ask a fresh question or contact the data team; resolving records remain available for operator diagnosis until retention expires.
 - Bound stored response schema details for Slack and WhatsApp (#84). Failed context writes preserve delivered answers, and Table/Summary/CSV controls on an answer whose context is missing reply privately instead of overwriting it. No operator action required.
+- Slack answers and escalation cards now stay within Block Kit limits (#33). Oversized result previews and single values are truncated with a note, and oversized previews point to the CSV export. SQL shown in an answer or an escalation is split at line breaks across up to ten sections, about 29,000 characters. Longer SQL ends with an explicit truncation note, and the stored SQL used for re-runs and ✅ confirmation is unchanged.
 
 ## 0.1.0 - 2026-11-18
 
