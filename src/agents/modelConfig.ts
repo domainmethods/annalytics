@@ -64,9 +64,11 @@ const REGISTRY: Record<string, RegisteredModel> = {
     version: '3.5',
     id: 'gemini-3.5-flash',
     thinkingLevels: ['minimal', 'low', 'medium', 'high'],
-    // TODO(price): verify billing now that Google routes this ID to Gemini 3.6 Flash.
-    inputPricePerMTok: 1.50,
-    outputPricePerMTok: 9.00,
+    // TODO(price): verify billing for this ID, which Google routes to Gemini 3.6 Flash.
+    // These Gemini 3.6 Flash rates apply through 2026-12-31.
+    // https://aistudio.google.com/docs/deprecations#gemini-3-models
+    inputPricePerMTok: 0.75,
+    outputPricePerMTok: 3.75,
     status: 'default-eligible',
   },
   'pro/3.1': {

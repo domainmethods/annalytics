@@ -151,6 +151,14 @@ describe('getSupportedThinkingLevels — per-model thinking_level capability', (
     expect(getSupportedThinkingLevels('pro', '3.1')).not.toContain('minimal');
   });
 
+  it('every non-retired model supports the Stage 1 high-thinking anchor', async () => {
+    const { listRegisteredModels, getSupportedThinkingLevels } =
+      await import('../../src/agents/modelConfig.js');
+    for (const { tier, version } of listRegisteredModels()) {
+      expect(getSupportedThinkingLevels(tier, version), `${tier}/${version}`).toContain('high');
+    }
+  });
+
   it('returns an empty set for an unknown coordinate (fail-closed for a non-registry model)', async () => {
     const { getSupportedThinkingLevels } = await import('../../src/agents/modelConfig.js');
     expect(getSupportedThinkingLevels('pro', '3.5')).toEqual([]);
