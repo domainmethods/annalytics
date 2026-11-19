@@ -622,7 +622,7 @@ describe('buildResponseBlocks', () => {
     vi.mocked(buildZeroRowBlocks).mockImplementation(actual.buildZeroRowBlocks);
     const blocks = buildResponseBlocks(
       'zero_rows',
-      { headline: 'h', explanation: 'e', assumptions: ['Excluding test accounts'] } as any,
+      { headline: 'h', explanation: 'e', assumptions: ['Excluding test accounts', 'Excluding test accounts'] } as any,
       { rows: [], columnNames: [], totalRows: 0 } as any,
       'trace-1', 'T1', 'S1', ['Assuming USD', 'Excluding test accounts'],
     );

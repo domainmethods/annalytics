@@ -575,7 +575,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // The generator can add assumptions (currency, population, date reading)
     // the clarifier never made; the answer and its saved context show both.
-    const answerAssumptions = mergeAssumptions(assumptions ?? [], qualityResult.sqlResult.assumptions ?? []);
+    const answerAssumptions = mergeAssumptions(assumptions, qualityResult.sqlResult.assumptions);
     const format = chooseFormat(queryResult);
     const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
 
@@ -813,9 +813,9 @@ export function buildResponseBlocks(
       // The generator's assumptions are listed as the filters applied; show
       // only the remaining ones in the assumptions line so none appears twice.
       return [
-        ...buildZeroRowBlocks(gen.assumptions ?? []),
+        ...buildZeroRowBlocks(mergeAssumptions(gen.assumptions)),
         ...buildAssumptionBlocks(
-          (assumptions ?? []).filter((a) => !(gen.assumptions ?? []).includes(a)),
+          (assumptions ?? []).filter((a) => !gen.assumptions.includes(a)),
           traceId,
         ),
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
