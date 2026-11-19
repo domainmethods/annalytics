@@ -76,9 +76,9 @@ export async function resolveCollisionFreeResultPath(
 
 // The judge attaches corpus expectations (expected tables/fragments) to each result;
 // a corpus file that differs from the one the benchmark ran with would attach the
-// wrong expectations silently, so callers verify the run's recorded hash first.
+// wrong expectations silently, so callers require and verify the run's recorded hash.
 export function corpusHashMatches(corpusRaw: string, recordedHash: string | null | undefined): boolean {
-  if (!recordedHash) return true;
+  if (!recordedHash) return false;
   return sha256(corpusRaw) === recordedHash;
 }
 
