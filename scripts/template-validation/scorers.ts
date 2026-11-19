@@ -29,10 +29,17 @@ export async function scoreChart(spec: ChartSpec | null, item: ChartItem): Promi
   }
 }
 
-const MONTH_NAME = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.source;
-const MONTH_BEFORE = new RegExp(`${MONTH_NAME}[.,]?\\s+$`, 'i');
-const MONTH_AFTER = new RegExp(`^,?\\s+${MONTH_NAME}`, 'i');
+const MONTH_CONTEXT = [
+  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i,
+  /\bMay\b/,
+].map(month => ({
+  before: new RegExp(`${month.source}[.,]?\\s+$`, month.flags),
+  after: new RegExp(`^,?\\s+${month.source}`, month.flags),
+}));
 const NUMBER_SCALES: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
+const ISO_DATE = /(?:19\d{2}|20\d{2}|2100)-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/;
+const NUMBER_CLAIM = /((?:[-+]\$?|\$[-+]?)?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+))(e[+-]?\d+)?([kmb%]?)/;
+const SUMMARY_TOKENS = new RegExp(`(?<![\\w.])(?:${ISO_DATE.source}|${NUMBER_CLAIM.source})(?!\\w|\\.\\d)`, 'gi');
 
 export function scoreSummaryNumbers(summary: string, rows: Record<string, unknown>[]): number {
   if (!summary.trim()) return 0;
@@ -41,30 +48,31 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
     .filter(value => typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))
     .map(Number)
     .filter(Number.isFinite);
-  // ISO dates are single tokens. Bare years are skipped only beside an English month name.
-  const tokens = /(?<![\w.])(?:(?:19\d{2}|20\d{2}|2100)-\d{2}-\d{2}|((?:[-+]\$?|\$[-+]?)?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+))([kmb%]?))(?!\w)/gi;
+  // Skip ISO dates and timestamps whole. Skip bare years beside English months,
+  // with May capitalized. Exponents and suffixes scale the displayed precision.
   let matches = 0;
   let count = 0;
-  for (const match of summary.matchAll(tokens)) {
-    const [token, magnitude, suffix] = match;
+  for (const match of summary.matchAll(SUMMARY_TOKENS)) {
+    const [token, magnitude, exponent = '', suffix] = match;
     if (magnitude === undefined) continue;
     // A signed, grouped, or suffixed number is a value even beside a month name.
     const index = match.index!;
-    if (/^(?:19\d{2}|20\d{2}|2100)$/.test(token) &&
-      (MONTH_BEFORE.test(summary.slice(0, index)) || MONTH_AFTER.test(summary.slice(index + token.length)))) {
+    if (/^(?:19\d{2}|20\d{2}|2100)$/.test(token) && MONTH_CONTEXT.some(({ before, after }) =>
+      before.test(summary.slice(0, index)) || after.test(summary.slice(index + token.length)),
+    )) {
       continue;
     }
 
     count++;
     const displayed = Number(magnitude.replace(/[$,]/g, ''));
-    const scale = NUMBER_SCALES[suffix.toLowerCase()] ?? 1;
+    const scale = Number(`1${exponent}`) * (NUMBER_SCALES[suffix.toLowerCase()] ?? 1);
     const precision = Math.min(magnitude.split('.')[1]?.length ?? 0, 100);
     const matchesValue = (value: number) => Number.isFinite(value) && (
       Math.abs(value - displayed) <= 1e-6 * Math.max(Math.abs(value), Math.abs(displayed)) ||
       Number(value.toFixed(precision)) === displayed
     );
 
-    if (Number.isFinite(displayed) && rowNumbers.some(value =>
+    if (Number.isFinite(displayed) && Number.isFinite(scale) && scale > 0 && rowNumbers.some(value =>
       matchesValue(value / scale) || (suffix === '%' && matchesValue(value * 100)),
     )) matches++;
   }

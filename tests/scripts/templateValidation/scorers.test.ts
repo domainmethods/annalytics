@@ -91,6 +91,29 @@ describe('scoreSummaryNumbers', () => {
     expect(scoreSummaryNumbers('We had 2025 orders.', [])).toBe(0);
   });
 
+  it('ignores ISO timestamps and scores the count that follows', () => {
+    expect(scoreSummaryNumbers('As of 2024-01-15T00:00:00Z, there were 42 orders.', [
+      { orders: 42 },
+    ])).toBe(1);
+    expect(scoreSummaryNumbers('As of 2024-01-15T00:00:00.123-05:00, there were 42 orders.', [
+      { orders: 42 },
+    ])).toBe(1);
+  });
+
+  it('counts a quantity before the verb may and skips the year beside the month May', () => {
+    const summary = 'Of these, 2024 may qualify for refunds, per May 2025 records.';
+    expect(scoreSummaryNumbers(summary, [])).toBe(0);
+    expect(scoreSummaryNumbers(summary, [{ orders: 2024 }])).toBe(1);
+  });
+
+  it('scores scientific notation as one number and rounds on the exponent scale', () => {
+    const summary = 'Revenue was $1.2e6.';
+    expect(scoreSummaryNumbers(summary, [{ revenue: 1200000 }])).toBe(1);
+    expect(scoreSummaryNumbers(summary, [{ revenue: 1 }])).toBe(0);
+    expect(scoreSummaryNumbers(summary, [{ revenue: 1234567 }])).toBe(1);
+    expect(scoreSummaryNumbers('The rate was 1.2E-3.', [{ rate: 0.001234 }])).toBe(1);
+  });
+
   it('scores empty and number-free summaries', () => {
     expect(scoreSummaryNumbers('  ', [])).toBe(0);
     expect(scoreSummaryNumbers('Orders increased.', [])).toBe(1);
