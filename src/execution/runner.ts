@@ -52,16 +52,20 @@ export async function executeQuery(
     rows.push(...(page as Record<string, unknown>[]));
     const total = parseCount(response?.totalRows);
     if (total !== undefined) reportedTotal = total;
-    const stillRunning = response?.jobComplete === false;
-    hasMore = !stillRunning && Boolean(nextQuery?.pageToken);
     const remaining = options.maxRows - rows.length;
-    if (!nextQuery || (!stillRunning && (!hasMore || remaining <= 0))) break;
-    if (Date.now() > deadline) {
-      throw new Error(`The query did not complete before ${options.timeoutMs}ms`);
+    if (response?.jobComplete === false) {
+      // Still running: the API long-polls (~10s) per call, so retry the same
+      // request until the job finishes or the query timeout passes.
+      if (!nextQuery) break;
+      if (Date.now() > deadline) {
+        throw new Error(`Query timeout: did not complete before ${options.timeoutMs}ms`);
+      }
+    } else {
+      hasMore = Boolean(nextQuery?.pageToken);
+      if (!nextQuery || !hasMore || remaining <= 0) break;
     }
-    request = { ...nextQuery, wrapIntegers, maxResults: Math.min(options.maxRows, Math.max(remaining, 1)) };
+    request = { ...nextQuery, wrapIntegers, maxResults: remaining };
   }
-  if (rows.length > options.maxRows) rows.length = options.maxRows;
 
   const [metadata] = await job.getMetadata();
   const stats = metadata.statistics;
@@ -83,8 +87,9 @@ export async function executeQuery(
   };
 }
 
+/** `totalRows` arrives as a decimal string, or is absent. */
 function parseCount(value: unknown): number | undefined {
-  if (value === undefined || value === null || value === '') return undefined;
+  if (value === undefined || value === null) return undefined;
   const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
+  return Number.isFinite(n) ? n : undefined;
 }

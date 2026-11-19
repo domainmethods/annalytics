@@ -116,6 +116,16 @@ describe('executeQuery', () => {
     expect(result.truncated).toBe(false);
   });
 
+  it('gives up on a still-running job after the query timeout with a timeout error', async () => {
+    mockGetQueryResults.mockResolvedValue([[], { maxResults: 1 }, { jobComplete: false }]);
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValueOnce(0).mockReturnValue(31_000);
+
+    await expect(executeQuery('SELECT 1', OPTS)).rejects.toThrow(/timeout/);
+    expect(mockGetQueryResults).toHaveBeenCalledTimes(1);
+    now.mockRestore();
+  });
+
   it('counts returned rows for an uncapped one-row aggregate without a reported total', async () => {
     // Regression: a 1-row COUNT(...) must not be mistaken for an empty result
     // when no total is reported, or chooseFormat renders it as "no results".
