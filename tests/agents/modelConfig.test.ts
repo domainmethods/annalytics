@@ -88,7 +88,7 @@ describe('listRegisteredModels — the sweep enumeration source of truth', () =>
     const { listRegisteredModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
     const models = listRegisteredModels();
     // The whole point of this helper: a sweep that walks it can never cover a
-    // subset. Assert every non-retired 3.x coordinate,
+    // subset. Assert every non-retired registered coordinate,
     // and that each one actually resolves to a model id.
     // Exact order: tier first, then input price, ties in registry order.
     const keys = models.map((m) => `${m.tier}/${m.version}`);
