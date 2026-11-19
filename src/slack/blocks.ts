@@ -1,18 +1,19 @@
 import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
+import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
 /** Display for an empty single-value answer. */
 export const EMPTY_VALUE = '—';
 
-/** Safely format a BigQuery cell value. Order matters: real JS Date before the
- *  `{value}` unwrap, because a Date is an object whose `.value` is undefined and
- *  would otherwise fall through to JSON.stringify and render a quoted ISO string. */
+/** Safely format a BigQuery cell value. A real JS Date renders as ISO; an SDK
+ *  scalar wrapper (BigQueryDate etc.) renders its text; any other object — a
+ *  STRUCT, even one with a `value` field — renders as JSON so no field is lost. */
 export function formatValue(val: unknown): string {
   if (val === null || val === undefined) return '';
   if (val instanceof Date) return val.toISOString();
   if (typeof val === 'object') {
-    const wrapped = (val as { value?: unknown }).value;
-    return wrapped != null ? String(wrapped) : JSON.stringify(val);
+    const wrapped = unwrapBigQueryScalar(val);
+    return wrapped !== undefined ? String(wrapped) : JSON.stringify(val);
   }
   return String(val);
 }

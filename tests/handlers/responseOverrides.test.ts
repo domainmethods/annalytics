@@ -299,6 +299,21 @@ describe('handleCsvOverride with BigQuery Date objects', () => {
     // Should NOT contain [object Object]
     expect(csv).not.toContain('[object Object]');
   });
+
+  it('keeps every field of a STRUCT with a value field (#67)', async () => {
+    mockExecute.mockResolvedValue({
+      rows: [{ day: { value: '2025-01-15' }, duration: { value: 4, unit: 'hours' } }],
+      columnNames: ['day', 'duration'],
+      totalRows: 1,
+      bytesProcessed: 1024,
+      truncated: false,
+    });
+
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', csvCurrentBlocks, mockClient, overrideConfig);
+
+    const csv = Buffer.from(mockClient.filesUploadV2.mock.calls[0][0].file).toString();
+    expect(csv.split('\n')[1]).toBe('2025-01-15,"{""value"":4,""unit"":""hours""}"');
+  });
 });
 
 describe('handleCsvOverride upload failure', () => {

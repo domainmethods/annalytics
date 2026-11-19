@@ -56,6 +56,21 @@ describe('saveSampleRows', () => {
       }),
     );
   });
+
+  it('keeps a STRUCT with a value field intact next to a date wrapper (#67)', async () => {
+    const result: SampleRowResult = {
+      tableName: 'analytics.sessions',
+      rows: [{ day: new BigQueryDate('2026-06-21'), duration: { value: 4, unit: 'hours' } }],
+    };
+
+    await saveSampleRows(result);
+
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: [{ day: '2026-06-21', duration: { value: 4, unit: 'hours' } }],
+      }),
+    );
+  });
 });
 
 describe('getSampleRows', () => {
