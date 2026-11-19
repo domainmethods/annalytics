@@ -108,3 +108,34 @@ describe('concurrent admission', () => {
     expect(stored!.queryCount).toBe(scenario === 'last slot' ? 30 : 2);
   });
 });
+
+describe('transaction retries and failures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns the final attempt result when Firestore retries the transaction', async () => {
+    const windowStart = { toDate: () => new Date() };
+    // Attempt 1 sees a free slot; Firestore discards it on contention and
+    // re-runs the callback, which now sees the slot already taken.
+    mockDocGet
+      .mockResolvedValueOnce({ exists: true, data: () => ({ queryCount: 29, windowStart }) })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ queryCount: 30, windowStart }) });
+    const noopTx = { get: mockDocGet, set: () => undefined, update: () => undefined };
+    mockRunTransaction.mockImplementationOnce(async (callback) => {
+      await callback(noopTx); // discarded attempt
+      return callback(noopTx);
+    });
+
+    const result = await checkRateLimit('user-123', 30);
+    expect(result.allowed).toBe(false);
+  });
+
+  it('propagates a transaction failure instead of admitting the request', async () => {
+    mockRunTransaction.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('aborted'), { code: 10 });
+    });
+
+    await expect(checkRateLimit('user-123', 30)).rejects.toThrow('aborted');
+  });
+});
