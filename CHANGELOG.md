@@ -105,7 +105,9 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 - **Action required — INT64 results (#104):** unsafe INT64 values retain exact
   decimal strings, including nested results. Consumers of query results should
   allow strings for integers outside the JavaScript safe range.
-- BigQuery execution timeout now reaches job configuration (#96).
+- **Action required — query timeout (#96):** the configured `QUERY_TIMEOUT_MS`
+  now reaches BigQuery job configuration as a number and is enforced; long
+  queries may now terminate at that limit. Review the value before updating.
 - Terraform Secret Manager automatic-replication syntax now parses (#97).
 
 PR references: https://github.com/domainmethods/annalytics/pulls?q=is%3Apr+is%3Amerged

@@ -508,6 +508,6 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
   history, plus implementation sync and maintainer release instructions. No tag
   or release is created by this change. This is template trust maintenance, not
   a product tranche; existing gates and deferred work remain in force.
-- Evidence: merged PRs #98–#107 and git history; changelog notes identify operator
+- Evidence: merged PRs #96–#107, #111–#117 and #119, and git history; changelog notes identify operator
   actions for validation, admission, deployment billing, ingestion, sampling,
   and corrected acceptance semantics. No implementation evidence is included.
