@@ -101,10 +101,21 @@ export async function executeTemplateSql(sql: string, projectId: string) {
   }
 }
 
+const shellEnv = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM',
+  'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS'];
+const loginEnv: Record<LabelerConfig['outputParser'], string[]> = {
+  'claude-json': ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+  'codex-jsonl': ['CODEX_HOME', 'CODEX_API_KEY', 'OPENAI_API_KEY'],
+  'agy-json': [],
+  'gemini-json': ['GEMINI_CLI_HOME', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+};
+
 async function main(): Promise<void> {
-  // Keep values loaded for BigQuery from being inherited by the agent CLIs.
-  const env = { ...process.env };
-  const spawn: SpawnFn = (cmd, args, { cwd, timeoutMs }) => new Promise(resolve => {
+  // Read CLI login settings from the shell before loading the application's dotenv.
+  const shell = { ...process.env };
+  const spawn: SpawnFn = (cmd, args, { cwd, timeoutMs, outputParser }) => new Promise(resolve => {
+    const env = Object.fromEntries([...shellEnv, ...loginEnv[outputParser]].map(key => [key, shell[key]]));
     execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) =>
       resolve({ stdout, code: error ? 1 : 0 }));
   });

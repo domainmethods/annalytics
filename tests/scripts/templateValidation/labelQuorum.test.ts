@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '../../../scripts/template-validation/label-quorum.js';
 import * as runner from '../../../src/execution/runner.js';
@@ -146,7 +147,7 @@ it('records reduced quorum and reported models for two families', async () => {
   const result = await run();
   expect(result).toMatchObject({
     version, createdAt: '2026-11-18T12:00:00.000Z', quorumKind: 'reduced', reducedQuorum: true, singleFamily: false,
-    members: labelers.map(({ id, family, model }) => ({ id, family, requestedModel: model, reportedModels: ['reported-model'] })),
+    members: labelers.map(({ id, family, model, isolation }) => ({ id, family, isolation, requestedModel: model, reportedModels: ['reported-model'] })),
     perNode: { slackIntake: { drafted: 1, accepted: 1, quarantined: 0, dropRateByCategory: { simple: 0 } } },
   });
   expect(JSON.parse(readFileSync(join(root, 'provenance.json'), 'utf8'))).toEqual(result);
@@ -463,4 +464,38 @@ it('aborts when a closed-set node has a positive remaining target and no unanimo
   await expect(run({ targetCounts: { slackIntake: 2 } })).rejects.toThrow(/slackIntake.*quorum/i);
   expect(readFileSync(itemPath, 'utf8')).toBe(itemBytes);
   expect(existsSync(join(root, 'provenance.json'))).toBe(false);
+});
+
+it('strips workload credentials from real CLI subprocesses while preserving their own login', () => {
+  const configDir = join(root, 'benchmarks', 'template-validation');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, 'labelers.json'), JSON.stringify([labelers[0]]));
+  const credentialNames = [
+    'GOOGLE_APPLICATION_CREDENTIALS', 'CLOUDSDK_CONFIG', 'GOOGLE_CLOUD_PROJECT', 'GCLOUD_PROJECT', 'GCP_PROJECT_ID',
+    'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'SLACK_BOT_TOKEN', 'WHATSAPP_ACCESS_TOKEN', 'DBT_WEBHOOK_SECRET',
+    'AWS_ACCESS_KEY_ID', 'OPENAI_API_KEY',
+  ];
+  const names = ['HOME', 'CLAUDE_CODE_OAUTH_TOKEN', ...credentialNames];
+  const observedPath = join(root, 'env.json');
+  writeFileSync(join(root, 'claude'), [
+    `#!${process.execPath}`,
+    `require('node:fs').writeFileSync(${JSON.stringify(observedPath)}, JSON.stringify(Object.fromEntries(`,
+    `  ${JSON.stringify(names)}.map(name => [name, process.env[name]])`,
+    ')));',
+    "console.log('fake CLI version');",
+  ].join('\n'), { mode: 0o700 });
+
+  const result = spawnSync(process.execPath, [
+    '--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/template-validation/label-quorum.ts'),
+  ], {
+    cwd: root, encoding: 'utf8',
+    env: {
+      ...Object.fromEntries(credentialNames.map(name => [name, 'synthetic-credential'])),
+      PATH: root, HOME: root, CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-cli-login',
+    },
+  });
+  expect(result.stderr).toContain('--allow-single-family');
+  expect(JSON.parse(readFileSync(observedPath, 'utf8'))).toEqual({
+    HOME: root, CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-cli-login',
+  });
 });

@@ -31,7 +31,7 @@ export interface Provenance {
   reducedQuorum: boolean;
   singleFamily: boolean;
   drafter: string;
-  members: { id: string; family: string; cliVersion: string; requestedModel: string; reportedModels: string[] }[];
+  members: { id: string; family: string; cliVersion: string; requestedModel: string; reportedModels: string[]; isolation?: string }[];
   perNode: Record<string, { drafted: number; accepted: number; quarantined: number; dropRateByCategory: Record<string, number> }>;
 }
 
@@ -449,6 +449,7 @@ export async function runLabelQuorum(
     members: members.map(member => ({
       id: member.id, family: member.family, requestedModel: member.model,
       cliVersion: usable.find(cfg => cfg.id === member.id)?.cliVersion ?? 'unknown',
+      isolation: member.isolation,
       reportedModels: [...(client.reportedModels.get(member.id) ?? [])].sort(),
     })),
   };

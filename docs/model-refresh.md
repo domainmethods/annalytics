@@ -7,6 +7,8 @@ Use the frozen set in `benchmarks/template-validation/` to review template defau
 
    On the first run from the seed-only checkout, run `npm run tv:label` after setup to build the initial set. Use authenticated local agent CLIs and a BigQuery labeling principal with job creation permission and data access scoped to the template views and the public TheLook dataset. Labels require unanimous agreement. The default is three distinct families. Two produce a reduced quorum, and one requires `npm run tv:label -- --allow-single-family`. Multiple CLIs from the same family count once.
 
+   Each labeler runs in a temporary working directory with an allowlist of shell and CLI login variables. It still runs as the operator, with access to its home directory and any tools its CLI permits. The probe notes in `provenance.json` record that access. For example, Antigravity wrote outside the working directory in its probe, and Codex called MCP discovery tools.
+
    Before sweeping, verify that `benchmarks/template-validation/items/<node>.jsonl` exists and has items for each of the 12 nodes in `NODE_IDS` (`src/agents/nodeProfiles.ts`). Check that `benchmarks/template-validation/provenance.json` exists and its `version` matches the trimmed contents of `benchmarks/template-validation/VERSION`. Later refreshes reuse the completed frozen set. Relabel only when the set version changes.
 
 3. Clear `MODEL_ID_OVERRIDES` and `NODE_PROFILE_OVERRIDES` from both the shell environment and the local `.env`, then run `npm run sweep:template`. It runs `node-sweep --corpus template` for all 12 nodes using the frozen set and writes `benchmarks/results/<date>-model-refresh.md` and `benchmarks/results/<date>-model-refresh.json` locally.

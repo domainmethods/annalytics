@@ -47,7 +47,7 @@ interface LabelerOutput {
 export type SpawnFn = (
   cmd: string,
   args: string[],
-  opts: { cwd: string; timeoutMs: number },
+  opts: { cwd: string; timeoutMs: number; outputParser: LabelerConfig['outputParser'] },
 ) => Promise<{ stdout: string; code: number }>;
 
 export function loadLabelers(path = 'benchmarks/template-validation/labelers.json'): LabelerConfig[] {
@@ -280,7 +280,7 @@ export async function runLabeler(
     const schemaJson = JSON.stringify(batch.schema);
     await writeFile(schemaPath, schemaJson);
     const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
-    const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000 });
+    const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });
     if (code !== 0) throw new LabelerOutputError(`${cfg.id} exited with code ${code}`);
     result = parseLabelerOutput(cfg.outputParser, stdout);
     validate(result.value);
@@ -305,7 +305,7 @@ export async function checkAvailable(
 ): Promise<{ ok: boolean; version?: string }> {
   if (cfg.enabled === false) return { ok: false };
   try {
-    const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: await externalTempRoot(), timeoutMs: 10_000 });
+    const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: await externalTempRoot(), timeoutMs: 10_000, outputParser: cfg.outputParser });
     return code === 0 ? { ok: true, version: stdout.trim() } : { ok: false };
   } catch {
     return { ok: false };
