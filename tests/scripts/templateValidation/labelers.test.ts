@@ -40,14 +40,14 @@ it('substitutes tokens once and appends effort arguments', () => {
 });
 
 it.each([
-  ['claude', 'claude-json', 'claude-fable-5-2'],
-  ['codex', 'codex-jsonl', undefined],
-  ['agy', 'agy-json', undefined],
-  ['gemini', 'gemini-json', 'gemini-3.1-pro-preview'],
-] as const)('parses the %s fixture using its configured parser', (id, parser, reportedModel) => {
+  ['claude', 'claude-json', 'claude-fable-5-2', 'ok'],
+  ['codex', 'codex-jsonl', undefined, 'ok'],
+  ['agy', 'agy-json', undefined, 'answer=ok'],
+  ['gemini', 'gemini-json', 'gemini-3.1-pro-preview', 'ok'],
+] as const)('parses the %s fixture using its configured parser', (id, parser, reportedModel, answer) => {
   expect(loadLabelers().find((labeler) => labeler.id === id)?.outputParser).toBe(parser);
   const stdout = readFileSync(new URL(`../../fixtures/labeler-output/${id}.txt`, import.meta.url), 'utf8');
-  expect(parseLabelerOutput(parser, stdout)).toEqual({ value: { answer: 'ok' }, reportedModel });
+  expect(parseLabelerOutput(parser, stdout)).toEqual({ value: { answer }, reportedModel });
 });
 
 it.each(['claude-json', 'codex-jsonl', 'agy-json', 'gemini-json'] as const)(
@@ -112,4 +112,40 @@ it('does not probe or run the disabled Gemini CLI', async () => {
   expect(await checkAvailable(gemini, spawn)).toEqual({ ok: false });
   await expect(runLabeler(gemini, batch, spawn, cacheDir)).rejects.toThrow(/disabled/i);
   expect(spawn).not.toHaveBeenCalled();
+});
+
+const codexConfig = { ...cfg, id: 'codex', family: 'openai', outputParser: 'codex-jsonl' } as const;
+const closedSchema = { ...schema, additionalProperties: false };
+
+it.each([
+  ['open root', schema, '#'],
+  ['missing required property', { ...closedSchema, required: [] }, '#'],
+  ['open array item', {
+    ...closedSchema,
+    properties: { answer: { type: 'array', items: schema } },
+  }, '#/properties/answer/items'],
+  ['open referenced definition', {
+    ...closedSchema,
+    properties: { answer: { $ref: '#/$defs/answer' } },
+    $defs: { answer: schema },
+  }, '#/$defs/answer'],
+  ['open union branch', {
+    ...closedSchema,
+    properties: { answer: { anyOf: [{ type: 'string' }, schema] } },
+  }, '#/properties/answer/anyOf/1'],
+] as const)('refuses a Codex schema with %s before spawn', async (_case, invalidSchema, path) => {
+  const spawn = vi.fn(async () => success);
+  const pending = runLabeler(codexConfig, { ...batch, schema: invalidSchema }, spawn, cacheDir);
+  await expect(pending).rejects.toBeInstanceOf(LabelerOutputError);
+  await expect(pending).rejects.toThrow(`Codex strict schema at ${path}`);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it('passes a compatible Codex schema through unchanged', async () => {
+  const stdout = readFileSync(new URL('../../fixtures/labeler-output/codex.txt', import.meta.url), 'utf8');
+  const result = await runLabeler(codexConfig, { ...batch, schema: closedSchema }, async (_cmd, args) => {
+    expect(JSON.parse(readFileSync(args[1], 'utf8'))).toEqual(closedSchema);
+    return { stdout, code: 0 };
+  }, cacheDir);
+  expect(result).toMatchObject({ value: { answer: 'ok' }, cached: false });
 });

@@ -126,6 +126,48 @@ export function parseLabelerOutput(parser: LabelerConfig['outputParser'], stdout
   return output(parseJson(envelope.response), envelope.model ?? (models.length === 1 ? models[0] : undefined));
 }
 
+function assertCodexStrictSchema(schema: unknown, path = '#'): void {
+  if (Array.isArray(schema)) {
+    schema.forEach((child, index) => assertCodexStrictSchema(child, `${path}/${index}`));
+    return;
+  }
+  if (schema === null || typeof schema !== 'object') return;
+
+  const node = schema as Record<string, unknown>;
+  const objectKeywords = [
+    'properties', 'required', 'additionalProperties', 'patternProperties', 'propertyNames',
+    'minProperties', 'maxProperties', 'dependentRequired', 'dependentSchemas', 'dependencies', 'unevaluatedProperties',
+  ];
+  if (node.type === 'object' || (Array.isArray(node.type) && node.type.includes('object')) ||
+      objectKeywords.some((keyword) => Object.hasOwn(node, keyword))) {
+    const properties = Object.keys(node.properties ?? {});
+    const required = node.required;
+    if (node.additionalProperties !== false || !Array.isArray(required) ||
+        required.length !== properties.length || properties.some((key) => !required.includes(key))) {
+      throw new LabelerOutputError(
+        `Codex strict schema at ${path} requires additionalProperties: false and a required array listing every property exactly once`,
+      );
+    }
+  }
+
+  // Visit schema locations only. Examples and defaults can contain arbitrary objects.
+  for (const keyword of ['properties', '$defs', 'definitions', 'patternProperties', 'dependentSchemas', 'dependencies']) {
+    const children = node[keyword];
+    if (children && typeof children === 'object') {
+      for (const [key, child] of Object.entries(children)) {
+        const segment = key.replaceAll('~', '~0').replaceAll('/', '~1');
+        assertCodexStrictSchema(child, `${path}/${keyword}/${segment}`);
+      }
+    }
+  }
+  for (const keyword of [
+    'items', 'prefixItems', 'additionalItems', 'contains', 'additionalProperties', 'unevaluatedItems',
+    'unevaluatedProperties', 'propertyNames', 'anyOf', 'allOf', 'oneOf', 'not', 'if', 'then', 'else', 'contentSchema',
+  ]) {
+    assertCodexStrictSchema(node[keyword], `${path}/${keyword}`);
+  }
+}
+
 export async function runLabeler(
   cfg: LabelerConfig,
   batch: { prompt: string; schema: object; cacheKey: string },
@@ -133,6 +175,7 @@ export async function runLabeler(
   cacheDir: string,
 ): Promise<LabelerOutput & { cached: boolean }> {
   if (cfg.enabled === false) throw new LabelerOutputError(`${cfg.id} is disabled`);
+  if (cfg.outputParser === 'codex-jsonl') assertCodexStrictSchema(batch.schema);
   const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
     cacheSegment.parse(batch.cacheKey) + '.json');
   const validator = z.fromJSONSchema({ ...batch.schema });
