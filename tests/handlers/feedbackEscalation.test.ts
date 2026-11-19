@@ -246,11 +246,11 @@ describe('handleFeedbackReason', () => {
     expect(respond).not.toHaveBeenCalled(); // modal opening replaces the ack
   });
 
-  it('degrades to the record-only ack when opening the Other-note modal fails', async () => {
+  it('says the form failed and keeps the reason buttons when opening the Other-note modal fails', async () => {
     // trigger_id is valid for ~3s; views.open also fails on any Slack API error.
     // An unguarded throw leaves the user with no acknowledgement, so the handler
-    // must log and fall back to the same record-only ack it would have given
-    // without the modal — never a silent drop.
+    // must log and tell the user honestly (nothing was saved), keeping the
+    // reason buttons so a fresh click can retry — never a silent drop.
     const viewsOpen = vi.fn().mockRejectedValue(new Error('expired_trigger_id'));
     const respond = vi.fn().mockResolvedValue(undefined);
     const client = { views: { open: viewsOpen }, chat: {} } as any;
@@ -263,11 +263,24 @@ describe('handleFeedbackReason', () => {
     ).resolves.toBeUndefined();
 
     expect(viewsOpen).toHaveBeenCalledTimes(1);
-    // Degrade fired with the record-only ack.
     expect(respond).toHaveBeenCalledTimes(1);
-    expect(respond.mock.calls[0][0]).toEqual({
+    const msg = respond.mock.calls[0][0];
+    expect(msg).toMatchObject({ replace_original: true, thread_ts: 'T1' });
+    expect(msg.text).toContain("couldn't open the note form");
+    expect(msg.text).not.toContain('logged this for review');
+    const actions = msg.blocks.find((b: any) => b.type === 'actions');
+    expect(actions.elements.map((e: any) => e.action_id)).toContain('fb_reason_other');
+  });
+
+  it('acks "Other" without a triggerId neutrally, claiming nothing was saved', async () => {
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'other', compoundKey: 'T1_S1', userId: 'U1', channel: 'C1',
+      client: { chat: {} } as any, respond, config: {} as any,
+    });
+    expect(respond).toHaveBeenCalledWith({
       replace_original: true,
-      text: 'Thanks — noted. I logged this for review.',
+      text: 'Thanks for the feedback.',
       thread_ts: 'T1',
     });
   });
@@ -392,7 +405,7 @@ describe('handleOtherNoteSubmission', () => {
     },
   );
 
-  it('still acks when saveFeedbackNote throws (save failure does not short-circuit ack)', async () => {
+  it('tells the user the save failed (not "logged") when saveFeedbackNote throws', async () => {
     mockSaveFeedbackNote.mockRejectedValue(new Error('firestore down'));
     const postEphemeral = vi.fn().mockResolvedValue({});
     const client = { chat: { postEphemeral } } as any;
@@ -405,7 +418,10 @@ describe('handleOtherNoteSubmission', () => {
       }),
     ).resolves.toBeUndefined();
     expect(mockSaveFeedbackNote).toHaveBeenCalled();
-    expect(postEphemeral).toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledTimes(1);
+    const { text } = postEphemeral.mock.calls[0][0];
+    expect(text).toContain("couldn't save your note");
+    expect(text).not.toContain('logged this for review');
   });
 
   it('does not throw on non-JSON private_metadata (logs and returns)', async () => {

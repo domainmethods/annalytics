@@ -14,6 +14,10 @@ import { buildOtherNoteModal } from '../slack/feedbackModals.js';
 import { saveFeedbackNote, type FeedbackNote } from '../state/feedbackNotes.js';
 import { rootLogger } from '../logging.js';
 
+/** Shown when the "Other" note modal fails to open; the reason buttons are re-rendered for a retry. */
+const OTHER_FORM_FAILED_MESSAGE =
+  "Sorry — I couldn't open the note form. Click *Other* again to retry.";
+
 /**
  * Shown when we can no longer reconstruct an answer's details (malformed
  * compound key, evicted ResponseContext, or a failed escalation-state write
@@ -96,23 +100,29 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     } catch (err) {
       // trigger_id is valid for ~3s; views.open also throws on any Slack API
       // error. An uncaught rejection leaves the user with no acknowledgement.
-      // Mirror the escalate path's log-and-degrade idiom: log identifiers only,
-      // then fall through to the same record-only ack the user would have gotten
-      // without the modal — never a silent drop.
+      // Log identifiers only, then say honestly that the form didn't open and
+      // keep the reason buttons so a fresh click (new trigger_id) can retry.
+      // Nothing was saved, so never claim the note was logged.
       rootLogger.error(
         { error: (err as Error).message, channel, compoundKey },
         'feedback.other_note.modal_open_failed',
       );
-      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+      await respond({
+        replace_original: true,
+        text: OTHER_FORM_FAILED_MESSAGE,
+        blocks: buildFeedbackReasonBlocks(compoundKey, OTHER_FORM_FAILED_MESSAGE),
+        thread_ts: earlyThreadTs,
+      } as any);
       return;
     }
   }
 
   const reason = feedbackReasonById(reasonId);
 
-  // Unknown reason id → treat as record-only.
+  // Unknown reason id → treat as record-only. Nothing is persisted on this
+  // path, so the ack must not claim anything was recorded or logged.
   if (!reason || reason.route === 'record') {
-    await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+    await respond({ replace_original: true, text: 'Thanks for the feedback.', thread_ts: earlyThreadTs } as any);
     return;
   }
 
@@ -287,14 +297,19 @@ export async function handleOtherNoteSubmission(
   if (ctx?.clarifiedQuestion !== undefined) note.clarifiedQuestion = ctx.clarifiedQuestion;
   if (ctx?.traceId !== undefined) note.traceId = ctx.traceId;
 
+  // Only claim the note was logged when the write actually succeeded; on a
+  // failed write, say so honestly so the user can resubmit.
+  let ackText: string;
   try {
     await saveFeedbackNote(note);
     rootLogger.info({ userId, traceId: ctx?.traceId, threadTs }, 'feedback.other_note.saved');
+    ackText = 'Thanks — noted. I logged this for review.';
   } catch (err) {
     rootLogger.error(
       { error: (err as Error).message, userId, threadTs },
       'feedback.other_note.save_failed',
     );
+    ackText = "Sorry — I couldn't save your note. Click *Other* again to reopen the form and resubmit it.";
   }
 
   await client.chat
@@ -302,7 +317,7 @@ export async function handleOtherNoteSubmission(
       channel,
       user: userId,
       thread_ts: threadTs,
-      text: 'Thanks — noted. I logged this for review.',
+      text: ackText,
     })
     .catch((err) =>
       rootLogger.warn(
