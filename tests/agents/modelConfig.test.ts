@@ -135,6 +135,11 @@ describe('getSupportedThinkingLevels — per-model thinking_level capability', (
     }
   });
 
+  it('reports flash/3.8 does NOT support `minimal`', async () => {
+    const { getSupportedThinkingLevels } = await import('../../src/agents/modelConfig.js');
+    expect(getSupportedThinkingLevels('flash', '3.8')).toEqual(['low', 'medium', 'high']);
+  });
+
   it('omits `default` from the discrete set — it is the omit-thinkingConfig sentinel, universally safe', async () => {
     const { getSupportedThinkingLevels } = await import('../../src/agents/modelConfig.js');
     for (const [tier, version] of [['pro', '3.1'], ['flash-lite', '3.1']] as const) {
