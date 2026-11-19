@@ -4,10 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Ajv, { type ValidateFunction } from 'ajv';
-import Ajv2020 from 'ajv/dist/2020.js';
-import AjvDraft4 from 'ajv-draft-04';
-import addFormats from 'ajv-formats';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 
 const cacheSegment = z.string().regex(/^[\w-][\w.-]*$/);
@@ -195,52 +192,6 @@ function assertCodexStrictSchema(node: Record<string, unknown>, path: string): v
   }
 }
 
-// Keep Zod's former JSON Schema checks for formats that ajv-formats lacks.
-const zodResponseFormats = {
-  guid: z.uuid(),
-  mac: z.mac(),
-  cidr: z.cidrv4(),
-  'cidr-v6': z.cidrv6(),
-  base64: z.base64(),
-  base64url: z.base64url(),
-  e164: z.e164(),
-  jwt: z.jwt(),
-  emoji: z.emoji(),
-  nanoid: z.nanoid(),
-  cuid: z.cuid(),
-  cuid2: z.cuid2(),
-  ulid: z.ulid(),
-  xid: z.xid(),
-  ksuid: z.ksuid(),
-};
-
-function compileResponseSchema(schema: Record<string, unknown>): ValidateFunction {
-  // Ajv throws for unknown formats in 'log' mode and only logs unknown keywords.
-  const options = { strict: false, strictSchema: 'log', logger: false, allowMatchingProperties: true, ownProperties: true } as const;
-  const dialect = schema.$schema;
-  const ajv = dialect === 'http://json-schema.org/draft-04/schema#' ? new AjvDraft4(options)
-    : dialect === 'http://json-schema.org/draft-07/schema#' ? new Ajv(options)
-      : new Ajv2020(options);
-  addFormats(ajv);
-  for (const [format, definition] of Object.entries(ajv.formats)) {
-    if (definition === true) ajv.formats[format] = undefined;
-  }
-  for (const [format, check] of Object.entries(zodResponseFormats)) {
-    ajv.addFormat(format, (value: string) => check.safeParse(value).success);
-  }
-  let validator: ValidateFunction;
-  try {
-    validator = ajv.compile(schema);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new LabelerOutputError(`Invalid response schema: ${message}`, { cause: error });
-  }
-  if ('$async' in validator && validator.$async) {
-    throw new LabelerOutputError('Async response schemas are unsupported');
-  }
-  return validator;
-}
-
 async function externalTempRoot(): Promise<string> {
   const [checkout, tempRoot] = await Promise.all([
     realpath(fileURLToPath(new URL('../../', import.meta.url))),
@@ -255,12 +206,12 @@ async function externalTempRoot(): Promise<string> {
 
 export async function runLabeler(
   cfg: LabelerConfig,
-  batch: { prompt: string; schema: object; cacheKey: string },
+  batch: { prompt: string; schema: z.ZodType; cacheKey: string },
   spawn: SpawnFn,
   cacheDir: string,
 ): Promise<LabelerOutput & { cached: boolean }> {
   if (cfg.enabled === false) throw new LabelerOutputError(`${cfg.id} is disabled`);
-  const schema = { ...batch.schema } as Record<string, unknown>;
+  const schema = z.toJSONSchema(batch.schema);
   if (cfg.outputParser === 'codex-jsonl') {
     if (schema.type !== 'object' || Object.hasOwn(schema, 'anyOf')) {
       throw new LabelerOutputError('Codex strict schema root must be an object without anyOf');
@@ -269,9 +220,12 @@ export async function runLabeler(
   }
   const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
     cacheSegment.parse(batch.cacheKey) + '.json');
-  const validator = compileResponseSchema(schema);
   const validate = (value: unknown) => {
-    if (!validator(value)) throw new LabelerOutputError('Response did not match the batch schema');
+    const parsed = batch.schema.safeParse(value);
+    // Zod strips unknown object keys by default. The emitted schema rejects them.
+    if (!parsed.success || !isDeepStrictEqual(value, parsed.data)) {
+      throw new LabelerOutputError('Response did not match the batch schema');
+    }
   };
 
   const cached = await readFile(cachePath, 'utf8').catch((err: NodeJS.ErrnoException) => {
@@ -289,7 +243,7 @@ export async function runLabeler(
   let result: LabelerOutput;
   try {
     const schemaPath = join(cwd, 'schema.json');
-    const schemaJson = JSON.stringify(batch.schema);
+    const schemaJson = JSON.stringify(schema);
     await writeFile(schemaPath, schemaJson);
     const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
     const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });

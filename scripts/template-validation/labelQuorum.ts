@@ -71,7 +71,7 @@ function createLabelClient(deps: LabelRunDeps, version: string) {
       .update(JSON.stringify([PROMPT_VERSION, node, batch, inputs.map(hashItemInput), prompt]))
       .digest('hex');
     const spawn = deps.spawn ?? (() => { throw new Error('A labeler spawn function is required on a cache miss'); });
-    const response = await deps.runLabeler(cfg, { prompt, schema: z.toJSONSchema(schema), cacheKey },
+    const response = await deps.runLabeler(cfg, { prompt, schema, cacheKey },
       spawn, cacheDir);
     if (response.reportedModel) {
       const models = reportedModels.get(cfg.id) ?? new Set<string>();

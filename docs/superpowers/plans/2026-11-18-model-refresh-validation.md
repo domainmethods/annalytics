@@ -233,7 +233,7 @@ gets an injected `runCorpusOnce` whose `PerEntry` values come from deterministic
   export function buildArgv(cfg: LabelerConfig, vars: { prompt: string; schemaPath: string; schemaJson: string }): string[];
   export function parseLabelerOutput(parser: LabelerConfig['outputParser'], stdout: string): { value: unknown; reportedModel?: string };
   export type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; timeoutMs: number }) => Promise<{ stdout: string; code: number }>;
-  export async function runLabeler(cfg: LabelerConfig, batch: { prompt: string; schema: object; cacheKey: string }, spawn: SpawnFn, cacheDir: string): Promise<{ value: unknown; reportedModel?: string; cached: boolean }>;
+  export async function runLabeler(cfg: LabelerConfig, batch: { prompt: string; schema: z.ZodType; cacheKey: string }, spawn: SpawnFn, cacheDir: string): Promise<{ value: unknown; reportedModel?: string; cached: boolean }>;
   export async function checkAvailable(cfg: LabelerConfig, spawn: SpawnFn): Promise<{ ok: boolean; version?: string }>;
   ```
   `labelers.json` defaults (re-verify each with `<cli> --help`):
@@ -242,7 +242,7 @@ gets an injected `runCorpusOnce` whose `PerEntry` values come from deterministic
   - agy: `agy -p {prompt} --output-format json --json-schema {schemaPath} --mode plan --model {model}`
   - gemini: `gemini -p {prompt} -o json --approval-mode plan -m {model}`
   `effortArgs` defaults: verify at build time with each CLI's `--help` (e.g. codex `-c model_reasoning_effort="high"`). Where a CLI has no such flag, pick the model id that implies maximum thinking and leave `effortArgs: []`; record it in `labelers.json`.
-  `runLabeler` creates a fresh `mkdtemp` dir, writes only `schema.json` there, uses it as `cwd`, deletes it afterwards, and validates `value` against `schema` with zod's `fromJSONSchema` or an equivalent JSON-schema check. A non-zero exit or invalid output throws `LabelerOutputError`. Cache: `<cacheDir>/<labelerId>/<model>/<cacheKey>.json`.
+  `runLabeler` creates a fresh `mkdtemp` dir, writes only `schema.json` there, uses it as `cwd`, deletes it afterwards, and validates fresh and cached values against the source Zod schema. It emits JSON Schema for the CLI and checks Codex strict-schema compatibility before reading the cache or spawning. A non-zero exit or invalid output throws `LabelerOutputError`. Cache: `<cacheDir>/<labelerId>/<model>/<cacheKey>.json`.
 
 - [ ] **Step 1: Failing tests:** `buildArgv substitutes all tokens and appends effortArgs`; `parseLabelerOutput rejects fenced/prose/invalid JSON` (for each parser: a ```` ```json ```` fence, prose, truncated JSON → throws `LabelerOutputError`); `parses captured real output` (each fixture → the expected `value`); `runLabeler uses an empty temp cwd` (fake spawn asserts `cwd` contains only `schema.json` and is not under the repo); `cache hit skips spawn`.
 - [ ] **Step 2: Run** `npx vitest run tests/scripts/templateValidation/labelers.test.ts`. Expected: FAIL.
