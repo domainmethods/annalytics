@@ -6,7 +6,7 @@ import { reviewSql } from '../../../src/agents/supervisorAgent.js';
 import { qualityLoop } from '../../../src/qualityLoop.js';
 import { executeQuery } from '../../../src/execution/runner.js';
 import { validateSql } from '../../../src/validation/pipeline.js';
-import { initBigQuery } from '../../../src/validation/dryRun.js';
+import { dryRunValidation, initBigQuery } from '../../../src/validation/dryRun.js';
 import { loadLocalKnowledgeSummaries } from '../../../scripts/benchmarkInputs.js';
 import { loadFixture } from '../../../scripts/template-validation/items.js';
 import { createTemplateRunner, loadTemplateEnv, verifyCrossPass } from '../../../scripts/template-validation/runners.js';
@@ -145,29 +145,15 @@ describe('template corpus runners', () => {
     expect(JSON.stringify(perEntry)).not.toMatch(/private-project|private\.invalid/);
   });
 
-  it('keeps an earlier warehouse dry-run failure when the quality loop later recovers', async () => {
-    const quality = await qualityLoop({ question, tables: [], threadContext: [], apiKey: 'test' }, 'test', question, 1);
-    vi.mocked(qualityLoop).mockResolvedValue({
-      ...quality, verdict: 'fail_then_pass', validationHistory: [
-        { attempt: 0, layer: 'l3', valid: false, warehouseFailure: true, detail: 'https://private.invalid' },
-        { attempt: 1, layer: 'l3', valid: true },
-      ],
-    });
-    const env = await loadTemplateEnv('test');
-    const { perEntry } = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
-    expect(perEntry[0]).toMatchObject({ overallScore: 0, failure: { category: 'warehouse', code: 'sql-validation' } });
-    expect(JSON.stringify(perEntry)).not.toContain('private.invalid');
-  });
-
   it.each([false, true])('preserves a provider outage after SQL validation fails (warehouse failure: %s)', async warehouseFailure => {
     const quality = await qualityLoop({ question, tables: [], threadContext: [], apiKey: 'test' }, 'test', question, 1);
     generateContent.mockRejectedValueOnce(new Error('provider unavailable'));
-    vi.mocked(qualityLoop).mockImplementation(async () => {
+    vi.mocked(dryRunValidation).mockResolvedValueOnce({ valid: false, layer: 'L3-dryrun', warehouseFailure: true });
+    vi.mocked(qualityLoop).mockImplementation(async (_opts, _key, _question, _maxBytes, callbacks) => {
       await generateForNode('sqlGenerator', new GoogleGenAI({ apiKey: 'test' }), { contents: question })
         .catch(() => undefined);
-      return warehouseFailure ? {
-        ...quality, validationHistory: [{ attempt: 0, layer: 'l3', valid: false, warehouseFailure: true }],
-      } : quality;
+      if (warehouseFailure) await callbacks?.validateAttempt?.(candidateSql, 0);
+      return quality;
     });
     vi.mocked(validateSql).mockImplementation(async sql => sql === referenceSql
       ? { valid: true, layer: 'all', bytesProcessed: 0 } : { valid: false, layer: 'L1', error: 'blocked' });

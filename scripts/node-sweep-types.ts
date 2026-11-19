@@ -23,6 +23,10 @@ export interface SweepProfile {
   thinkingLevel: ThinkingLevel;
 }
 
+export function formatSweepProfile({ tier, version, thinkingLevel }: SweepProfile): string {
+  return `${tier}/${version}@${thinkingLevel}`;
+}
+
 /**
  * One evaluated point: its human-readable label plus the four numbers the decision
  * rule weighs. `metric` is the node's own quality proxy; `e2e` is the end-to-end

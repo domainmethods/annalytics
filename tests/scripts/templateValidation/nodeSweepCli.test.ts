@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { main, type PerEntry } from '../../../scripts/node-sweep.js';
 import { loadItems } from '../../../scripts/template-validation/items.js';
 import { createTemplateRunner, loadTemplateEnv } from '../../../scripts/template-validation/runners.js';
-import { resolveNodeModel } from '../../../src/agents/nodeProfiles.js';
+import { defaultProfileForNode } from '../../../src/agents/nodeProfiles.js';
 
 vi.mock('node:fs/promises', { spy: true });
 vi.mock('../../../scripts/template-validation/items.js', async importOriginal => ({
@@ -26,12 +26,21 @@ afterEach(() => {
 
 it.each([
   'regression', 'reference outage', 'candidate rejection', 'default comparator', 'paired outage',
-  'paired exhaustion', 'stable picked exhaustion',
+  'paired exhaustion', 'stable picked exhaustion', 'unsafe model override',
 ] as const)(
   'writes the correct supervisor decision and failure evidence for %s',
   async scenario => {
     vi.stubEnv('GCP_PROJECT_ID', 'test-project');
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    const unsafeUrl = 'https://private.invalid/v1';
+    const unsafeProject = 'projects/private-project/locations/us/models/test';
+    const defaultSql = defaultProfileForNode('sqlGenerator');
+    if (scenario === 'unsafe model override') {
+      vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({
+        'flash/3': `${unsafeUrl}/${unsafeProject}`,
+        [`${defaultSql.tier}/${defaultSql.version}`]: `${unsafeUrl}/${unsafeProject}-default`,
+      }));
+    }
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     vi.mocked(readFile).mockImplementation(async (path, options) => {
@@ -57,7 +66,9 @@ it.each([
         : paired ? (comparesExhaustion ? 38 : 34) : sqlPick ? (scenario === 'default comparator' ? 32 : 38) : 32;
       const failure: PerEntry['failure'] = scenario === 'reference outage' && baseline && defaults <= 2
         ? { category: 'reference', code: 'sql-execution' }
-        : scenario === 'candidate rejection' && node === 'sqlGenerator' && sqlPick && !paired
+        : (scenario === 'candidate rejection' || (scenario === 'unsafe model override' &&
+          overrides.sqlGenerator?.tier === 'flash' && overrides.sqlGenerator.version === '3')) &&
+          node === 'sqlGenerator' && sqlPick && !paired
           ? { category: 'candidate', code: 'sql-validation' }
           : scenario === 'paired outage' && paired
             ? { category: 'warehouse', code: 'sql-execution' }
@@ -73,7 +84,8 @@ it.each([
     try {
       await main(['--corpus', 'template', '--node', 'supervisor', '--node', 'sqlGenerator'], dir);
       const jsonFile = (await realFs.readdir(dir)).find(file => file.endsWith('.json'))!;
-      const json = JSON.parse(await readFile(join(dir, jsonFile), 'utf8'));
+      const jsonText = await readFile(join(dir, jsonFile), 'utf8');
+      const json = JSON.parse(jsonText);
       const markdown = await readFile(join(dir, jsonFile.replace(/\.json$/, '.md')), 'utf8');
       const [sql, supervisor] = json.rows;
       expect(sql.node).toBe('sqlGenerator');
@@ -81,7 +93,7 @@ it.each([
       if (scenario === 'reference outage') {
         expect(sql).toMatchObject({ applicable: false, applicationReason: 'Infrastructure failures affected the comparison.' });
         expect(sql.failureCounts).toEqual([{
-          profile: expect.stringMatching(new RegExp(resolveNodeModel('sqlGenerator'))),
+          profile: `${defaultSql.tier}/${defaultSql.version}@${defaultSql.thinkingLevel}`,
           category: 'reference', code: 'sql-execution', count: 2,
         }]);
         expect(markdown).toContain('reference / sql-execution');
@@ -100,6 +112,17 @@ it.each([
         if (scenario === 'candidate rejection') {
           expect(sql.failureCounts).toContainEqual(expect.objectContaining({ category: 'candidate', code: 'sql-validation' }));
           expect(markdown).toContain('candidate / sql-validation');
+        }
+        if (scenario === 'unsafe model override') {
+          expect(sql.failureCounts).toContainEqual({
+            profile: 'flash/3@high', category: 'candidate', code: 'sql-validation', count: 1,
+          });
+          expect(sql.recommended).not.toBe('flash/3@high');
+          for (const report of [markdown, jsonText]) {
+            expect(report).not.toContain(unsafeUrl);
+            expect(report).not.toContain(unsafeProject);
+            expect(report).toContain('flash/3@high');
+          }
         }
       }
     } finally {

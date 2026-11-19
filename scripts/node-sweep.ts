@@ -29,7 +29,7 @@ import {
   type TableSelectionScore,
 } from './benchmarkSupport.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
-import { exhaustionRate, type SweepProfile, type PointScore, type SweepFailure } from './node-sweep-types.js';
+import { exhaustionRate, formatSweepProfile, type SweepProfile, type PointScore, type SweepFailure } from './node-sweep-types.js';
 import { pickWithinEpsilon } from './node-sweep-decision.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
 import { hashValidationSet, loadItems } from './template-validation/items.js';
@@ -442,8 +442,6 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     }
   };
 
-  const labelOf = (p: SweepProfile): string => `${p.tier}/${p.version}@${p.thinkingLevel}`;
-
   // ── Per-node two-stage search ─────────────────────────────────────────────────
   for (const node of nodes) {
     log(`\n── Node: ${node} ──`);
@@ -470,7 +468,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     const stage1: PointScore[] = [];
     for (const model of listRegisteredModels()) {
       const profile: SweepProfile = { tier: model.tier, version: model.version, thinkingLevel: STAGE1_ANCHOR };
-      const label = labelOf(profile);
+      const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       const score = await scorePoint(node, profile, label);
       stage1.push(score);
@@ -496,7 +494,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     const stage2: PointScore[] = [];
     for (const level of stage2Levels) {
       const profile: SweepProfile = { tier: stage1Winner.tier, version: stage1Winner.version, thinkingLevel: level };
-      const label = labelOf(profile);
+      const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       if (level === STAGE1_ANCHOR) {
         stage2.push({ ...modelWinnerScore, label });
@@ -523,7 +521,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       thinkingWinnerScore.metric < baseline.metric - metricEps ||
       thinkingWinnerScore.e2e < baseline.e2e - e2eEps;
     const keepDefault = sameAsDefault || regressed;
-    log(`  → chosen: ${keepDefault ? 'DEFAULT (no change)' : labelOf(chosenProfile)}`);
+    log(`  → chosen: ${keepDefault ? 'DEFAULT (no change)' : formatSweepProfile(chosenProfile)}`);
 
     outcomes.push({
       nodeId: node,
@@ -603,7 +601,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   };
 
   for (const o of outcomes) {
-    const chosenLabel = o.chosenRung ? `${o.chosenRung.tier}/${o.chosenRung.version}@${o.chosenRung.thinkingLevel}` : 'DEFAULT';
+    const chosenLabel = o.chosenRung ? formatSweepProfile(o.chosenRung) : 'DEFAULT';
     reportLines.push(`## ${o.nodeId}`);
     reportLines.push(`- Baseline model: ${resolveNodeModel(o.nodeId)}`);
     reportLines.push(`- ε(metric): ${metricEpsForNode(o.nodeId).toFixed(4)}`);
@@ -859,7 +857,7 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     const epsByNode = new Map<NodeId, number>();
     const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
     const blocked = new Set<NodeId>();
-    const profileOf = (node: NodeId) => `${resolveNodeModel(node)}@${getNodeProfile(node).thinkingLevel}`;
+    const profileOf = (node: NodeId) => formatSweepProfile(getNodeProfile(node));
     const recordFailures = (node: NodeId, profile: string, { perEntry }: CorpusRunResult) => {
       for (const { failure } of perEntry) {
         if (!failure) continue;

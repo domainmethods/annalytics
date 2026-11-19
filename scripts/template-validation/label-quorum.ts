@@ -37,9 +37,11 @@ export async function availableLabelers(labelers: LabelerConfig[], spawn: SpawnF
 
 const templateViews = new Set(TV_TABLES.map(table => `${TV_DATASET}.${table}`));
 
-export function checkTemplateRelations(
-  sql: string, projectId: string, { referencedTables = [], referencedLogicalViews = [] }: QueryRelationMetadata,
-): TemplateSqlError | undefined {
+export function templateQueryRelations(sql: string): string[] | TemplateSqlError {
+  if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new TemplateSqlError('Federated SQL is not allowed for template validation', 'sql-lineage');
+  if (scanTemplateSafety(sql).length || /\bbigquery-public-data\b/i.test(sql)) {
+    return new TemplateSqlError(`SQL must use the ${TV_DATASET} views`, 'sql-lineage');
+  }
   let relations: string[];
   try {
     relations = warehouseRelations(sql);
@@ -49,6 +51,18 @@ export function checkTemplateRelations(
   if (relations.some(relation => !templateViews.has(relation))) {
     return new TemplateSqlError(`SQL must name only approved ${TV_DATASET} views`, 'sql-lineage');
   }
+  return relations;
+}
+
+export function checkTemplateRelations(sql: string, projectId: string, metadata: QueryRelationMetadata): TemplateSqlError | undefined {
+  const relations = templateQueryRelations(sql);
+  if (relations instanceof TemplateSqlError) return relations;
+  return checkTemplateLineage(sql, projectId, relations, metadata);
+}
+
+function checkTemplateLineage(
+  sql: string, projectId: string, relations: string[], { referencedTables = [], referencedLogicalViews = [] }: QueryRelationMetadata,
+): TemplateSqlError | undefined {
   if (!referencedTables.length && !referencedLogicalViews.length && hasSqlFrom(sql)) {
     return new TemplateSqlError('Dry run did not report referenced tables or views for SQL with FROM', 'sql-lineage', true);
   }
@@ -68,15 +82,13 @@ export function checkTemplateRelations(
 
 export async function executeTemplateSql(sql: string, projectId: string) {
   try {
-    if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new TemplateSqlError('Federated SQL is not allowed for template validation', 'sql-lineage');
-    if (scanTemplateSafety(sql).length || /\bbigquery-public-data\b/i.test(sql)) {
-      return new TemplateSqlError(`SQL must use the ${TV_DATASET} views`, 'sql-lineage');
-    }
+    const relations = templateQueryRelations(sql);
+    if (relations instanceof TemplateSqlError) return relations;
     const validation = await validateSql(sql, limits.maxBytes);
     if (!validation.valid) {
       return new TemplateSqlError(`SQL failed validation at ${validation.layer}`, 'sql-validation', validation.warehouseFailure);
     }
-    const relationError = checkTemplateRelations(sql, projectId, validation);
+    const relationError = checkTemplateLineage(sql, projectId, relations, validation);
     if (relationError) return relationError;
     const result = await executeQuery(sql, limits);
     return result.truncated ? new TemplateSqlError('SQL exceeded the result row limit', 'sql-result-limit') : result;

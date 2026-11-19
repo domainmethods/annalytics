@@ -21,12 +21,13 @@ import { qualityLoop } from '../../src/qualityLoop.js';
 import { generateTeachingCandidate } from '../../src/teachings/candidateGenerator.js';
 import type { KnowledgeSummary } from '../../src/teachings/types.js';
 import type { ResponseContext } from '../../src/types.js';
+import { runCoreValidation, toLayerRecord } from '../../src/validation/core.js';
 import { initBigQuery } from '../../src/validation/dryRun.js';
 import { loadLocalKnowledgeSummaries } from '../benchmarkInputs.js';
 import { exhaustionRate, type SweepProfile } from '../node-sweep-types.js';
 import type { CorpusRunResult, PerEntry } from '../node-sweep.js';
 import { ITEM_SCHEMAS, loadFixture, type Item } from './items.js';
-import { executeTemplateSql, TEMPLATE_MAX_BYTES, TemplateSqlError } from './label-quorum.js';
+import { executeTemplateSql, TEMPLATE_MAX_BYTES, TemplateSqlError, templateQueryRelations } from './label-quorum.js';
 import { fixtureSpecs } from './prompts.js';
 import type { QueryResultLike } from './quorum.js';
 import { referenceIsOrdered, resultsEquivalent } from './resultEquivalence.js';
@@ -132,15 +133,26 @@ const templateScorers: Scorers = {
   async sqlGenerator(item, { apiKey, tables, knowledge, execute }, evidence) {
     const reference = await executeScoredSql(execute, item.referenceSql, evidence, true);
     if (!reference) return 0;
+    let warehouseFailure = false;
     const quality = await qualityLoop(
       { question: item.question, tables, threadContext: [], apiKey, knowledgeSummaries: knowledge },
       apiKey, item.question, TEMPLATE_MAX_BYTES,
+      { async validateAttempt(sql, attempt) {
+        const relations = templateQueryRelations(sql);
+        if (relations instanceof TemplateSqlError) {
+          const blocked = { valid: false, layer: 'L1-template', error: relations.message };
+          return { records: [toLayerRecord(attempt, 'l1', blocked)], blockedLayer: 'l1', blocked };
+        }
+        const validation = await runCoreValidation(sql, attempt);
+        if (validation.blocked?.warehouseFailure) {
+          warehouseFailure = true;
+          evidence.failure ??= { category: 'warehouse', code: 'sql-validation' };
+        }
+        return validation;
+      } },
     );
     evidence.exhausted = quality.verdict === 'exhausted';
-    if (quality.validationHistory?.some(entry => entry.warehouseFailure)) {
-      evidence.failure ??= { category: 'warehouse', code: 'sql-validation' };
-      return 0;
-    }
+    if (warehouseFailure) return 0;
     const candidate = await executeScoredSql(execute, quality.sqlResult.sql, evidence);
     if (!candidate) return 0;
     return Number(resultsEquivalent(reference, candidate, { ordered: referenceIsOrdered(item.referenceSql) }));

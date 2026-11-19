@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { resolveModelId } from '../../src/agents/modelConfig.js';
 import { defaultProfileForNode, type NodeId } from '../../src/agents/nodeProfiles.js';
 import type { NodeOutcome } from '../node-sweep.js';
-import type { SweepFailure } from '../node-sweep-types.js';
+import { formatSweepProfile, type SweepFailure } from '../node-sweep-types.js';
 import type { Provenance } from './labelQuorum.js';
 
 export type ProfileFailureCount = SweepFailure & { profile: string; count: number };
@@ -51,8 +51,8 @@ export function buildRefreshRows(
     const defaultProfile = defaultProfileForNode(node);
     const recommendedProfile = chosenRung ?? defaultProfile;
     const recommendedModel = resolveModelId(recommendedProfile.tier, recommendedProfile.version);
-    const current = `${resolveModelId(defaultProfile.tier, defaultProfile.version)}@${defaultProfile.thinkingLevel}`;
-    const recommended = `${recommendedModel}@${recommendedProfile.thinkingLevel}`;
+    const current = formatSweepProfile(defaultProfile);
+    const recommended = formatSweepProfile(recommendedProfile);
     const metrics = [...stage1, ...stage2].map(point => point.metric);
     const max = Math.max(...metrics);
     const flatAtFloor = max - Math.min(...metrics) <= eps && max < 0.9;
