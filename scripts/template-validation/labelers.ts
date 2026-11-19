@@ -1,0 +1,187 @@
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { z } from 'zod';
+
+const cacheSegment = z.string().regex(/^[\w-][\w.-]*$/);
+export interface LabelerConfig {
+  id: string;
+  family: 'anthropic' | 'openai' | 'google';
+  argv: string[];
+  outputParser: 'claude-json' | 'codex-jsonl' | 'agy-json' | 'gemini-json';
+  model: string;
+  effortArgs: string[];
+  versionArgv: string[];
+}
+
+const labelerConfigSchema = z.object({
+  id: cacheSegment,
+  family: z.enum(['anthropic', 'openai', 'google']),
+  argv: z.array(z.string()).min(1),
+  outputParser: z.enum(['claude-json', 'codex-jsonl', 'agy-json', 'gemini-json']),
+  model: cacheSegment,
+  effortArgs: z.array(z.string()),
+  versionArgv: z.array(z.string()),
+});
+
+export class LabelerOutputError extends Error {
+  override name = 'LabelerOutputError';
+}
+
+interface LabelerOutput {
+  value: unknown;
+  reportedModel?: string;
+}
+
+export type SpawnFn = (
+  cmd: string,
+  args: string[],
+  opts: { cwd: string; timeoutMs: number },
+) => Promise<{ stdout: string; code: number }>;
+
+export function loadLabelers(path = 'benchmarks/template-validation/labelers.json'): LabelerConfig[] {
+  return z.array(labelerConfigSchema).parse(JSON.parse(readFileSync(path, 'utf8')));
+}
+
+export function buildArgv(
+  cfg: LabelerConfig,
+  vars: { prompt: string; schemaPath: string; schemaJson: string },
+): string[] {
+  const tokens = { ...vars, model: cfg.model };
+  return [
+    ...cfg.argv.map((arg) => arg.replace(
+      /\{(prompt|schemaPath|schemaJson|model)\}/g,
+      (_, token: keyof typeof tokens) => tokens[token],
+    )),
+    ...cfg.effortArgs,
+  ];
+}
+
+function parseJson(text: unknown): unknown {
+  if (typeof text !== 'string') throw new LabelerOutputError('Missing JSON response');
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new LabelerOutputError('Invalid JSON response');
+  }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new LabelerOutputError('Expected a JSON envelope');
+  }
+  return value as Record<string, unknown>;
+}
+
+function output(value: unknown, reportedModel: unknown): LabelerOutput {
+  return typeof reportedModel === 'string' && reportedModel
+    ? { value, reportedModel }
+    : { value };
+}
+
+export function parseLabelerOutput(parser: LabelerConfig['outputParser'], stdout: string): LabelerOutput {
+  if (parser === 'codex-jsonl') {
+    const events = stdout.trim().split(/\r?\n/).map((line) => record(parseJson(line)));
+    if (events.at(-1)?.type !== 'turn.completed' ||
+        events.some((event) => event.type === 'turn.failed' || event.type === 'error')) {
+      throw new LabelerOutputError('Codex did not complete the turn');
+    }
+    const messages = events.filter((event) => event.type === 'item.completed')
+      .map((event) => record(event.item));
+    const message = messages.filter((item) => item.type === 'agent_message').at(-1);
+    const thread = events.find((event) => event.type === 'thread.started');
+    return output(parseJson(message?.text), message?.model ?? thread?.model);
+  }
+
+  const parsed = parseJson(stdout);
+  if (parser === 'claude-json') {
+    const events = Array.isArray(parsed) ? parsed.map(record) : [record(parsed)];
+    const result = events.at(-1);
+    if (result?.type !== 'result' || result.subtype !== 'success' || result.is_error === true) {
+      throw new LabelerOutputError('Claude did not return a successful result');
+    }
+    const init = events.find((event) => event.type === 'system' && event.subtype === 'init');
+    return output(
+      'structured_output' in result ? result.structured_output : parseJson(result.result),
+      result.model ?? init?.model,
+    );
+  }
+
+  const envelope = record(parsed);
+  if (parser === 'agy-json') {
+    if (envelope.status !== 'SUCCESS') throw new LabelerOutputError('AGY did not return a successful result');
+    return output(
+      'structured_output' in envelope ? envelope.structured_output : parseJson(envelope.response),
+      envelope.model,
+    );
+  }
+
+  if (envelope.error) throw new LabelerOutputError('Gemini did not return a successful result');
+  const stats = envelope.stats as { models?: Record<string, unknown> } | undefined;
+  const models = Object.keys(stats?.models ?? {});
+  return output(parseJson(envelope.response), envelope.model ?? (models.length === 1 ? models[0] : undefined));
+}
+
+export async function runLabeler(
+  cfg: LabelerConfig,
+  batch: { prompt: string; schema: object; cacheKey: string },
+  spawn: SpawnFn,
+  cacheDir: string,
+): Promise<LabelerOutput & { cached: boolean }> {
+  const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
+    cacheSegment.parse(batch.cacheKey) + '.json');
+  const validator = z.fromJSONSchema({ ...batch.schema });
+  const validate = (value: unknown) => {
+    if (!validator.safeParse(value).success) throw new LabelerOutputError('Response did not match the batch schema');
+  };
+
+  const cached = await readFile(cachePath, 'utf8').catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== 'ENOENT') throw err;
+    return undefined;
+  });
+  if (cached !== undefined) {
+    const result = record(parseJson(cached));
+    if (!Object.hasOwn(result, 'value')) throw new LabelerOutputError('Cache entry missing a response');
+    validate(result.value);
+    return { ...output(result.value, result.reportedModel), cached: true };
+  }
+
+  const cwd = await mkdtemp(join(tmpdir(), 'tv-labeler-'));
+  let result: LabelerOutput;
+  try {
+    const schemaPath = join(cwd, 'schema.json');
+    const schemaJson = JSON.stringify(batch.schema);
+    await writeFile(schemaPath, schemaJson);
+    const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
+    const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000 });
+    if (code !== 0) throw new LabelerOutputError(`${cfg.id} exited with code ${code}`);
+    result = parseLabelerOutput(cfg.outputParser, stdout);
+    validate(result.value);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+
+  await mkdir(dirname(cachePath), { recursive: true, mode: 0o700 });
+  const stagingPath = cachePath + '.' + randomUUID() + '.tmp';
+  try {
+    await writeFile(stagingPath, JSON.stringify(result) + '\n', { flag: 'wx', mode: 0o600 });
+    await rename(stagingPath, cachePath);
+  } finally {
+    await rm(stagingPath, { force: true });
+  }
+  return { ...result, cached: false };
+}
+
+export async function checkAvailable(
+  cfg: LabelerConfig,
+  spawn: SpawnFn,
+): Promise<{ ok: boolean; version?: string }> {
+  try {
+    const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: tmpdir(), timeoutMs: 10_000 });
+    return code === 0 ? { ok: true, version: stdout.trim() } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}

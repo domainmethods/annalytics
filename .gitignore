@@ -20,3 +20,6 @@ benchmarks/corpus.live.json
 # Implementation-specific ReferenceCards (real schema). Starter examples stay in references/examples/.
 references/*.live.yml
 references/*.live.yaml
+
+# Local model labeler response cache
+benchmarks/template-validation/.cache/

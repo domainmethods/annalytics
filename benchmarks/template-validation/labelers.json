@@ -1,0 +1,107 @@
+[
+  {
+    "id": "claude",
+    "family": "anthropic",
+    "argv": [
+      "claude",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--json-schema",
+      "{schemaJson}",
+      "--model",
+      "{model}",
+      "--tools",
+      "",
+      "--safe-mode",
+      "--no-session-persistence"
+    ],
+    "outputParser": "claude-json",
+    "model": "claude-fable-5-2",
+    "effortArgs": [
+      "--effort",
+      "max"
+    ],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "codex",
+    "family": "openai",
+    "argv": [
+      "codex",
+      "exec",
+      "--json",
+      "--output-schema",
+      "{schemaPath}",
+      "-s",
+      "read-only",
+      "-m",
+      "{model}",
+      "--skip-git-repo-check",
+      "--ignore-user-config",
+      "--disable",
+      "hooks",
+      "--ephemeral",
+      "{prompt}"
+    ],
+    "outputParser": "codex-jsonl",
+    "model": "gpt-6.2-astra",
+    "effortArgs": [
+      "-c",
+      "model_reasoning_effort=\"ultra\""
+    ],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "agy",
+    "family": "google",
+    "argv": [
+      "agy",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--json-schema",
+      "{schemaPath}",
+      "--mode",
+      "plan",
+      "--model",
+      "{model}",
+      "--disable-slash-commands"
+    ],
+    "outputParser": "agy-json",
+    "model": "gemini-4-neon-xhigh",
+    "effortArgs": [],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "gemini",
+    "family": "google",
+    "argv": [
+      "gemini",
+      "-p",
+      "{prompt}",
+      "-o",
+      "json",
+      "--approval-mode",
+      "plan",
+      "-m",
+      "{model}",
+      "-e",
+      "none"
+    ],
+    "outputParser": "gemini-json",
+    "model": "gemini-3.1-pro-preview",
+    "effortArgs": [],
+    "versionArgv": [
+      "--version"
+    ]
+  }
+]
