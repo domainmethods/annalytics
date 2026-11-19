@@ -36,6 +36,10 @@ function isExpiredResponseContext(data: { expiresAt?: unknown }): boolean {
 }
 
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
+  // An unowned Slack record would land at the shared legacy key (#30).
+  if (ctx.surface !== 'whatsapp' && !ctx.channel) {
+    throw new Error('Slack response context must record its channel');
+  }
   const now = new Date();
   // Leave ample headroom for Firestore field/document overhead beyond JSON bytes.
   const budget = RESPONSE_CONTEXT_BYTE_BUDGET;

@@ -34,6 +34,7 @@ import {
 } from '../../src/state/responseContext.js';
 
 const sampleContext = () => ({
+  channel: 'C1',
   responseId: 'r1',
   threadTs: 'thread-1',
   statusMsgTs: 'msg-1',
@@ -77,11 +78,17 @@ describe('saveResponseContext', () => {
     }
   });
 
-  it('saves with composite key threadTs_statusMsgTs', async () => {
+  it('saves Slack answers at the conversation-scoped key', async () => {
     mockSet.mockResolvedValue(undefined);
     await saveResponseContext(sampleContext());
-    expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+    expect(mockDoc).toHaveBeenCalledWith('C1:thread-1_msg-1');
     expect(mockSet).toHaveBeenCalled();
+  });
+
+  it('refuses to save a Slack answer without its channel (would hit the shared legacy key)', async () => {
+    const { channel: _omit, ...unowned } = sampleContext();
+    await expect(saveResponseContext(unowned)).rejects.toThrow('must record its channel');
+    expect(mockSet).not.toHaveBeenCalled();
   });
 
   it('URL-encodes WhatsApp status message ids in Firestore doc ids', async () => {
@@ -342,7 +349,7 @@ describe('responseContextDocumentId scoping', () => {
   });
 
   it('keeps the legacy id for a Slack context without a channel', () => {
-    expect(responseContextDocumentId({ ...sampleContext(), threadTs: 'ts', statusMsgTs: 'status' } as any)).toBe('ts_status');
+    expect(responseContextDocumentId({ ...sampleContext(), channel: undefined, threadTs: 'ts', statusMsgTs: 'status' } as any)).toBe('ts_status');
   });
 
   it('leaves WhatsApp ids unchanged even when a channel is present', () => {
