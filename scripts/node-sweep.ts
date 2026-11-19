@@ -920,8 +920,16 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     }
 
     const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
-    await writeRefreshReport(resultsDir, rows, { date: runDate, setVersion, setHash, provenance });
-    console.log(`\nReport written to ${join(resultsDir, `${runDate}-model-refresh.md`)} and .json`);
+    const unverifiedSupervisor = !sqlOutcome && rows.find(row => row.node === 'supervisor');
+    if (unverifiedSupervisor) {
+      unverifiedSupervisor.applicable = false;
+      unverifiedSupervisor.applicationReason = 'pending SQL comparator verification';
+    }
+    const base = await writeRefreshReport(resultsDir, rows, {
+      date: runDate, setVersion, setHash, provenance,
+      ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
+    });
+    console.log(`\nReport written to ${base}.md and .json`);
   } finally {
     if (previous === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
     else process.env.NODE_PROFILE_OVERRIDES = previous;

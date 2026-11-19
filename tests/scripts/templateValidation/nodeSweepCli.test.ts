@@ -239,3 +239,52 @@ it.each([
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it('withholds an unpaired supervisor pick and preserves the existing full reports', async () => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-key');
+  vi.stubEnv('NODE_PROFILE_OVERRIDES', undefined);
+  vi.stubEnv('MODEL_ID_OVERRIDES', undefined);
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(readFile).mockImplementation(async (path, options) => {
+    if (String(path).endsWith('/VERSION')) return 'test';
+    if (String(path).endsWith('/provenance.json')) return JSON.stringify({
+      version: 'test', members: [], perNode: { supervisor: {
+        itemsSha256: 'a'.repeat(64), drafted: 100, accepted: 100, quarantined: 0, dropRateByCategory: {},
+      } },
+    });
+    return realFs.readFile(path, options);
+  });
+  vi.mocked(loadItems).mockReturnValue([{ id: 'supervisor' }] as ReturnType<typeof loadItems>);
+  vi.mocked(loadTemplateEnv).mockResolvedValue({
+    apiKey: 'test', tables: [], knowledge: [], execute: vi.fn(), judge: vi.fn(),
+  });
+  vi.mocked(createTemplateRunner).mockClear().mockImplementation(() => async () => {
+    const score = process.env.NODE_PROFILE_OVERRIDES ? 1 : 0;
+    return { perEntry: [{ id: 'supervisor', clarificationPassed: false, overallScore: score, sqlGenMetric: score }],
+      nodeUsage: new Map() };
+  });
+
+  const dir = await mkdtemp(join(tmpdir(), 'template-supervisor-report-'));
+  const full = join(dir, `${new Date().toISOString().slice(0, 10)}-model-refresh`);
+  try {
+    for (const ext of ['.md', '.json']) await writeFile(full + ext, 'existing full report');
+    await main(['--corpus', 'template', '--node', 'supervisor'], dir);
+    const names = await readdir(dir);
+    const markdown = names.find(file => file.endsWith('-partial-supervisor.md'));
+    const json = names.find(file => file.endsWith('-partial-supervisor.json'));
+    expect(await readFile(full + '.md', 'utf8')).toBe('existing full report');
+    expect(await readFile(full + '.json', 'utf8')).toBe('existing full report');
+    expect(markdown).toBeDefined();
+    expect(json).toBeDefined();
+    expect(await readFile(join(dir, markdown!), 'utf8')).toContain('pending SQL comparator verification');
+    expect(JSON.parse(await readFile(join(dir, json!), 'utf8')).rows).toMatchObject([{
+      node: 'supervisor', currentMetric: 0, recommendedMetric: 1, applicable: false,
+      applicationReason: 'pending SQL comparator verification',
+    }]);
+    expect(createTemplateRunner).toHaveBeenCalledExactlyOnceWith('supervisor', expect.any(Array), expect.any(Object));
+  } finally {
+    vi.mocked(readFile).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

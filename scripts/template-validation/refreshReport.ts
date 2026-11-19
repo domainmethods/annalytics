@@ -30,6 +30,7 @@ interface RefreshMeta {
   setHash: string;
   date: string;
   provenance: Provenance;
+  partialNodes?: NodeId[];
 }
 
 const signal: Record<NodeId, RefreshRow['signal']> = {
@@ -107,9 +108,11 @@ export function renderRefreshReport(rows: RefreshRow[], meta: RefreshMeta): stri
   return lines.join('\n') + '\n';
 }
 
-export async function writeRefreshReport(dir: string, rows: RefreshRow[], meta: RefreshMeta): Promise<void> {
+export async function writeRefreshReport(dir: string, rows: RefreshRow[], meta: RefreshMeta): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const base = join(dir, `${meta.date}-model-refresh`);
+  const suffix = meta.partialNodes ? `-partial-${meta.partialNodes.join('-')}` : '';
+  const base = join(dir, `${meta.date}-model-refresh${suffix}`);
   await writeFile(base + '.md', renderRefreshReport(rows, meta), 'utf8');
   await writeFile(base + '.json', JSON.stringify({ ...meta, rows }, null, 2) + '\n', 'utf8');
+  return base;
 }
