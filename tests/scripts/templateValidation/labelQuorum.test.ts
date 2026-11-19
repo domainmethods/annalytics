@@ -8,6 +8,7 @@ import * as runner from '../../../src/execution/runner.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
 import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
+import { resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
 import { loadLabelers, runLabeler, type SpawnFn } from '../../../scripts/template-validation/labelers.js';
 
 const mockCreateQueryJob = vi.hoisted(() => vi.fn());
@@ -278,7 +279,7 @@ it('uses dry-run table and view metadata before executing and blocks federated S
   mockCreateQueryJob.mockReset().mockResolvedValueOnce([dryRunJob([{ ...approvedView, projectId: 'other-project' }])])
     .mockResolvedValueOnce([dryRunJob([approvedView])]);
   const execute = vi.spyOn(runner, 'executeQuery').mockResolvedValue({
-    columnNames: [], rows: [], truncated: false, bytesProcessed: 0, totalRows: 0,
+    columnNames: ['n'], rows: [], truncated: false, bytesProcessed: 0, totalRows: 0,
   });
   await expect(executeTemplateSql('SELECT * FROM eXtErNaL_QuErY("c", "SELECT 1")', projectId)).resolves.toBeInstanceOf(Error);
   expect(mockCreateQueryJob).not.toHaveBeenCalled();
@@ -497,5 +498,40 @@ it('strips workload credentials from real CLI subprocesses while preserving thei
   expect(result.stderr).toContain('--allow-single-family');
   expect(JSON.parse(readFileSync(observedPath, 'utf8'))).toEqual({
     HOME: root, CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-cli-login',
+  });
+});
+
+it('keeps unequal empty projections distinct through the template executor', async () => {
+  initBigQuery(projectId);
+  runner.initBigQueryClient(projectId);
+  mockCreateQueryJob.mockReset().mockImplementation(async ({ query }) => [{
+    metadata: { statistics: { totalBytesProcessed: '0', query: { statementType: 'SELECT' } } },
+    getQueryResults: async () => [[], null, {
+      jobComplete: true, totalRows: '0',
+      schema: { fields: [
+        { name: 'a', type: 'INTEGER' },
+        ...(query.includes('AS b') ? [{ name: 'b', type: 'INTEGER' }] : []),
+      ] },
+    }],
+    getMetadata: async () => [{ statistics: { totalBytesProcessed: '0' } }],
+  }]);
+  const reference = await executeTemplateSql('SELECT 1 AS a WHERE FALSE', projectId);
+  const candidate = await executeTemplateSql('SELECT 1 AS a, 2 AS b WHERE FALSE', projectId);
+  expect(reference).toMatchObject({ columnNames: ['a'], rows: [] });
+  expect(candidate).toMatchObject({ columnNames: ['a', 'b'], rows: [] });
+  if (reference instanceof Error || candidate instanceof Error) throw new Error('Expected empty query evidence');
+  expect(resultsEquivalent(reference, candidate)).toBe(false);
+});
+
+it('rejects empty template execution without schema evidence', async () => {
+  initBigQuery(projectId);
+  runner.initBigQueryClient(projectId);
+  mockCreateQueryJob.mockReset().mockResolvedValue([{
+    metadata: { statistics: { totalBytesProcessed: '0', query: { statementType: 'SELECT' } } },
+    getQueryResults: async () => [[], null, { jobComplete: true, totalRows: '0' }],
+    getMetadata: async () => [{ statistics: { totalBytesProcessed: '0' } }],
+  }]);
+  await expect(executeTemplateSql('SELECT 1 AS a WHERE FALSE', projectId)).resolves.toMatchObject({
+    code: 'sql-execution', warehouseFailure: true,
   });
 });

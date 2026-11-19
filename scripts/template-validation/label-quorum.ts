@@ -95,7 +95,11 @@ export async function executeTemplateSql(sql: string, projectId: string) {
     const relationError = checkTemplateLineage(sql, projectId, relations, validation);
     if (relationError) return relationError;
     const result = await executeQuery(sql, limits);
-    return result.truncated ? new TemplateSqlError('SQL exceeded the result row limit', 'sql-result-limit') : result;
+    if (result.truncated) return new TemplateSqlError('SQL exceeded the result row limit', 'sql-result-limit');
+    if (result.rows.length === 0 && result.columnNames.length === 0) {
+      return new TemplateSqlError('Empty template result did not include a schema', 'sql-execution', true);
+    }
+    return result;
   } catch (error) {
     return new TemplateSqlError('Template SQL execution failed', 'sql-execution', !isBigQueryQueryRejection(error));
   }

@@ -31,7 +31,7 @@ export async function executeQuery(
     jobTimeoutMs: options.timeoutMs,
   });
 
-  const [rows] = await job.getQueryResults({
+  const [rows, , response] = await job.getQueryResults({
     maxResults: options.maxRows,
     wrapIntegers: {
       integerTypeCastFunction: (value: string) => {
@@ -54,7 +54,9 @@ export async function executeQuery(
   const reportedTotal = parseInt(stats.query?.totalRows || '0', 10);
   const totalRows = Math.max(rows.length, reportedTotal);
 
-  const columnNames = rows.length > 0 ? Object.keys(rows[0]) : [];
+  const fields = response?.schema?.fields ?? stats.query?.schema?.fields;
+  const schemaNames = fields?.map((field: { name?: string }) => field.name ?? '') ?? [];
+  const columnNames = rows.length > 0 ? Object.keys(rows[0]) : schemaNames.every(Boolean) ? schemaNames : [];
 
   return {
     rows,
