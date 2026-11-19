@@ -35,9 +35,13 @@ it('preserves INT64 values through the SDK decoder and chat table renderers', as
     if (uri === '/jobs') {
       callback(null, { jobReference: json.jobReference, status: { state: 'DONE' } });
     } else if (uri.startsWith('/queries/') && !qs?.pageToken) {
-      callback(null, { schema, rows, jobComplete: true, pageToken: 'next-page' });
+      // A short first page: the API capped it before maxResults (#38).
+      callback(null, { schema, rows: rows.slice(0, 3), jobComplete: true, totalRows: String(maxRows + 1), pageToken: 'page-2' });
+    } else if (uri.startsWith('/queries/') && qs?.pageToken === 'page-2') {
+      callback(null, { schema, rows: rows.slice(3), jobComplete: true, totalRows: String(maxRows + 1), pageToken: 'page-3' });
     } else if (uri.startsWith('jobs/')) {
-      callback(null, { statistics: { query: { totalRows: String(maxRows + 1) } } });
+      // The row count lives on the results response, not job statistics (#38).
+      callback(null, { statistics: { query: {} } });
     } else {
       callback(new Error(`Unexpected BigQuery request: ${uri}`));
     }
@@ -57,6 +61,9 @@ it('preserves INT64 values through the SDK decoder and chat table renderers', as
   expect(request).toHaveBeenCalledWith(expect.objectContaining({
     uri: expect.stringMatching(/^\/queries\//),
     qs: expect.objectContaining({ maxResults: maxRows }),
+  }), expect.any(Function));
+  expect(request).toHaveBeenCalledWith(expect.objectContaining({
+    qs: expect.objectContaining({ pageToken: 'page-2', maxResults: maxRows - 3 }),
   }), expect.any(Function));
   expect(result).toMatchObject({ totalRows: maxRows + 1, truncated: true });
 

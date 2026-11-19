@@ -1,4 +1,4 @@
-import { BigQuery } from '@google-cloud/bigquery';
+import { BigQuery, type QueryResultsOptions } from '@google-cloud/bigquery';
 import type { QueryResult } from '../types.js';
 
 let bigquery: BigQuery;
@@ -31,29 +31,49 @@ export async function executeQuery(
     jobTimeoutMs: options.timeoutMs,
   });
 
-  const [rows] = await job.getQueryResults({
-    maxResults: options.maxRows,
-    wrapIntegers: {
-      integerTypeCastFunction: (value: string) => {
-        const integer = Number(value);
-        return Number.isSafeInteger(integer) ? integer : value;
-      },
+  // Passing `maxResults` turns SDK auto-pagination off, so each call returns a
+  // single API page as `[rows, nextQuery, response]`. The response carries the
+  // authoritative `totalRows` for the whole result. A page can be short (the API
+  // caps page bytes) or empty while the job is still running, so keep following
+  // `nextQuery` until the cap is filled or the result ends.
+  const rows: Record<string, unknown>[] = [];
+  let reportedTotal: number | undefined;
+  let hasMore = false;
+  const wrapIntegers = {
+    integerTypeCastFunction: (value: string) => {
+      const integer = Number(value);
+      return Number.isSafeInteger(integer) ? integer : value;
     },
-  });
+  };
+  let request: QueryResultsOptions = { maxResults: options.maxRows, wrapIntegers };
+  const deadline = Date.now() + options.timeoutMs;
+  for (;;) {
+    const [page, nextQuery, response] = await job.getQueryResults(request);
+    rows.push(...(page as Record<string, unknown>[]));
+    const total = parseCount(response?.totalRows);
+    if (total !== undefined) reportedTotal = total;
+    const remaining = options.maxRows - rows.length;
+    if (response?.jobComplete === false) {
+      // Still running: the API long-polls (~10s) per call, so retry the same
+      // request until the job finishes or the query timeout passes. Never break
+      // here: returning now would report a still-running job as an empty result.
+      if (Date.now() > deadline) {
+        throw new Error(`Query timeout: did not complete before ${options.timeoutMs}ms`);
+      }
+    } else {
+      hasMore = Boolean(nextQuery?.pageToken);
+      if (!nextQuery || !hasMore || remaining <= 0) break;
+    }
+    request = { ...nextQuery, wrapIntegers, maxResults: remaining };
+  }
+
   const [metadata] = await job.getMetadata();
   const stats = metadata.statistics;
   const bytesProcessed = parseInt(stats.totalBytesProcessed || '0', 10);
 
-  // The materialized result page (`rows`) is the authoritative count of rows
-  // returned. `statistics.query.totalRows` is read only to recover the *full*
-  // total when the page is capped by maxResults (for truncation detection) —
-  // never as the sole source of truth, because the BigQuery SDK leaves it
-  // undefined for some completed aggregate jobs. Trusting it alone made a 1-row
-  // `COUNT(...)` result (totalRows undefined) look like an empty result, which
-  // chooseFormat rendered as the "no results" panel.
-  const reportedTotal = parseInt(stats.query?.totalRows || '0', 10);
-  const totalRows = Math.max(rows.length, reportedTotal);
-
+  // The materialized rows are a floor: the SDK has been seen to omit a total for
+  // some completed aggregate jobs, and a 1-row COUNT(...) must not look empty.
+  const totalRows = Math.max(rows.length, reportedTotal ?? 0);
   const columnNames = rows.length > 0 ? Object.keys(rows[0]) : [];
 
   return {
@@ -61,10 +81,15 @@ export async function executeQuery(
     columnNames,
     totalRows,
     bytesProcessed,
-    // Truncated when the real total exceeds the cap. If the stat was missing,
-    // fall back to "did we fill the page?" — a full page implies more rows were
-    // dropped. (Guarded on reportedTotal===0 so a complete result of exactly
-    // maxRows rows isn't mislabelled as truncated.)
-    truncated: totalRows > options.maxRows || (reportedTotal === 0 && rows.length >= options.maxRows),
+    // Truncated when the result holds more rows than we returned. Without a
+    // reported total, a remaining page token is the signal.
+    truncated: reportedTotal !== undefined ? reportedTotal > rows.length : hasMore,
   };
+}
+
+/** `totalRows` arrives as a decimal string, or is absent. */
+function parseCount(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
 }
