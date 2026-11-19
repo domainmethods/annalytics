@@ -115,26 +115,87 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
   return JSON.parse(readFileSync(join(root, 'fixtures', filename), 'utf8'));
 }
 
+const tablePath = /(?:`[\w.*-]+`|[a-z_][\w-]*)(?:[ \t]*\.[ \t]*(?:`[\w.*-]+`|[\w*-]+))*/i;
+const endFrom = /^(?:WHERE|GROUP|ORDER|LIMIT|HAVING|QUALIFY|WINDOW|UNION|INTERSECT|EXCEPT|;)$/i;
+const reservedAlias = /^(?:FROM|AS|JOIN|LEFT|RIGHT|FULL|INNER|OUTER|CROSS|ON|USING|SELECT|OFFSET|PIVOT|UNPIVOT|TABLESAMPLE|FOR)$/i;
+
+function normalizeTablePath(path: string): string {
+  return path.replace(/[` \t]/g, '');
+}
+
+function collectSqlTables(text: string, tables: Set<string>, aliases: Set<string>): void {
+  const tokens = text.match(new RegExp(
+    /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/.source +
+      '|' + tablePath.source + '|[(),;]',
+    'gi',
+  )) ?? [];
+  const fromLists = [false];
+  let expectsTable = false;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    const depth = fromLists.length - 1;
+    if (/^(?:--|\/\*|['"])/.test(token)) {
+      if (/\b(?:FROM|JOIN)\b/i.test(token)) {
+        const content = token.startsWith('--') ? token.slice(2) :
+          token.startsWith('/*') ? token.slice(2, -2) : token.slice(1, -1);
+        collectSqlTables(content.replace(/\\n/g, '\n').replace(/\\[rt]/g, ' ').replace(/\\"/g, '"'), tables, aliases);
+      }
+      continue;
+    }
+    if (token === '(') {
+      fromLists.push(false);
+    } else if (token === ')') {
+      if (depth > 0) fromLists.pop();
+      else fromLists[0] = false;
+    } else if (endFrom.test(token)) {
+      fromLists[depth] = false;
+    } else if (/^FROM$/i.test(token)) {
+      fromLists[depth] = true;
+      expectsTable = true;
+      continue;
+    } else if (/^JOIN$/i.test(token) || (token === ',' && fromLists[depth])) {
+      expectsTable = true;
+      continue;
+    } else if (expectsTable) {
+      const reference = normalizeTablePath(token);
+      if (reference.includes('.')) tables.add(reference);
+
+      const next = tokens[index + 1];
+      const alias = /^AS$/i.test(next ?? '') ? tokens[index + 2] : next;
+      if (alias && /^`?[a-z_]\w*`?$/i.test(alias) && !reservedAlias.test(alias) && !endFrom.test(alias)) {
+        aliases.add(normalizeTablePath(alias).toLowerCase());
+      }
+    }
+    expectsTable = false;
+  }
+}
+
 export function scanTemplateSafety(text: string): string[] {
   const emails = text.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[a-z\d-]+(?:\.[a-z\d-]+)+/gi) ?? [];
   const projects = text.match(/\bprojects\/[a-z\d][a-z\d-]*/gi) ?? [];
-  const foreignRefs = new Set<string>();
+  const tables = new Set<string>();
+  const aliases = new Set<string>();
 
-  // shortcut: lexical scan of dotted names and simple SQL table references, use a parser if SQL syntax coverage expands
-  for (const [reference] of text.matchAll(/(?<![\w.-])[a-z][\w-]*\.[a-z_][\w]*\.[\w]+/gi)) {
-    if (!reference.startsWith(TV_DATASET + '.') &&
-        !reference.startsWith('bigquery-public-data.thelook_ecommerce.')) {
-      foreignRefs.add(reference);
+  // shortcut: lexical scan, use a parser if dialect-specific table syntax needs coverage
+  collectSqlTables(text, tables, aliases);
+  for (const [path] of text.matchAll(new RegExp('(?<![\\w.-])' + tablePath.source, 'gi'))) {
+    const reference = normalizeTablePath(path);
+    const segments = reference.split('.');
+    const quoted = path.includes('`');
+    if ((quoted && segments.length >= 2) ||
+        (segments.length >= 3 && !aliases.has(segments[0].toLowerCase()))) {
+      tables.add(reference);
     }
   }
-  for (const [, dataset, table] of text.matchAll(/\b(?:FROM|JOIN)\s+`?([a-z_][\w]*)\.([\w]+)(?![\w.])/gi)) {
-    if (dataset !== TV_DATASET) foreignRefs.add(`${dataset}.${table}`);
-  }
 
+  const foreignRefs = [...tables].filter((reference) =>
+    !reference.startsWith(TV_DATASET + '.') &&
+    !reference.startsWith('bigquery-public-data.thelook_ecommerce.'),
+  );
   return [
     ...emails.map((email) => `Email address: ${email}`),
     ...projects.map((project) => `GCP resource: ${project}`),
-    ...Array.from(foreignRefs, (reference) => `Foreign table reference: ${reference}`),
+    ...foreignRefs.map((reference) => `Foreign table reference: ${reference}`),
   ];
 }
 

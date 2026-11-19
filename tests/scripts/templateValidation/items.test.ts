@@ -44,6 +44,25 @@ it('allows references to the template view and public source', () => {
   expect(scanTemplateSafety('tv_thelook.orders `bigquery-public-data.thelook_ecommerce.orders`')).toEqual([]);
 });
 
+it.each([
+  ['FROM tv_thelook.orders, private_dataset.customers', 'private_dataset.customers'],
+  ['FROM tv_thelook.orders o, tv_thelook.users u LEFT JOIN private_dataset.customers c ON c.id = u.id', 'private_dataset.customers'],
+  ['FROM (SELECT * FROM tv_thelook.orders) AS o, private_dataset.customers WHERE TRUE', 'private_dataset.customers'],
+  ['FROM tv_thelook.orders o JOIN tv_thelook.users u ON u.name = "Example", private_dataset.customers', 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'SELECT * FROM tv_thelook.orders -- comment\n, private_dataset.customers' }), 'private_dataset.customers'],
+  ['SELECT * FROM tv_thelook.orders AS o INNER JOIN o.shipping_address.city AS c ON TRUE', 'o.shipping_address.city'],
+  ['SELECT `o.shipping_address.city` FROM tv_thelook.orders o', 'o.shipping_address.city'],
+  ['Use `private_dataset.customers`', 'private_dataset.customers'],
+  ['Use acme-prod.analytics.orders', 'acme-prod.analytics.orders'],
+  ['An undeclared x.y.z in prose', 'x.y.z'],
+])('flags the foreign reference in %s', (input, reference) => {
+  expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
+});
+
+it.each(['o', 'AS o'])('allows a nested field path through an alias declared with %s', (alias) => {
+  expect(scanTemplateSafety(`FROM tv_thelook.orders ${alias} WHERE o.shipping_address.city = 'Paris'`)).toEqual([]);
+});
+
 it('hashes nested input keys canonically and ignores labels and provenance', () => {
   const input = { thread: [{ role: 'user', content: 'question' }], message: 'why?' };
   expect(hashItemInput({
