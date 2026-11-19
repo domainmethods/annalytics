@@ -274,7 +274,13 @@ Persistent GCP setup is provisioned manually with `gcloud`. The Terraform config
 in `infra/` is **not** the assumed deploy path — it is retained only as an
 optional, declarative reference (and `infra/firestore.indexes.json` doubles as
 the canonical list of required Firestore indexes). Nothing in this repo runs
-`terraform apply`; CI and the runtime deploy use `gcloud` only.
+`terraform apply`; runtime deployment uses `gcloud` only.
+
+Run `npm run infra:validate` for formatting, backend-disabled initialization, and
+validation without GCP credentials. Terraform or OpenTofu must be installed;
+the command fails if neither is available, including locally, so a successful
+exit always means validation ran. PRs and pushes to main run this check with
+Terraform 1.9.8. This does not plan or apply infrastructure.
 
 The persistent resources, all created once per project:
 
