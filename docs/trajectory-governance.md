@@ -469,3 +469,7 @@ Enabling WhatsApp requires at least one tester ID. Text, unsupported messages, a
 ### 2026-11-18 - dbt artifact path repair (#36)
 
 Existing benchmark, node sweep, startup, setup-check, and knowledge validation paths now preserve absolute artifact paths and resolve relative paths against the working directory. This repairs existing instruments; no new evaluation scaffolding or product tranche is activated. Coverage uses synthetic paths only; client artifacts and benchmark evidence remain operator-local.
+
+### 2026-11-18 - WhatsApp allowlist normalization (#110)
+
+Formatted tester IDs now normalize to digits; invalid entries fail startup naming the variable. All three sender checks share the same normalization. Offline regression tests cover formatted IDs and invalid entries. This repairs the shipped surface; the prototype cap and manual acceptance gate remain in place.

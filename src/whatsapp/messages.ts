@@ -1,3 +1,4 @@
+import { normalizeWaId } from './waId.js';
 import type { ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import { rootLogger } from '../logging.js';
@@ -73,7 +74,7 @@ export async function handleWhatsAppMessages(
   deps: HandleWhatsAppMessagesDeps,
 ): Promise<void> {
   for (const inbound of messages) {
-    if (!deps.allowedWaIds.includes(inbound.conversation.userId)) continue;
+    if (!deps.allowedWaIds.includes(normalizeWaId(inbound.conversation.userId))) continue;
 
     const claimed = await claimWhatsAppEvent(inbound.providerMessageId);
     if (!claimed) continue;
@@ -180,7 +181,7 @@ export async function handleUnsupportedWhatsAppMessages(
   deps: HandleWhatsAppMessagesDeps,
 ): Promise<void> {
   for (const inbound of messages) {
-    if (!deps.allowedWaIds.includes(inbound.conversation.userId)) continue;
+    if (!deps.allowedWaIds.includes(normalizeWaId(inbound.conversation.userId))) continue;
 
     const claimed = await claimWhatsAppEvent(inbound.providerMessageId);
     if (!claimed) continue;

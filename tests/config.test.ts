@@ -172,3 +172,15 @@ describe('loadConfig whatsapp', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('WhatsApp allowlist normalization', () => {
+  beforeEach(() => { vi.unstubAllEnvs(); baseEnv(); });
+  it('normalizes presentation separators', () => {
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', '+1 (555) 000-00.01');
+    expect(loadConfig().whatsapp.allowedWaIds).toEqual(['15550000001']);
+  });
+  it.each(['alice', '+ ()-.', '15550000001x'])('rejects invalid entry %s', (entry) => {
+    vi.stubEnv('WHATSAPP_ALLOWED_WA_IDS', entry);
+    expect(() => loadConfig()).toThrow(/WHATSAPP_ALLOWED_WA_IDS/);
+  });
+});
