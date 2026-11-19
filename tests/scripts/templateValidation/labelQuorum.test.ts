@@ -527,7 +527,7 @@ it('keeps unequal empty projections distinct through the template executor', asy
   expect(reference).toMatchObject({ columnNames: ['a'], rows: [] });
   expect(candidate).toMatchObject({ columnNames: ['a', 'b'], rows: [] });
   if (reference instanceof Error || candidate instanceof Error) throw new Error('Expected empty query evidence');
-  expect(resultsEquivalent(reference, candidate)).toBe(false);
+  expect(resultsEquivalent(reference, candidate, { ordered: false })).toBe(false);
 });
 
 it('rejects empty template execution without schema evidence', async () => {
@@ -614,7 +614,7 @@ it('resumes a full publish from cached batches after a dead writer left staged f
 
   deps.labelers = [labelers[0]];
   deps.runLabeler = runLabeler;
-  deps.spawn = vi.fn(async (_cmd, args) =>
+  deps.spawn = vi.fn<SpawnFn>(async (_cmd, args) =>
     claude(args.some(arg => arg.startsWith('Draft')) ? { items: [draft] } : { labels: [route] }));
   await run({ allowSingleFamily: true });
   vi.mocked(deps.spawn).mockClear();
