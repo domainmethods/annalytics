@@ -267,6 +267,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         threadTs,
         channel,
         originalQuestion: question,
+        // Firestore rejects undefined: only store the wording when it differs.
+        ...(supervisorQuestion !== question ? { supervisorQuestion } : {}),
         ambiguities: clarification.ambiguities,
         ambiguityType: ambiguity.type,
         ambiguityDomain: ambiguity.domain,
@@ -513,7 +515,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       const stuckDescription = failureDiagnostics || qualityResult.supervisorNotes || 'Could not generate a confident answer';
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs help with: "${question}"`,
+        text: `Anna Lytics needs help with: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
           userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
@@ -683,7 +685,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     if (shouldEscalateAsync && escalationTarget) {
       const escalationMsg = await client.chat.postMessage({
         channel: escalationTarget,
-        text: `Anna Lytics needs verification: "${question}"`,
+        text: `Anna Lytics needs verification: "${supervisorQuestion}"`,
         blocks: buildEscalationBlocks({
           userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,

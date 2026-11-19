@@ -368,6 +368,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
     expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
       question: 'revenue? (Clarification: last quarter)',
+      originalQuestion: 'revenue? (Clarification: last quarter)',
       threadTs: '1700000000.000900',
       statusMsgTs: '1700000000.000800',
     });

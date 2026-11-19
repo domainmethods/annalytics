@@ -8,6 +8,12 @@ export interface ClarificationState {
   threadTs: string;
   channel: string;
   originalQuestion: string;
+  /**
+   * The user's own wording when it differs from `originalQuestion` (a refinement
+   * or resume rewrote the question), so the clarification reply can hand it back
+   * to the supervisor (#44). Absent when the two are the same and on legacy docs.
+   */
+  supervisorQuestion?: string;
   ambiguities: string[];
   ambiguityType?: 'user_intent' | 'org_knowledge';
   ambiguityDomain?: string;

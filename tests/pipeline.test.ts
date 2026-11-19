@@ -270,6 +270,20 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it("LOW confidence: keeps the user's wording in clarification state on a refinement (#44)", async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Refinement: only EMEA)' });
+    expect(mockSaveClarification.mock.calls[0][0]).toMatchObject({
+      originalQuestion: baseInput.question,
+      supervisorQuestion: 'What is paid revenue? (Refinement: only EMEA)',
+    });
+
+    // No rewrite: nothing extra stored (Firestore rejects undefined fields).
+    await runPipeline(baseInput);
+    expect(mockSaveClarification.mock.calls[1][0]).not.toHaveProperty('supervisorQuestion');
+  });
+
   it('LOW confidence: scopes the clarification id to the conversation', async () => {
     mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
 

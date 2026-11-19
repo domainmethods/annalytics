@@ -87,6 +87,7 @@ export async function handleMessageEvent({
       // Resume pipeline with clarified question
       await runPipeline({
         question: clarificationReply.clarifiedQuestion,
+        originalQuestion: clarificationReply.originalQuestion,
         channel: clarificationReply.channel,
         threadTs: clarificationReply.threadTs,
         statusMsgTs: clarificationReply.clarifyingMessageTs,
