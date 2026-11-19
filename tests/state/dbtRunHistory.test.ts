@@ -210,7 +210,7 @@ describe('dbtRunHistory', () => {
     });
   });
 
-  it.each(['success', 'error', 'skipped', 'warn', 'unknown', undefined])(
+  it.each(['success', 'error', 'skipped', 'warn', 'no-op', 'reused', 'unknown', undefined])(
     'reads stored status %s safely', async (status) => {
       mockGet.mockResolvedValue({ empty: false, docs: [{ data: () => ({
         model: 'orders', status, executionTime: 1, runId: 'synthetic',
@@ -218,7 +218,7 @@ describe('dbtRunHistory', () => {
       }) }] });
       const entries = await getRunHistoryForModel('orders');
       expect(entries[0].status).toBe(
-        ['success', 'skipped', 'warn'].includes(status as string) ? status : 'error',
+        ['success', 'skipped', 'warn', 'no-op', 'reused'].includes(status as string) ? status : 'error',
       );
     },
   );
@@ -232,7 +232,7 @@ describe('dbtRunHistory', () => {
       headers: { authorization: 'Bearer synthetic-secret' },
       body: {
         metadata: { generated_at: new Date().toISOString(), invocation_id: 'synthetic' },
-        results: ['partial success', 'runtime error', 'warn', 'skipped'].map((status, i) => ({
+        results: ['partial success', 'runtime error', 'warn', 'skipped', 'no-op', 'reused'].map((status, i) => ({
           unique_id: 'model.example.result_' + i, status, execution_time: 1,
         })),
       },

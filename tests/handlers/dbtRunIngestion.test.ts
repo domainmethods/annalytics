@@ -251,7 +251,7 @@ describe('registerDbtRunIngestion', () => {
     it.each([
       ['success', 'success'], ['pass', 'success'], ['fail', 'error'],
       ['error', 'error'], ['partial success', 'error'], ['runtime error', 'error'],
-      ['warn', 'warn'], ['skipped', 'skipped'], ['future-status', 'error'],
+      ['no-op', 'no-op'], ['reused', 'reused'], [undefined, 'error'], ['warn', 'warn'], ['skipped', 'skipped'], ['future-status', 'error'],
     ])('maps %s to %s', async (input, expected) => {
       const req = buildReq({ body: {
         metadata: { generated_at: '2026-02-15T10:00:00Z' },

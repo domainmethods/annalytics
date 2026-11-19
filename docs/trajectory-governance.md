@@ -491,3 +491,5 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Partial success and runtime error now persist as error and appear in the existing failure query. Warnings persist distinctly as warn; only literal skipped maps to skipped.
 - Unknown or missing statuses conservatively map to error on ingestion and readback so unexpected outcomes remain visible for investigation. Existing success/error/skipped documents retain their meaning; previously misclassified skipped documents require re-ingestion because the original status was not retained.
 - This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.
+
+- PR #116 review correction: preserve dbt no-op and reused as distinct non-failure outcomes in ingestion, stored-history readback, and dbt_status formatting. Unknown and missing statuses still map conservatively to error. Regression tests cover failure-query exclusion and formatter guidance. Queries and composite indexes are unchanged.

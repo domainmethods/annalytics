@@ -5,7 +5,7 @@ const TTL_DAYS = 90;
 
 export interface DbtRunHistoryEntry {
   model: string;
-  status: 'success' | 'error' | 'skipped' | 'warn';
+  status: 'success' | 'error' | 'skipped' | 'warn' | 'no-op' | 'reused';
   executionTime: number;
   runId: string;
   runStartedAt: Date;
@@ -22,7 +22,7 @@ function toDate(value: Date | FirestoreTimestamp | undefined): Date | undefined 
 function toEntry(data: Record<string, unknown>): DbtRunHistoryEntry {
   const entry: DbtRunHistoryEntry = {
     model: data.model as string,
-    status: data.status === 'success' || data.status === 'skipped' || data.status === 'warn'
+    status: data.status === 'success' || data.status === 'skipped' || data.status === 'warn' || data.status === 'no-op' || data.status === 'reused'
       ? data.status : 'error',
     executionTime: data.executionTime as number,
     runId: data.runId as string,

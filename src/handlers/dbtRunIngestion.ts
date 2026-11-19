@@ -6,9 +6,10 @@ import { saveDbtRunResults } from '../state/dbtRunHistory.js';
 
 function mapStatus(status: string): DbtRunHistoryEntry['status'] {
   if (status === 'success' || status === 'pass') return 'success';
+  if (status === 'no-op' || status === 'reused') return status;
   if (status === 'warn') return 'warn';
   if (status === 'skipped') return 'skipped';
-  // Failed, partially completed, and unknown outcomes must remain visible in failure queries.
+  // Failed, partially completed, and unknown or missing outcomes must remain visible in failure queries.
   return 'error';
 }
 
