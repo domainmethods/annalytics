@@ -78,6 +78,10 @@ it.each([
   [`FROM tv_thelook.orders o JOIN tv_thelook.users u ON u.name = "'--", private_dataset.customers`, 'private_dataset.customers'],
   [String.raw`SELECT * FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = \"#1\", private_dataset.customers`, 'private_dataset.customers'],
   [String.raw`FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = \"item \\\"#1\", private_dataset.customers`, 'private_dataset.customers'],
+  [String.raw`SELECT * FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = 'it\\'s #1', private_dataset.customers`, 'private_dataset.customers'],
+  [String.raw`FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = 'it\'s #1' AND u.name = 'it\\'s #2', private_dataset.customers`, 'private_dataset.customers'],
+  [String.raw`FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = 'path\\', private_dataset.customers c JOIN tv_thelook.users v ON v.name = 'x'`, 'private_dataset.customers'],
+  ['FROM tv_thelook.orders o JOIN tv_thelook.users u ON o.name = """unfinished\n, private_dataset.customers', 'private_dataset.customers'],
   [JSON.stringify({ sql: 'SELECT * FROM tv_thelook.orders -- comment\n, private_dataset.customers' }), 'private_dataset.customers'],
   ['SELECT * FROM tv_thelook.orders AS o INNER JOIN o.shipping_address.city AS c ON TRUE', 'o.shipping_address.city'],
   ['SELECT `o.shipping_address.city` FROM tv_thelook.orders o', 'o.shipping_address.city'],
@@ -127,6 +131,17 @@ it.each([
   ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
+});
+
+it.each(['"""', "'''"].flatMap((quote) => {
+  const sql = `SELECT * FROM tv_thelook.orders o\nJOIN tv_thelook.users u ON o.name = ${quote}First line\n#1${quote}, private_dataset.customers`;
+  return [
+    ['raw SQL', quote, sql],
+    ['JSON-wrapped SQL', quote, JSON.stringify({ sql })],
+    ['standalone escaped SQL', quote, JSON.stringify(sql).slice(1, -1)],
+  ];
+}))('flags a FROM-list table in %s after a multiline %s literal', (_format, _quote, input) => {
+  expect(scanTemplateSafety(input)).toContain('Foreign table reference: private_dataset.customers');
 });
 
 it.each([

@@ -132,38 +132,42 @@ function decodeScanEscapes(text: string): string {
   );
 }
 
-function findStringEnd(text: string, start: number, delimiter: string): number {
-  const serialized = delimiter === '\\"';
+function findStringEnd(text: string, start: number, delimiter: string, multiline: boolean, serialized: boolean) {
   const backslash = serialized ? '\\\\' : '\\';
+  let sawDoubledBackslash = false;
   let index = start;
-  while (index < text.length && text[index] !== '\r' && text[index] !== '\n') {
+  while (index < text.length) {
+    if (!multiline && (text[index] === '\r' || text[index] === '\n')) break;
     if (text.startsWith(backslash, index)) {
+      sawDoubledBackslash ||= text[index + 1] === '\\';
       index += backslash.length;
       // A SQL escape consumes one character, which may itself be JSON-escaped.
       index += serialized && /\\[nt"\\]/.test(text.slice(index, index + 2)) ? 2 : 1;
     } else if (text.startsWith(delimiter, index)) {
-      if (!text.startsWith(delimiter, index + delimiter.length)) return index;
+      if (multiline || !text.startsWith(delimiter, index + delimiter.length)) {
+        return { end: index, sawDoubledBackslash };
+      }
       index += 2 * delimiter.length;
     } else {
       index++;
     }
   }
-  return -1;
+  return { end: -1, sawDoubledBackslash };
 }
 
-function tokenizeReferences(text: string, references: Set<string>): ScanToken[] {
+function tokenizeReferences(text: string, references: Set<string>, serializedApostrophes: boolean) {
   // Line comments stop at physical or JSON-escaped line breaks.
   const tokenPattern = /\s+|\\[nt]|`+|\/\*[\s\S]*?\*\/|(?:--|#)(?:[^\\\r\n]|\\[^n\r\n])*(?:\\(?!n))?|["']|\\"|\\\\|[A-Za-z0-9_]+|./y;
   const publicProjectToken = /bigquery-public-data\b/iy;
   const backtickSpan = /(`{1,2})(?!`)((?:[^`\\\r\n]|\\[^`n\r\n]|\\(?=`)|`(?!`))*?)\1(?!`)/y;
   const tokens: ScanToken[] = [];
+  let ambiguousApostrophe = false;
   let spaceBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
     publicProjectToken.lastIndex = start;
     const [value] = publicProjectToken.exec(text) ?? tokenPattern.exec(text)!;
-    const bodyStart = start + value.length;
-    tokenPattern.lastIndex = bodyStart;
+    tokenPattern.lastIndex = start + value.length;
     if (/^(?:\s|\\[nt]|`{3})/.test(value)) {
       spaceBefore = true;
       continue;
@@ -176,11 +180,23 @@ function tokenizeReferences(text: string, references: Set<string>): ScanToken[] 
       continue;
     }
     if (value === '"' || value === "'" || value === '\\"') {
-      const end = findStringEnd(text, bodyStart, value);
+      const triple = value.repeat(3);
+      const multiline = text.startsWith(triple, start);
+      const delimiter = multiline ? triple : value;
+      const contentsStart = start + delimiter.length;
+      const first = findStringEnd(text, contentsStart, delimiter, multiline, value === '\\"');
+      let end = first.end;
+      if (value === "'" && first.sawDoubledBackslash && (serializedApostrophes || !ambiguousApostrophe)) {
+        const serializedEnd = findStringEnd(text, contentsStart, delimiter, multiline, true).end;
+        if (serializedApostrophes) end = serializedEnd;
+        else ambiguousApostrophe = serializedEnd !== end;
+      }
+      // Resume at the contents if the opener has no matching close.
+      tokenPattern.lastIndex = contentsStart;
       if (end !== -1) {
         // A JSON string can carry SQL. Scan it with its own table-position state.
-        collectReferences(decodeScanEscapes(text.slice(bodyStart, end)), references);
-        tokenPattern.lastIndex = end + value.length;
+        collectReferences(decodeScanEscapes(text.slice(contentsStart, end)), references);
+        tokenPattern.lastIndex = end + delimiter.length;
       }
     }
     if (value.startsWith('`')) {
@@ -209,7 +225,7 @@ function tokenizeReferences(text: string, references: Set<string>): ScanToken[] 
     tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore });
     spaceBefore = false;
   }
-  return tokens;
+  return { tokens, ambiguousApostrophe };
 }
 
 function isAllowedChain(segments: string[]): boolean {
@@ -221,8 +237,8 @@ function isAllowedChain(segments: string[]): boolean {
     TV_TABLES.some((table) => table === segments[tableIndex]);
 }
 
-function collectReferences(text: string, references: Set<string>): void {
-  const tokens = tokenizeReferences(text, references);
+function collectReferences(text: string, references: Set<string>, serializedApostrophes = false): void {
+  const { tokens, ambiguousApostrophe } = tokenizeReferences(text, references, serializedApostrophes);
   const fromLists = [false];
   let tablePosition = false;
 
@@ -296,6 +312,8 @@ function collectReferences(text: string, references: Set<string>): void {
       tablePosition = /^JOIN$/i.test(token.value) || (token.value === ',' && fromLists[depth]);
     }
   }
+  // JSON leaves apostrophe delimiters unchanged. Keep violations from both readings.
+  if (ambiguousApostrophe) collectReferences(text, references, true);
 }
 
 export function scanTemplateSafety(text: string): string[] {
