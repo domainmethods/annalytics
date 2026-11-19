@@ -153,14 +153,17 @@ function findStringEnd(text: string, start: number, delimiter: string): number {
 
 function tokenizeReferences(text: string, references: Set<string>): ScanToken[] {
   // Line comments stop at physical or JSON-escaped line breaks.
-  const tokenPattern = /\s+|\\[nt]|`+|\/\*[\s\S]*?\*\/|(?:--|#)(?:[^\\\r\n]|\\[^n\r\n])*(?:\\(?!n))?|["']|\\"|\\\\|bigquery-public-data\b|[a-z0-9_]+|./giy;
+  const tokenPattern = /\s+|\\[nt]|`+|\/\*[\s\S]*?\*\/|(?:--|#)(?:[^\\\r\n]|\\[^n\r\n])*(?:\\(?!n))?|["']|\\"|\\\\|[A-Za-z0-9_]+|./y;
+  const publicProjectToken = /bigquery-public-data\b/iy;
   const backtickSpan = /(`{1,2})(?!`)((?:[^`\\\r\n]|\\[^`n\r\n]|\\(?=`)|`(?!`))*?)\1(?!`)/y;
   const tokens: ScanToken[] = [];
   let spaceBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
-    const [value] = tokenPattern.exec(text)!;
-    const bodyStart = tokenPattern.lastIndex;
+    publicProjectToken.lastIndex = start;
+    const [value] = publicProjectToken.exec(text) ?? tokenPattern.exec(text)!;
+    const bodyStart = start + value.length;
+    tokenPattern.lastIndex = bodyStart;
     if (/^(?:\s|\\[nt]|`{3})/.test(value)) {
       spaceBefore = true;
       continue;
@@ -184,13 +187,22 @@ function tokenizeReferences(text: string, references: Set<string>): ScanToken[] 
       backtickSpan.lastIndex = start;
       const span = backtickSpan.exec(text);
       if (span) {
-        for (const [part] of decodeScanEscapes(span[2]).trim().matchAll(quotedPart)) {
-          const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
-          tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
-          spaceBefore = false;
-        }
         tokenPattern.lastIndex = backtickSpan.lastIndex;
-        continue;
+        const body = decodeScanEscapes(span[2]).trim();
+        const doubleBackticks = span[1] === '``';
+        const nestedIdentifier = doubleBackticks ? /^`([^`]*)`$/.exec(body)?.[1] : undefined;
+        // A double-backtick span may contain SQL. Dots with padding still join identifier segments.
+        if (doubleBackticks && nestedIdentifier === undefined &&
+            body.split('.').some((part) => /[\s`()]/.test(part.trim()))) {
+          collectReferences(body, references);
+        } else {
+          for (const [part] of (nestedIdentifier ?? body).matchAll(quotedPart)) {
+            const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
+            tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
+            spaceBefore = false;
+          }
+          continue;
+        }
       }
     }
     const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
