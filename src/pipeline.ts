@@ -76,6 +76,8 @@ const IDENTIFIER_START_RE = /[A-Za-z_]/;
 const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
 
 export interface PipelineInput {
+  /** Lease token from preflight; resume paths omit it and never release the thread lock. */
+  ownerToken?: string;
   question: string;
   channel: string;
   threadTs: string;
@@ -695,7 +697,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       text: friendlyErrorMessage(error as Error, traceId),
     });
   } finally {
-    await releaseThreadLock(threadTs).catch(() => {});
+    // Only callers that acquired the lease in preflight pass a token; resume paths do not.
+    if (input.ownerToken) await releaseThreadLock(threadTs, input.ownerToken).catch(() => {});
   }
 }
 

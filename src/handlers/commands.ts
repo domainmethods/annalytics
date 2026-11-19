@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { App } from '@slack/bolt';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
@@ -39,6 +40,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
     const config = getConfig();
     const traceId = createTraceId();
+    const ownerToken = randomUUID();
     let statusMsgTs: string | undefined;
 
     try {
@@ -71,7 +73,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       // Preflight: lock + clarification + escalation guards. preflightChecks
       // posts its own threaded note explaining the block; update the placeholder
       // so it isn't left frozen on the placeholder.
-      const passed = await preflightChecks(command.channel_id, threadTs, client);
+      const passed = await preflightChecks(command.channel_id, threadTs, client, ownerToken);
       if (!passed) {
         await client.chat.update({
           channel: command.channel_id,
@@ -82,6 +84,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       }
 
       await runPipeline({
+        ownerToken,
         question: command.text,
         channel: command.channel_id,
         threadTs,
@@ -94,7 +97,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       // The lock is only ever taken after the placeholder exists; its ts is the
       // thread identity.
       if (statusMsgTs) {
-        await releaseThreadLock(statusMsgTs).catch(() => {});
+        await releaseThreadLock(statusMsgTs, ownerToken).catch(() => {});
       }
 
       if (isChannelAccessError(error)) {

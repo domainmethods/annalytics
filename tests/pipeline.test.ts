@@ -83,6 +83,7 @@ const baseInput = {
   channel: 'C123',
   threadTs: 'thread-1',
   statusMsgTs: 'status-1',
+  ownerToken: 'lease-1',
   client: mockClient as any,
   tables: [],
   config: {
@@ -179,6 +180,13 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLock).toHaveBeenCalledWith('thread-1', 'lease-1');
+  });
+
+  it('does not release the thread lock when no lease token was passed (resume paths)', async () => {
+    const { ownerToken: _ownerToken, ...resumeInput } = baseInput;
+    await runPipeline(resumeInput);
+    expect(mockReleaseLock).not.toHaveBeenCalled();
   });
 
   it('MEDIUM confidence: includes assumptions in response', async () => {

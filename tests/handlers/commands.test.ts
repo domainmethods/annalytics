@@ -192,7 +192,7 @@ describe('registerCommands /anna seam', () => {
 
     await handler({ command, ack: vi.fn(), respond: mockRespond, client });
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('status-1');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('status-1', expect.any(String));
     expect(client.chat.update).toHaveBeenCalledWith({
       channel: 'C123',
       ts: 'status-1',

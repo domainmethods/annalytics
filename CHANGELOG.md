@@ -18,6 +18,7 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 ### Fixed
 
 - Per-user hourly rate limits admit and count concurrent requests atomically (#31).
+- Thread leases now use transactional ownership checks, preventing expired-lease contenders and late cleanup from deleting another request's lock. Existing thread keys and five-minute expiry remain unchanged; no operator action is required.
 
 ## 0.1.0 - 2026-11-18
 

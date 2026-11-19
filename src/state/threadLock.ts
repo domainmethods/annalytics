@@ -2,28 +2,27 @@ import { getDb, FieldValue } from './firestore.js';
 
 const LOCK_TTL_MS = 300_000; // 300s — matches Cloud Run timeout
 
-export async function acquireThreadLock(threadTs: string): Promise<boolean> {
-  const ref = getDb().collection('processing_threads').doc(threadTs);
-  try {
-    await ref.create({
+export async function acquireThreadLock(threadTs: string, ownerToken: string): Promise<boolean> {
+  const db = getDb();
+  const ref = db.collection('processing_threads').doc(threadTs);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (doc.exists && doc.data()!.expiresAt.toDate() > new Date()) return false;
+    transaction.set(ref, {
+      ownerToken,
       startedAt: FieldValue.serverTimestamp(),
       expiresAt: new Date(Date.now() + LOCK_TTL_MS),
     });
     return true;
-  } catch (e: any) {
-    if (e.code === 6) {
-      // ALREADY_EXISTS — check if expired
-      const doc = await ref.get();
-      if (doc.exists && doc.data()!.expiresAt.toDate() < new Date()) {
-        await ref.delete();
-        return acquireThreadLock(threadTs); // retry after cleanup
-      }
-      return false; // lock genuinely held
-    }
-    throw e;
-  }
+  });
 }
 
-export async function releaseThreadLock(threadTs: string): Promise<void> {
-  await getDb().collection('processing_threads').doc(threadTs).delete();
+/** Deletes the lease only if `ownerToken` still owns it, so a late release never removes a successor's lock. */
+export async function releaseThreadLock(threadTs: string, ownerToken: string): Promise<void> {
+  const db = getDb();
+  const ref = db.collection('processing_threads').doc(threadTs);
+  await db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (doc.exists && doc.data()!.ownerToken === ownerToken) transaction.delete(ref);
+  });
 }

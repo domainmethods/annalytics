@@ -54,10 +54,10 @@ describe('preflightChecks', () => {
   });
 
   it('returns true when all guards pass', async () => {
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(true);
-    expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
     expect(mockGetClarificationState).toHaveBeenCalledWith('1234.5678');
     expect(mockGetEscalationByThread).toHaveBeenCalledWith('1234.5678');
   });
@@ -65,7 +65,7 @@ describe('preflightChecks', () => {
   it('returns false and posts message when lock fails', async () => {
     mockAcquireThreadLock.mockResolvedValue(false);
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     expect(mockPostMessage).toHaveBeenCalledWith(
@@ -82,7 +82,7 @@ describe('preflightChecks', () => {
   it('returns false, posts a nudge, and releases lock when pending clarification', async () => {
     mockGetClarificationState.mockResolvedValue(pendingClarificationFixture());
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     // Must surface the block to the user — never a silent drop (a regression
@@ -113,7 +113,7 @@ describe('preflightChecks', () => {
         ]),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
     // Should not check escalation
     expect(mockGetEscalationByThread).not.toHaveBeenCalled();
   });
@@ -127,7 +127,7 @@ describe('preflightChecks', () => {
       },
     });
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(false);
     expect(mockPostMessage).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe('preflightChecks', () => {
         text: expect.stringContaining('still waiting for the data team'),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the clarification guard throws', async () => {
@@ -146,17 +146,17 @@ describe('preflightChecks', () => {
     // preflightChecks must release on the throw path itself.
     mockGetClarificationState.mockRejectedValue(new Error('Firestore error'));
 
-    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+    await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the escalation guard throws', async () => {
     mockGetEscalationByThread.mockRejectedValue(new Error('Firestore error'));
 
-    await expect(preflightChecks('C123', '1234.5678', mockClient)).rejects.toThrow('Firestore error');
+    await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
   });
 
   it('returns true and notifies when escalation expires during preflight', async () => {
@@ -170,7 +170,7 @@ describe('preflightChecks', () => {
       },
     });
 
-    const result = await preflightChecks('C123', '1234.5678', mockClient);
+    const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(true);
     expect(mockPostMessage).toHaveBeenCalledWith(

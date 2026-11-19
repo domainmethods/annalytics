@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { App } from '@slack/bolt';
 import type { TableContext } from '../dbt/types.js';
 import type { AppConfig } from '../config.js';
@@ -17,6 +18,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
   app.event('app_mention', async ({ event, body, client }) => {
     const eventId = extractSlackEventId(body);
     let visibleResponse = false;
+    const ownerToken = randomUUID();
     let lockHeld = false;
     const shouldProcess = await claimSlackEvent(eventId);
     if (!shouldProcess) return;
@@ -40,7 +42,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       }
 
       // Preflight: lock + clarification + escalation guards
-      const passed = await preflightChecks(event.channel, threadTs, client);
+      const passed = await preflightChecks(event.channel, threadTs, client, ownerToken);
       if (!passed) return;
       lockHeld = true;
 
@@ -51,7 +53,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
         apiKey: config.gemini.apiKey,
         client,
         markVisible: () => markSlackEventVisible(eventId),
-        releaseLock: () => releaseThreadLock(threadTs),
+        releaseLock: () => releaseThreadLock(threadTs, ownerToken),
       });
       if (handledByIntake) {
         visibleResponse = true;
@@ -70,6 +72,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       lockHeld = false;
 
       await runPipeline({
+        ownerToken,
         question,
         channel: event.channel,
         threadTs,
@@ -81,7 +84,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
     } catch (error) {
       // runPipeline has its own error handling; this catches pre-pipeline failures
       if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-      if (lockHeld) await releaseThreadLock(threadTs).catch(() => {});
+      if (lockHeld) await releaseThreadLock(threadTs, ownerToken).catch(() => {});
       throw error;
     }
   });
