@@ -353,6 +353,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     if (config.fastPath?.enabled) {
       const fastPathStartedAt = Date.now();
       const fastPath = await runRoutineFastPath({
+        executionDefaultProject: config.gcpProjectId,
         enabled: config.fastPath.enabled,
         requireSupervisor: config.fastPath.requireSupervisor,
         question,
