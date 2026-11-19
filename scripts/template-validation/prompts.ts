@@ -107,7 +107,7 @@ export const fixtureSpecs = {
   },
   discrepancy: {
     prefix: 'discrepancy-context',
-    instruction: 'Return a context and the planted defect for each fixture. The context is a past ResponseContext with exactly one seeded SQL defect: wrong join, missing filter, wrong grain, wrong aggregation or wrong time window. Give the original question and a plausible prior answer. Record the defect only in the separate defect field. Use an ISO UTC createdAt.',
+    instruction: 'Return a context and the planted defect for each fixture. The context is a past ResponseContext with exactly one seeded SQL defect: wrong join, missing filter, wrong grain, wrong aggregation or wrong time window. Give the original question and a plausible prior answer. No fixture field in the ResponseContext, including supervisorNotes, reasoning, caveats, or any other field, may describe, hint at, or name the defect. Record the defect only in the separate defect field. Use an ISO UTC createdAt.',
     schema: z.object({ context: responseContext, defect }),
   },
   teachingCandidate: {

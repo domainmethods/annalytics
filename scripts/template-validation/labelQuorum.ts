@@ -199,6 +199,15 @@ async function templateContext(node: NodeId, root: string): Promise<string> {
   return [schema, knowledge.length ? 'Local knowledge:\n' + JSON.stringify(knowledge) : ''].filter(Boolean).join('\n\n');
 }
 
+export function fixtureMentionsDefect(fixture: object, defect: string): boolean {
+  const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim();
+  const normalizedDefect = normalize(defect);
+  // Normalize values before JSON turns tabs and line breaks into escape sequences.
+  const serialized = JSON.stringify(fixture, (_key, value: unknown) =>
+    typeof value === 'string' ? normalize(value) : value);
+  return normalizedDefect.length > 0 && normalize(serialized).includes(normalizedDefect);
+}
+
 async function draftFixtures(
   node: FixtureNode, count: number, drafter: LabelerConfig, context: string, client: LabelClient, reserved: Set<string>,
 ): Promise<DraftedFixtures> {
@@ -223,6 +232,7 @@ async function draftFixtures(
       assertSafe(fixture, name);
       if (node === 'discrepancy') {
         const { context, defect } = fixture as z.infer<typeof fixtureSpecs.discrepancy.schema>;
+        if (fixtureMentionsDefect(context, defect)) continue;
         files[name] = context;
         defects[name] = defect;
       } else {
@@ -276,6 +286,7 @@ async function draftInputs(
   node: NodeId, slots: Category[], drafter: LabelerConfig, context: string,
   { files: fixtures, defects }: DraftedFixtures, client: LabelClient,
 ): Promise<Draft[]> {
+  if (node === 'discrepancy' && !Object.keys(fixtures).length) return [];
   const drafts: Draft[] = [];
   const fixtureContext = Object.keys(fixtures).length ? context + '\nFixtures:\n' + JSON.stringify(fixtures) : context;
   const priorInputs: Input[] = [];

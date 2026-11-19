@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '../../../scripts/template-validation/label-quorum.js';
 import * as runner from '../../../src/execution/runner.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
-import { labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
+import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
 import { loadLabelers, runLabeler, type SpawnFn } from '../../../scripts/template-validation/labelers.js';
 
@@ -340,15 +340,17 @@ it('reserves fixture filenames used by retained items with or without an extensi
   expect(loadItems('dbtStatus', root)).toEqual([seed, expect.objectContaining({ runHistoryFixture: 'dbt-history-2' })]);
 });
 
+const discrepancyContext = {
+  responseId: 'fixture-1', threadTs: '1', statusMsgTs: '2', clarifiedQuestion: 'Count only returned orders.',
+  assumptions: [], reasoningChain: 'Count matching rows.', generatedSql: 'SELECT COUNT(*) FROM tv_thelook.orders',
+  explanation: 'Counted orders.', tablesUsed: ['tv_thelook.orders'], confidence: 'high', primaryAgentConfidence: 'high',
+  queryResults: { rowCount: 1, columnNames: ['n'], bytesProcessed: 100 }, pipelineDurationMs: 100,
+  traceId: 'fixture-trace', createdAt: '2026-01-01T00:00:00Z', groundingCitations: [],
+  teachingsUsed: [], supervisorVerdict: 'pass', supervisorNotes: '',
+};
+
 it('stores the planted discrepancy defect outside the context and checks blind labels against it', async () => {
-  const context = {
-    responseId: 'fixture-1', threadTs: '1', statusMsgTs: '2', clarifiedQuestion: 'Count only returned orders.',
-    assumptions: [], reasoningChain: 'Count matching rows.', generatedSql: 'SELECT COUNT(*) FROM tv_thelook.orders',
-    explanation: 'Counted orders.', tablesUsed: ['tv_thelook.orders'], confidence: 'high', primaryAgentConfidence: 'high',
-    queryResults: { rowCount: 1, columnNames: ['n'], bytesProcessed: 100 }, pipelineDurationMs: 100,
-    traceId: 'fixture-trace', createdAt: '2026-01-01T00:00:00Z', groundingCitations: [],
-    teachingsUsed: [], supervisorVerdict: 'pass', supervisorNotes: '',
-  };
+  const context = discrepancyContext;
   let diagnosed = 'missing filter';
   deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
     cached: false,
@@ -373,4 +375,51 @@ it('stores the planted discrepancy defect outside the context and checks blind l
   await run(discrepancy);
   expect(loadItems('discrepancy', root)).toEqual([]);
   expect(readFileSync(join(root, 'quarantine', 'discrepancy.jsonl'), 'utf8')).toContain('"defect":"missing filter"');
+});
+
+it('detects planted defect text in any fixture field after case and whitespace normalization', () => {
+  expect(fixtureMentionsDefect({ supervisorNotes: 'Diagnosis: MISSING\t\n FILTER.' }, ' missing  filter ')).toBe(true);
+  expect(fixtureMentionsDefect({ details: { caveats: ['Possible wrong\u00a0grain'] } }, 'WRONG GRAIN')).toBe(true);
+  expect(fixtureMentionsDefect({ reasoningChain: 'Count matching rows.' }, 'missing filter')).toBe(false);
+});
+
+it('drops a fixture that gives the answer in supervisorNotes before either blind labeler sees it', async () => {
+  const leakingContext = { ...discrepancyContext, supervisorNotes: 'The query has a missing filter.' };
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft fixtures') ? {
+      fixtures: [
+        { context: leakingContext, defect: 'missing filter' },
+        { context: discrepancyContext, defect: 'missing filter' },
+      ],
+    } : prompt.startsWith('Draft') ? {
+      items: ['That count looks high.', 'Why is the total so large?'].map(complaint => ({
+        category: 'edge_case', complaint, contextFixture: 'discrepancy-context-2',
+      })),
+    } : { labels: Array.from({ length: 2 }, () => ({ defect: 'missing filter', rubric: ['COUNT(*)'] })) },
+  }));
+
+  await run({ nodes: ['discrepancy'], targetCounts: { discrepancy: 2 } });
+
+  const prompts = vi.mocked(deps.runLabeler).mock.calls.map(([, { prompt }]) => prompt);
+  expect(prompts[0]).toMatch(/no fixture field.*(?:describe|hint|name)/i);
+  expect(prompts[1]).not.toContain('discrepancy-context-1');
+  const blind = prompts.filter(prompt => prompt.startsWith('Label'));
+  expect(blind).toHaveLength(2);
+  for (const prompt of blind) expect(prompt).not.toMatch(/missing\s+filter/i);
+  expect(existsSync(join(root, 'fixtures', 'discrepancy-context-1.json'))).toBe(false);
+  expect(loadFixture('discrepancy-context-2', root)).toEqual(discrepancyContext);
+  expect(loadItems('discrepancy', root)).toHaveLength(2);
+});
+
+it('skips discrepancy labeling when all drafted contexts give away their planted defect', async () => {
+  deps.runLabeler = vi.fn(async () => ({
+    cached: false,
+    value: { fixtures: [{ context: { ...discrepancyContext, supervisorNotes: 'Missing filter' }, defect: 'missing filter' }] },
+  }));
+
+  await run({ nodes: ['discrepancy'], targetCounts: { discrepancy: 1 } });
+  expect(deps.runLabeler).toHaveBeenCalledTimes(1);
+  expect(existsSync(join(root, 'fixtures'))).toBe(false);
+  expect(loadItems('discrepancy', root)).toEqual([]);
 });
