@@ -28,6 +28,15 @@ describe('WhatsApp renderer', () => {
     expect(text).toContain('trace: trace-1');
   });
 
+  it('renders the same zero-row answer with or without schema columns', () => {
+    const input = {
+      explanation: '', rows: [], columnNames: [], totalRows: 0, assumptions: [], traceId: 'trace-zero',
+    };
+    expect(renderWhatsAppQueryAnswer(input)).toBe('No rows returned.\n\n(trace: trace-zero)');
+    expect(renderWhatsAppQueryAnswer({ ...input, columnNames: ['a', 'b'] }))
+      .toBe(renderWhatsAppQueryAnswer(input));
+  });
+
   it('renders and truncates table answers', () => {
     const text = renderWhatsAppQueryAnswer({
       explanation: 'Top rows.',
