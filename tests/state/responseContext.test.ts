@@ -36,6 +36,7 @@ import {
   getResponseContextsSince,
   responseContextDocumentId,
   getSlackResponseContext,
+  getLatestNegativeFeedback,
 } from '../../src/state/responseContext.js';
 
 const sampleContext = () => ({
@@ -202,7 +203,7 @@ describe('botHasRepliedInThread', () => {
     const result = await botHasRepliedInThread('C_ONE', 'thread-1');
     expect(result).toBe(true);
     expect(mockLimit).toHaveBeenCalledWith(20);
-    expect(mockSelect).toHaveBeenCalledWith('channel');
+    expect(mockSelect).toHaveBeenCalledWith('channel', 'expiresAt', 'createdAt');
   });
 
   it('returns false when no response context exists', async () => {
@@ -508,5 +509,59 @@ describe('getResponseContextsSince', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+});
+
+describe('logical expiry across thread readers (#69)', () => {
+  const DAY = 86_400_000;
+  const past = () => new Date(Date.now() - 1000);
+  const future = () => new Date(Date.now() + DAY);
+  // Expired by expiresAt but not yet removed by Firestore TTL, newest first.
+  const expired = { responseId: 'r-old', channel: 'C_ONE', threadTs: 'thread-1', generatedSql: 'SELECT old', negativeFeedback: true, createdAt: new Date(Date.now() - 2 * DAY), expiresAt: past() };
+  const fresh = { responseId: 'r-new', channel: 'C_ONE', threadTs: 'thread-1', generatedSql: 'SELECT new', negativeFeedback: true, createdAt: new Date(Date.now() - DAY), expiresAt: future() };
+  // Saved before expiresAt existed; createdAt is past the 90-day default.
+  const legacyExpired = { responseId: 'r-legacy', channel: 'C_ONE', threadTs: 'thread-1', generatedSql: 'SELECT legacy', negativeFeedback: true, createdAt: { toDate: () => new Date(Date.now() - 91 * DAY) } };
+  const legacyRecent = { ...legacyExpired, responseId: 'r-legacy-recent', createdAt: { toDate: () => new Date(Date.now() - DAY) } };
+
+  const serve = (...docs: Record<string, unknown>[]) => {
+    const query: Record<string, unknown> = {};
+    for (const m of ['where', 'orderBy', 'select']) query[m] = vi.fn(() => query);
+    query.limit = vi.fn(() => ({ get: vi.fn().mockResolvedValue({ docs: docs.map(d => ({ data: () => d })) }) }));
+    mockWhere.mockImplementation(() => query);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHasThreadParticipation.mockResolvedValue(false);
+  });
+
+  it('skips an expired answer and returns the live one in the same thread', async () => {
+    serve(expired, fresh);
+    expect((await getLatestResponseContext('C_ONE', 'thread-1'))?.responseId).toBe('r-new');
+    expect((await getLatestNegativeFeedback('C_ONE', 'thread-1'))?.sql).toBe('SELECT new');
+    expect(await botHasRepliedInThread('C_ONE', 'thread-1')).toBe(true);
+  });
+
+  it('treats a thread whose only answer has expired as having none', async () => {
+    serve(expired);
+    expect(await getLatestResponseContext('C_ONE', 'thread-1')).toBeNull();
+    expect(await getLatestNegativeFeedback('C_ONE', 'thread-1')).toBeNull();
+    expect(await botHasRepliedInThread('C_ONE', 'thread-1')).toBe(false);
+  });
+
+  it('expires a legacy record without expiresAt by createdAt plus retention', async () => {
+    serve(legacyExpired);
+    expect(await getLatestResponseContext('C_ONE', 'thread-1')).toBeNull();
+    expect(await getLatestNegativeFeedback('C_ONE', 'thread-1')).toBeNull();
+    expect(await botHasRepliedInThread('C_ONE', 'thread-1')).toBe(false);
+    mockDocGet.mockResolvedValue({ exists: true, data: () => legacyExpired });
+    expect(await getResponseContext('thread-1_msg')).toBeNull();
+  });
+
+  it('keeps a recent legacy record without expiresAt', async () => {
+    serve(legacyRecent);
+    expect((await getLatestResponseContext('C_ONE', 'thread-1'))?.responseId).toBe('r-legacy-recent');
+    mockDocGet.mockResolvedValue({ exists: true, data: () => legacyRecent });
+    expect((await getResponseContext('thread-1_msg'))?.responseId).toBe('r-legacy-recent');
   });
 });
