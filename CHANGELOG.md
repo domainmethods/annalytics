@@ -17,6 +17,7 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ### Fixed
 
+- A thread follow-up that was classified as a question about an existing answer (explain, refine or investigate) no longer starts a fresh SQL run when its handler fails (#48). The user gets an error with a trace ID instead; only a failed classification still falls back to the standard pipeline.
 - Single-value answers and discrepancy follow-up summaries now show BigQuery `DATE`/`DATETIME`/`TIMESTAMP` values as text instead of `[object Object]`; an empty single value shows `—` (#34).
 - Slack answers, their saved reasoning context and Table/Summary/CSV re-renders now include assumptions made during SQL generation as well as those from clarification, with duplicates removed, matching WhatsApp (#45). Zero-row answers list each assumption once.
 - Query results now report the full row count from BigQuery's results response, so a capped result shows its real total and a complete result of exactly the row cap is no longer marked truncated (#38). Short result pages are followed until the row cap is filled, and a page returned before the job finishes is retried instead of read as an empty result.
