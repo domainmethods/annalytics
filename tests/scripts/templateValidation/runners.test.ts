@@ -123,6 +123,24 @@ describe('template corpus runners', () => {
     });
   });
 
+  it('scores a Slack intake timeout as a candidate failure without aborting the sweep', async () => {
+    const env = await loadTemplateEnv('test');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      generateContent.mockReturnValueOnce(new Promise(() => {}));
+      const pending = createTemplateRunner('slackIntake', [
+        { ...base, text: question, expectedRoute: 'analytics_pipeline' },
+      ], env)();
+      await vi.advanceTimersByTimeAsync(8_001);
+      const { perEntry } = await pending;
+      expect(perEntry[0]).toMatchObject({
+        overallScore: 0, failure: { category: 'candidate', code: 'intake-timeout' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('credits deterministic Slack intake without calling the SDK', async () => {
     const env = await loadTemplateEnv('test');
     const { perEntry } = await createTemplateRunner('slackIntake', [

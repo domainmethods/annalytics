@@ -6,7 +6,7 @@ export type { NodeId };
 export type SweepFailure =
   | { category: 'provider'; code: 'model-request' | 'judge-request' }
   | { category: 'reference' | 'warehouse' | 'candidate'; code: 'sql-validation' | 'sql-lineage' | 'sql-execution' | 'sql-result-limit' }
-  | { category: 'candidate'; code: 'agent-output' | 'classifier-fallback' };
+  | { category: 'candidate'; code: 'agent-output' | 'classifier-fallback' | 'intake-timeout' };
 
 export function exhaustionRate(entries: { exhausted?: boolean }[]): number {
   return entries.filter(entry => entry.exhausted).length / (entries.length || 1);

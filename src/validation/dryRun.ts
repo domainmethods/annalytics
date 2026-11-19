@@ -15,6 +15,13 @@ export function initBigQuery(projectId?: string): void {
   bigquery = new BigQuery({ projectId });
 }
 
+/**
+ * True only for errors that reject the query itself. Everything else (including
+ * `notFound` and `accessDenied`) is treated as a warehouse failure. That is safe
+ * in the template harness only because its relation allowlist rejects unknown
+ * tables before the dry run; without such a pre-filter, a hallucinated table
+ * would be misread as infrastructure instead of a model error.
+ */
 export function isBigQueryQueryRejection(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'errors' in error && Array.isArray(error.errors) &&
     error.errors.length > 0 && error.errors.every((detail: unknown) =>

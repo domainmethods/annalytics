@@ -159,4 +159,35 @@ describe('executeQuery', () => {
     expect(result.columnNames).toEqual([]);
     expect(result.truncated).toBe(false);
   });
+
+  it('takes empty-result column names from the response schema', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([], '0', undefined, {
+      schema: { fields: [{ name: 'order_id' }, { name: 'total' }] },
+    }));
+
+    const result = await executeQuery('SELECT order_id, total FROM t WHERE FALSE', OPTS);
+
+    expect(result.columnNames).toEqual(['order_id', 'total']);
+  });
+
+  it('falls back to job statistics schema for empty-result column names', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([], '0'));
+    mockGetMetadata.mockResolvedValueOnce([{ statistics: {
+      totalBytesProcessed: '1000', query: { schema: { fields: [{ name: 'day' }] } },
+    } }]);
+
+    const result = await executeQuery('SELECT day FROM t WHERE FALSE', OPTS);
+
+    expect(result.columnNames).toEqual(['day']);
+  });
+
+  it('returns no empty-result column names when a schema field is unnamed', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([], '0', undefined, {
+      schema: { fields: [{ name: 'a' }, {}] },
+    }));
+
+    const result = await executeQuery('SELECT 1 WHERE FALSE', OPTS);
+
+    expect(result.columnNames).toEqual([]);
+  });
 });

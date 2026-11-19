@@ -128,11 +128,13 @@ async function executeScoredSql(
 
 const templateScorers: Scorers = {
   async slackIntake(item, { apiKey }, evidence) {
+    // Intake's timeout is a product latency SLA, not a provider outage: a
+    // profile too slow to answer within it fails the item rather than aborting
+    // the sweep. Real provider errors still abort via the gateway's onModelError.
     const result = await classifySlackIntake(item.text, apiKey, { onFallback: ({ reason }) => {
-      if (reason === 'timeout') evidence.providerAbort ??= new TemplateProviderAbort(408);
-      evidence.failure ??= reason === 'timeout' || reason === 'model_error'
+      evidence.failure ??= reason === 'model_error'
         ? { category: 'provider', code: 'model-request' }
-        : { category: 'candidate', code: 'classifier-fallback' };
+        : { category: 'candidate', code: reason === 'timeout' ? 'intake-timeout' : 'classifier-fallback' };
     } });
     return Number(result.route === item.expectedRoute);
   },
