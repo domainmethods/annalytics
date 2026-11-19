@@ -204,6 +204,7 @@ Do not let direction live only in dated entries — that is how this document de
 
 ## Relationship to Existing Docs
 
+- `CHANGELOG.md` records template release history and action-required update notes; README remains the command authority.
 - `README.md` is the product overview and command authority for the public template. (`.spec-workflow/steering/product.md`, if present, is the operator-local product brief and is gitignored.)
 - `CLAUDE.md` remains the agent-facing implementation guide.
 - `docs/superpowers/specs/2026-06-07-feedback-loop-system-design.md` designs the full side bar; treat it as **pre-implementation** — only the prerequisite classifier exists in code.
@@ -500,3 +501,13 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Physical three-part names are authoritative for identity matching (ReferenceCards, teachings, feedback attribution, benchmark and node-sweep scoring, fast-path reported/canonical names). A legacy `dataset.table` resolves only when it is unique across the complete advertised physical inventory; cross-project ambiguity is rejected or left unattributed. Expectation and card labels are never inventory candidates. Feedback reports without dbt artifacts warn and keep only fully qualified attribution. Migrate knowledge and expectations to three-part names.
 - SQL authorization in the routine fast path is separate from identity matching: two-part SQL references resolve only in the BigQuery execution default project and are rejected when that project is not configured, so inventory uniqueness can never authorize a cross-project table.
 - Defect repair of existing trust instruments only; no tranche change. Synthetic offline regressions only; no cloud resources or client evidence. Deployment and production acceptance remain outside this change.
+
+### 2026-11-18 - Template release and update process
+
+- Added a proposed 1.0.0 baseline aligned with package.json, based on merged PR
+  history, plus implementation sync and maintainer release instructions. No tag
+  or release is created by this change. This is template trust maintenance, not
+  a product tranche; existing gates and deferred work remain in force.
+- Evidence: merged PRs #98–#107 and git history; changelog notes identify operator
+  actions for validation, admission, deployment billing, ingestion, sampling,
+  and corrected acceptance semantics. No implementation evidence is included.
