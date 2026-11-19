@@ -1,3 +1,4 @@
+import { normalizeWaId } from './whatsapp/waId.js';
 import { getProModel } from './agents/modelConfig.js';
 
 export type WhatsAppConfig =
@@ -100,7 +101,10 @@ function parseEscalationMode(val: string | undefined): 'channel' | 'dm' {
 
 function loadWhatsAppConfig(): AppConfig['whatsapp'] {
   const enabled = parseEnvBool('WHATSAPP_ENABLED', false);
-  const allowedWaIds = parseEnvList('WHATSAPP_ALLOWED_WA_IDS');
+  const allowedWaIds = parseEnvList('WHATSAPP_ALLOWED_WA_IDS').map(normalizeWaId);
+  if (allowedWaIds.some((id) => !/^[0-9]+$/.test(id))) {
+    throw new Error('Invalid config: WHATSAPP_ALLOWED_WA_IDS entries must contain only digits after removing phone formatting');
+  }
   if (!enabled) {
     return {
       enabled: false,

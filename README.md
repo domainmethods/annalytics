@@ -214,6 +214,8 @@ The webhook URL is:
 https://<your-cloud-run-url>/whatsapp/webhook
 ```
 
+Comma-separated international sender IDs including country code (digits recommended, e.g. 15550000001). Plus signs, spaces, dashes, dots and parentheses are removed; other characters cause a startup error.
+
 Keep `WHATSAPP_ALLOWED_WA_IDS` set during the prototype so only explicit test
 numbers can invoke the analytics pipeline. Do not commit WABA IDs, phone number
 IDs, tokens, phone numbers, or pilot transcripts to the template repo.
