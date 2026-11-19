@@ -69,7 +69,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     thinkingLevels: ['minimal', 'low', 'medium', 'high'],
     inputPricePerMTok: 0.30,
     outputPricePerMTok: 2.50,
-    status: 'candidate',
+    status: 'default-eligible',
   },
   // Google routes this ID to gemini-3.6-flash, so it duplicates flash/3.6 and is not
   // swept separately. Priced as flash/3.6.

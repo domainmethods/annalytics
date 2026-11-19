@@ -78,6 +78,10 @@ requires enough cases to bound ε.
 `slackIntake`/`followUpClassifier` have objectively-checkable labels (route/intent), so
 `scripts/universal-sweep.ts` sizes them with **exact-match accuracy and no LLM judge** —
 immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both scored
-1.000 at every rung → `flash-lite/3.1`/minimal template default (`CLASSIFIER_LITE`).
+1.000 at every rung on the 2026-06-08 corpus, which was too easy to separate models.
+The harder tv-v1 pilot intake items (2026-11-19) moved the template default
+(`CLASSIFIER_LITE`) to `flash-lite/3.5`@low: 0.975 vs 0.950 for `flash-lite/3.1`@minimal.
+For intake, latency matters as much as accuracy: models that blow the 8s
+`INTAKE_TIMEOUT_MS` lose to smaller ones, so higher thinking is not free here.
 Keep corpora template-safe (generic metrics, no client names/IDs); `benchmarks/results/`
 is gitignored on purpose.

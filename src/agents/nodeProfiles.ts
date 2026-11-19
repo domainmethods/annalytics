@@ -24,13 +24,14 @@ export interface NodeProfile {
 // Shared constants — safe because getNodeProfile NEVER hands out a DEFAULTS
 // reference directly; every return is a fresh spread (see below).
 //
-// MEASURED vs PROVISIONAL. Two install-invariant classifier nodes (slackIntake,
-// followUpClassifier) are MEASURED: the judge-free floor-up sweep
-// (scripts/universal-sweep.ts, benchmarks/results/universal-sweep-2026-06-08.md)
-// scored exact-match route/intent accuracy across the full ladder and found BOTH
-// perfect (1.000) at every rung — including the cheapest model, flash-lite/3.1.
-// Flat-at-ceiling means the task sits below the model-difficulty floor, so floor-up
-// takes the cheapest rung (CLASSIFIER_LITE) rather than paying for unused capability.
+// Classifiers (slackIntake, followUpClassifier, ambiguityClassifier) are PROVISIONAL at
+// flash-lite/3.5@low. The 2026-06-08 judge-free sweep found slackIntake and
+// followUpClassifier flat at 1.000 on an easy corpus, so it could not separate models.
+// On the harder tv-v1 pilot intake items (2026-11-19, 40 items) flash-lite/3.5@low
+// scored 0.975 vs 0.950 for the old flash-lite/3.1@minimal default, at ~1.5x the cost
+// and ~1s p95. Flash 3.8 and Gemini 4 Hydrogen timed out against the 8s intake budget,
+// so a bigger model is not a better classifier here. followUpClassifier and
+// ambiguityClassifier follow by analogy; confirm all three on the frozen tv-v1 set.
 //
 // The remaining levels are PROVISIONAL role-based HEURISTICS, not measured (tiers
 // are NOT provisional — they encode real domain knowledge: flash for classify/format,
@@ -42,7 +43,7 @@ export interface NodeProfile {
 // only labels intake + follow-up routing). The three pro reasoning nodes are corpus-
 // limited on the SQL path (ε too large on the 12-question corpus to size safely) and
 // stay model-managed — see docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md.
-const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' };
+const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'low' };
 const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'minimal' };
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
@@ -51,9 +52,9 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 // Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
 // for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
+  // PROVISIONAL — slackIntake tv-v1 pilot 2026-11-19 (0.975 vs 0.950 for flash-lite/3.1);
+  // the other two by analogy. Confirm on the frozen tv-v1 set.
   slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
-  // PROVISIONAL — closed-set ambiguity typing, not yet sized.
   ambiguityClassifier: CLASSIFIER_LITE,
   // minimal — closed-set routing / structured selection / reformatting (un-measured)
   dbtStatus: FLASH_MINIMAL, chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
