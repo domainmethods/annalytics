@@ -176,15 +176,17 @@ describe('botHasRepliedInThread', () => {
     mockSelect.mockReturnValue({ get: mockGet });
   });
 
-  it('returns true when response context exists', async () => {
-    mockGet.mockResolvedValue({ empty: false });
-    const result = await botHasRepliedInThread('thread-1');
+  it('returns true when response context exists for the conversation', async () => {
+    mockGet.mockResolvedValue({ empty: false, docs: [{ data: () => ({ channel: 'C_ONE' }) }] });
+    const result = await botHasRepliedInThread('C_ONE', 'thread-1');
     expect(result).toBe(true);
+    expect(mockLimit).toHaveBeenCalledWith(20);
+    expect(mockSelect).toHaveBeenCalledWith('channel');
   });
 
   it('returns false when no response context exists', async () => {
-    mockGet.mockResolvedValue({ empty: true });
-    const result = await botHasRepliedInThread('thread-1');
+    mockGet.mockResolvedValue({ empty: true, docs: [] });
+    const result = await botHasRepliedInThread('C_ONE', 'thread-1');
     expect(result).toBe(false);
   });
 });
@@ -274,6 +276,7 @@ describe('getLatestResponseContext', () => {
       docs: [{
         data: () => ({
           responseId: 'r2',
+          channel: 'C_ONE',
           threadTs: 'thread-1',
           statusMsgTs: 'msg-2',
           generatedSql: 'SELECT 2',
@@ -281,12 +284,54 @@ describe('getLatestResponseContext', () => {
       }],
     });
 
-    const result = await getLatestResponseContext('thread-1');
+    const result = await getLatestResponseContext('C_ONE', 'thread-1');
 
     expect(result).not.toBeNull();
     expect(result!.responseId).toBe('r2');
     expect(mockWhere).toHaveBeenCalledWith('threadTs', '==', 'thread-1');
     expect(mockOrderBy).toHaveBeenCalledWith('createdAt', 'desc');
+  });
+});
+
+describe('conversation scoping', () => {
+  const ctx = (responseId: string, channel?: string) => ({
+    data: () => ({ responseId, threadTs: 'same.ts', ...(channel === undefined ? {} : { channel }) }),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ orderBy: mockOrderBy, limit: mockLimit });
+    mockOrderBy.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet, select: mockSelect });
+    mockSelect.mockReturnValue({ get: mockGet });
+  });
+
+  it('botHasRepliedInThread only counts replies in the same conversation', async () => {
+    mockGet.mockResolvedValue({ docs: [ctx('a', 'C_TWO')] });
+    expect(await botHasRepliedInThread('C_ONE', 'same.ts')).toBe(false);
+    expect(await botHasRepliedInThread('C_TWO', 'same.ts')).toBe(true);
+  });
+
+  it('botHasRepliedInThread ignores legacy records without a channel', async () => {
+    mockGet.mockResolvedValue({ docs: [ctx('legacy')] });
+    expect(await botHasRepliedInThread('C_ONE', 'same.ts')).toBe(false);
+  });
+
+  it('getLatestResponseContext returns the context of the requested conversation', async () => {
+    mockGet.mockResolvedValue({ docs: [ctx('two', 'C_TWO'), ctx('one', 'C_ONE')] });
+    expect((await getLatestResponseContext('C_ONE', 'same.ts'))?.responseId).toBe('one');
+    expect((await getLatestResponseContext('C_TWO', 'same.ts'))?.responseId).toBe('two');
+    expect(mockLimit).toHaveBeenCalledWith(20);
+  });
+
+  it('getLatestResponseContext does not leak another conversation context', async () => {
+    mockGet.mockResolvedValue({ docs: [ctx('two', 'C_TWO')] });
+    expect(await getLatestResponseContext('C_ONE', 'same.ts')).toBeNull();
+  });
+
+  it('getLatestResponseContext never returns a legacy record without a channel', async () => {
+    mockGet.mockResolvedValue({ docs: [ctx('legacy')] });
+    expect(await getLatestResponseContext('C_ONE', 'same.ts')).toBeNull();
   });
 });
 

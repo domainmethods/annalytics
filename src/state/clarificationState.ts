@@ -1,4 +1,5 @@
 import { getDb } from './firestore.js';
+import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
 
 export const CLARIFICATION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -33,18 +34,20 @@ export async function saveClarificationState(
 }
 
 export async function getClarificationState(
+  channel: string,
   threadTs: string,
 ): Promise<ClarificationState | null> {
   const db = getDb();
   const snapshot = await db.collection(COLLECTION)
     .where('threadTs', '==', threadTs)
     .where('state', '==', 'awaiting_reply')
-    .limit(1)
+    .limit(THREAD_SCOPE_SCAN_LIMIT)
     .get();
 
-  if (snapshot.empty) return null;
+  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  if (!doc) return null;
 
-  const data = snapshot.docs[0].data() as ClarificationState & {
+  const data = doc.data() as ClarificationState & {
     expiresAt: Date | { toDate: () => Date };
   };
 
@@ -53,7 +56,7 @@ export async function getClarificationState(
     : (data.expiresAt as { toDate: () => Date }).toDate();
 
   if (expiresAt < new Date()) {
-    await snapshot.docs[0].ref.delete();
+    await doc.ref.delete();
     return null;
   }
 

@@ -133,6 +133,7 @@ export async function runWhatsAppPipeline(
     const savedContext: ResponseContext = {
       ...outcome.responseContext,
       threadTs: conversationId,
+      channel: conversationId,
       statusMsgTs: sent.messageId,
       surface: 'whatsapp',
     };
@@ -391,7 +392,7 @@ async function loadNegativeFeedback(
   logger: ReturnType<typeof createLogger>,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {
   try {
-    return await getLatestNegativeFeedback(conversationId);
+    return await getLatestNegativeFeedback(conversationId, conversationId);
   } catch (err) {
     logger.warn({ err }, 'whatsapp.negative_feedback_failed');
     return null;

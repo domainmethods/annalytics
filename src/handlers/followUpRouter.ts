@@ -27,7 +27,7 @@ export async function routeFollowUp(
 
   switch (intent) {
     case 'meta_question': {
-      const ctx = await getLatestResponseContext(threadTs);
+      const ctx = await getLatestResponseContext(channel, threadTs);
       if (!ctx) {
         await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to explain.' });
         return;
@@ -38,7 +38,7 @@ export async function routeFollowUp(
     }
 
     case 'refinement': {
-      const ctx = await getLatestResponseContext(threadTs);
+      const ctx = await getLatestResponseContext(channel, threadTs);
       if (!ctx) {
         await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to refine.' });
         return;
@@ -58,7 +58,7 @@ export async function routeFollowUp(
     }
 
     case 'discrepancy': {
-      const ctx = await getLatestResponseContext(threadTs);
+      const ctx = await getLatestResponseContext(channel, threadTs);
       if (!ctx) {
         await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to investigate.' });
         return;

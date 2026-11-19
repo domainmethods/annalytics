@@ -221,6 +221,7 @@ const config: PipelineConfig = {
 const savedResponseContext = {
   responseId: 'resp-prev',
   threadTs: 'thread-1',
+  channel: 'C123',
   statusMsgTs: 'prev-status-1',
   clarifiedQuestion: 'What is total revenue?',
   assumptions: ['All-time'],

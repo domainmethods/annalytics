@@ -1,5 +1,6 @@
 import { LOCK_TTL_MS } from './threadLock.js';
 import { getDb } from './firestore.js';
+import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
 import type { EscalationState } from '../types.js';
 
 const COLLECTION = 'escalation_state';
@@ -47,17 +48,20 @@ function toEscalationState(data: Record<string, unknown>): EscalationState {
 async function queryPendingEscalation(
   field: string,
   value: string,
+  originalChannel?: string,
 ): Promise<EscalationLookup> {
   const db = getDb();
   const snapshot = await db.collection(COLLECTION)
     .where(field, '==', value)
     .where('pipelineState', '==', 'awaiting_human')
-    .limit(1)
+    .limit(originalChannel === undefined ? 1 : THREAD_SCOPE_SCAN_LIMIT)
     .get();
 
-  if (snapshot.empty) return null;
+  const doc = originalChannel === undefined
+    ? snapshot.docs[0]
+    : snapshot.docs.find(d => ownedByConversation(d.data().originalChannel, originalChannel));
+  if (!doc) return null;
 
-  const doc = snapshot.docs[0];
   const state = toEscalationState(doc.data());
 
   if (state.expiresAt < new Date()) {
@@ -76,19 +80,21 @@ async function queryPendingEscalation(
 export const RESOLVING_GUARD_MS = LOCK_TTL_MS;
 
 export async function getEscalationByThread(
+  channel: string,
   threadTs: string,
 ): Promise<EscalationLookup> {
-  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs);
+  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs, channel);
   if (awaiting) return awaiting;
 
   const snapshot = await getDb().collection(COLLECTION)
     .where('originalThreadTs', '==', threadTs)
     .where('pipelineState', '==', 'resolving')
-    .limit(1)
+    .limit(THREAD_SCOPE_SCAN_LIMIT)
     .get();
-  if (snapshot.empty) return null;
+  const doc = snapshot.docs.find(d => ownedByConversation(d.data().originalChannel, channel));
+  if (!doc) return null;
 
-  const data = snapshot.docs[0].data();
+  const data = doc.data();
   const claimedAt = toDate(data.claimedAt as Date | FirestoreTimestamp | undefined);
   if (!claimedAt || Date.now() - claimedAt.getTime() > RESOLVING_GUARD_MS) return null;
   return { status: 'pending', state: toEscalationState(data) };
@@ -170,8 +176,9 @@ export async function timeoutEscalation(
 }
 
 export async function hasPendingEscalation(
+  channel: string,
   threadTs: string,
 ): Promise<boolean> {
-  const lookup = await getEscalationByThread(threadTs);
+  const lookup = await getEscalationByThread(channel, threadTs);
   return lookup?.status === 'pending';
 }

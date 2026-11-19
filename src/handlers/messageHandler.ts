@@ -148,7 +148,7 @@ export async function handleMessageEvent({
       apiKey: config.gemini.apiKey,
       client,
       markVisible: () => markSlackEventVisible(eventId),
-      releaseLock: () => releaseThreadLock(threadTs, ownerToken),
+      releaseLock: () => releaseThreadLock(msg.channel, threadTs, ownerToken),
     });
     if (handledByIntake) {
       visibleResponse = true;
@@ -184,7 +184,7 @@ export async function handleMessageEvent({
               intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
               client, toPipelineConfig(config), getTables(),
             );
-            await releaseThreadLock(threadTs, ownerToken).catch(() => {});
+            await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
             lockHeld = false;
             return;
           }
@@ -207,7 +207,7 @@ export async function handleMessageEvent({
     });
   } catch (error) {
     if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-    if (lockHeld) await releaseThreadLock(msg.thread_ts || msg.ts, ownerToken).catch(() => {});
+    if (lockHeld) await releaseThreadLock(msg.channel, msg.thread_ts || msg.ts, ownerToken).catch(() => {});
     throw error;
   }
 }

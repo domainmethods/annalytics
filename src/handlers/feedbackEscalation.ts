@@ -153,7 +153,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     return;
   }
 
-  if (await hasPendingEscalation(threadTs)) {
+  if (await hasPendingEscalation(channel, threadTs)) {
     await respond({ replace_original: true, text: '✅ This thread is already flagged for the data team.', thread_ts: threadTs } as any);
     return;
   }

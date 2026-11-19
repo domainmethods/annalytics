@@ -285,6 +285,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       await saveResponseContext({
         responseId: traceId,
         threadTs,
+        channel,
         statusMsgTs,
         clarifiedQuestion: resolvedQuestion,
         assumptions: assumptions || [],
@@ -345,7 +346,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
     // Stage 3: Unified Quality Loop (generate + validate + supervise)
-    const negativeExample = await getLatestNegativeFeedback(threadTs);
+    const negativeExample = await getLatestNegativeFeedback(channel, threadTs);
 
     let pipelineMode: 'full_quality_loop' | 'routine_fast_path' = 'full_quality_loop';
     let supervisorDecision: 'skipped' | 'required' = 'required';
@@ -586,6 +587,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     await saveResponseContext({
       responseId: traceId,
       threadTs,
+      channel,
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
       assumptions,
@@ -702,7 +704,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     });
   } finally {
     // Only callers that acquired the lease in preflight pass a token; resume paths do not.
-    if (input.ownerToken) await releaseThreadLock(threadTs, input.ownerToken).catch(() => {});
+    if (input.ownerToken) await releaseThreadLock(channel, threadTs, input.ownerToken).catch(() => {});
   }
 }
 

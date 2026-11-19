@@ -30,6 +30,8 @@ export interface QueryResult {
 export interface ResponseContext {
   responseId: string;
   threadTs: string;
+  /** Conversation that owns `threadTs`. Absent on legacy records, which thread lookups never reuse. */
+  channel?: string;
   statusMsgTs: string;
   surface?: 'slack' | 'whatsapp';
   clarifiedQuestion: string;

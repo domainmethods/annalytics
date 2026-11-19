@@ -634,6 +634,7 @@ describe('Pipeline — Integration', () => {
       docs: [
         {
           data: () => ({
+            channel: 'C123',
             generatedSql: 'SELECT bad_column FROM `analytics.fct_orders`',
             explanation: 'Wrong approach to counting orders',
             tablesUsed: ['analytics.fct_orders'],

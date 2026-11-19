@@ -1,6 +1,7 @@
 import { parseResponseContextRetentionDays } from './retentionSettings.js';
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
+import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
 
 type FirestoreTimestamp = { toDate: () => Date };
 
@@ -68,14 +69,14 @@ export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
     });
 }
 
-export async function botHasRepliedInThread(threadTs: string): Promise<boolean> {
+export async function botHasRepliedInThread(channel: string, threadTs: string): Promise<boolean> {
   const snapshot = await getDb()
     .collection('response_context')
     .where('threadTs', '==', threadTs)
-    .limit(1)
-    .select() // existence check only — fetches no fields
+    .limit(THREAD_SCOPE_SCAN_LIMIT)
+    .select('channel') // ownership check only
     .get();
-  return !snapshot.empty;
+  return snapshot.docs.some(d => ownedByConversation(d.data().channel, channel));
 }
 
 export async function recordFeedback(
@@ -130,17 +131,18 @@ export async function getResponseContext(
 }
 
 export async function getLatestResponseContext(
+  channel: string,
   threadTs: string,
 ): Promise<ResponseContext | null> {
   const snapshot = await getDb()
     .collection('response_context')
     .where('threadTs', '==', threadTs)
     .orderBy('createdAt', 'desc')
-    .limit(1)
+    .limit(THREAD_SCOPE_SCAN_LIMIT)
     .get();
 
-  if (snapshot.empty) return null;
-  return snapshot.docs[0].data() as ResponseContext;
+  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  return doc ? doc.data() as ResponseContext : null;
 }
 
 /** All response contexts created within the trailing window (for the feedback
@@ -166,6 +168,7 @@ export async function getResponseContextsSince(
 }
 
 export async function getLatestNegativeFeedback(
+  channel: string,
   threadTs: string,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {
   const db = getDb();
@@ -173,12 +176,13 @@ export async function getLatestNegativeFeedback(
     .where('threadTs', '==', threadTs)
     .where('negativeFeedback', '==', true)
     .orderBy('createdAt', 'desc')
-    .limit(1)
+    .limit(THREAD_SCOPE_SCAN_LIMIT)
     .get();
 
-  if (snapshot.empty) return null;
+  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  if (!doc) return null;
 
-  const data = snapshot.docs[0].data();
+  const data = doc.data();
   return {
     sql: data.generatedSql,
     explanation: data.explanation || data.reasoningChain || '',

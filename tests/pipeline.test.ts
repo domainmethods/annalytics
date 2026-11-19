@@ -180,7 +180,7 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
-    expect(mockReleaseLock).toHaveBeenCalledWith('thread-1', 'lease-1');
+    expect(mockReleaseLock).toHaveBeenCalledWith('C123', 'thread-1', 'lease-1');
   });
 
   it('does not release the thread lock when no lease token was passed (resume paths)', async () => {

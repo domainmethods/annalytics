@@ -527,3 +527,7 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 ### 2026-11-18 - Bounded response persistence (#84)
 
 - Shared response persistence now budgets serialized context bytes and trims schema column details while retaining considered table names. Meta-question prompts disclose missing detail; SQL, reasoning and override inputs remain intact. Slack persistence failure preserves the delivered answer, matching WhatsApp. This repairs the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic large-schema and write-failure regressions cover the defect.
+
+### 2026-11-18 - Conversation-scoped thread state (#30)
+
+- Thread locks, clarifications, escalation guards and response-context lookups are now scoped to the conversation as well as the thread timestamp. WhatsApp passes its conversation id for both, and its saved response contexts now record that owner. This repairs shared state used by the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic same-timestamp, two-conversation regressions cover the defect.

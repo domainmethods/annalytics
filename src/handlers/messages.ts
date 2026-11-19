@@ -24,7 +24,7 @@ export async function checkClarificationReply(
   const threadTs = event.thread_ts;
   if (!threadTs) return null;
 
-  const state = await getClarificationState(threadTs);
+  const state = await getClarificationState(event.channel, threadTs);
   if (!state) return null;
 
   // Merge user reply into clarified question
@@ -49,13 +49,13 @@ export function canMessageEventReachPipeline(event: MessageEvent): boolean {
   return isDirectMessageSurface(event) || Boolean(event.thread_ts);
 }
 
-export async function shouldRespond(event: MessageEvent): Promise<boolean> {
+export async function shouldRespond(event: MessageEvent & { channel: string }): Promise<boolean> {
   // Always respond in DMs
   if (isDirectMessageSurface(event)) return true;
 
   // For channel messages: only respond in threads where bot has participated
   if (event.thread_ts) {
-    return botHasRepliedInThread(event.thread_ts);
+    return botHasRepliedInThread(event.channel, event.thread_ts);
   }
 
   // Bare channel message without @mention: ignore

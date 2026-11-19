@@ -53,7 +53,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
         apiKey: config.gemini.apiKey,
         client,
         markVisible: () => markSlackEventVisible(eventId),
-        releaseLock: () => releaseThreadLock(threadTs, ownerToken),
+        releaseLock: () => releaseThreadLock(event.channel, threadTs, ownerToken),
       });
       if (handledByIntake) {
         visibleResponse = true;
@@ -84,7 +84,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
     } catch (error) {
       // runPipeline has its own error handling; this catches pre-pipeline failures
       if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-      if (lockHeld) await releaseThreadLock(threadTs, ownerToken).catch(() => {});
+      if (lockHeld) await releaseThreadLock(event.channel, threadTs, ownerToken).catch(() => {});
       throw error;
     }
   });

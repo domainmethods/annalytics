@@ -66,6 +66,7 @@ describe('getLatestNegativeFeedback', () => {
       empty: false,
       docs: [{
         data: () => ({
+          channel: 'C_ONE',
           generatedSql: 'SELECT bad FROM table',
           explanation: 'Bad query',
           tablesUsed: ['table'],
@@ -73,7 +74,7 @@ describe('getLatestNegativeFeedback', () => {
       }],
     });
 
-    const result = await getLatestNegativeFeedback('thread-1');
+    const result = await getLatestNegativeFeedback('C_ONE', 'thread-1');
 
     expect(result).not.toBeNull();
     expect(result!.sql).toBe('SELECT bad FROM table');
@@ -83,19 +84,50 @@ describe('getLatestNegativeFeedback', () => {
   });
 
   it('returns null when no negative feedback exists', async () => {
-    mockGet.mockResolvedValue({ empty: true });
+    mockGet.mockResolvedValue({ empty: true, docs: [] });
 
-    const result = await getLatestNegativeFeedback('thread-1');
+    const result = await getLatestNegativeFeedback('C_ONE', 'thread-1');
 
     expect(result).toBeNull();
   });
 
   it('returns null when negative feedback exists in a different thread', async () => {
-    mockGet.mockResolvedValue({ empty: true });
+    mockGet.mockResolvedValue({ empty: true, docs: [] });
 
-    const result = await getLatestNegativeFeedback('thread-other');
+    const result = await getLatestNegativeFeedback('C_ONE', 'thread-other');
 
     expect(result).toBeNull();
     expect(mockWhere).toHaveBeenCalledWith('threadTs', '==', 'thread-other');
+  });
+});
+
+describe('conversation scoping', () => {
+  const neg = (sql: string, channel?: string) => ({
+    data: () => ({
+      generatedSql: sql, explanation: `why ${sql}`, tablesUsed: ['t'],
+      ...(channel === undefined ? {} : { channel }),
+    }),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupChain();
+  });
+
+  it('returns only the negative feedback of the requested conversation', async () => {
+    mockGet.mockResolvedValue({ docs: [neg('SELECT two', 'C_TWO'), neg('SELECT one', 'C_ONE')] });
+    expect((await getLatestNegativeFeedback('C_ONE', 'same.ts'))?.sql).toBe('SELECT one');
+    expect((await getLatestNegativeFeedback('C_TWO', 'same.ts'))?.sql).toBe('SELECT two');
+    expect(mockLimit).toHaveBeenCalledWith(20);
+  });
+
+  it('does not leak negative feedback from another conversation', async () => {
+    mockGet.mockResolvedValue({ docs: [neg('SELECT two', 'C_TWO')] });
+    expect(await getLatestNegativeFeedback('C_ONE', 'same.ts')).toBeNull();
+  });
+
+  it('never returns a legacy record without a channel', async () => {
+    mockGet.mockResolvedValue({ docs: [neg('SELECT legacy')] });
+    expect(await getLatestNegativeFeedback('C_ONE', 'same.ts')).toBeNull();
   });
 });
