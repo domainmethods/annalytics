@@ -387,3 +387,35 @@ describe('re-execution failure', () => {
     expect((meta as any).traceId).toBe('trace-abc');
   });
 });
+
+describe('missing response context', () => {
+  const viewer = { userId: 'U1', threadTs: 'thread-root' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(null);
+    mockClient.chat.postEphemeral.mockResolvedValue({ ok: true });
+  });
+
+  it.each([
+    ['table', handleTableOverride],
+    ['summary', handleSummaryOverride],
+  ] as const)('%s override leaves the delivered answer untouched and tells only the viewer', async (_name, handler) => {
+    await handler('thread-1_msg-1', 'C1', 'msg-1', mockClient, overrideConfig, viewer);
+
+    expect(mockClient.chat.update).not.toHaveBeenCalled();
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockClient.chat.postEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'C1',
+      user: 'U1',
+      thread_ts: 'thread-root',
+      text: expect.stringContaining('Response context is unavailable'),
+    }));
+  });
+
+  it('does not touch the answer when no viewer is known', async () => {
+    await handleTableOverride('thread-1_msg-1', 'C1', 'msg-1', mockClient, overrideConfig);
+    expect(mockClient.chat.update).not.toHaveBeenCalled();
+    expect(mockClient.chat.postEphemeral).not.toHaveBeenCalled();
+  });
+});

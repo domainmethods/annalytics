@@ -14,7 +14,7 @@ import { recordFeedback, getResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
-import { handleTableOverride, handleSummaryOverride, handleCsvOverride } from './handlers/responseOverrides.js';
+import { handleTableOverride, handleSummaryOverride, handleCsvOverride, notifyContextUnavailable, type OverrideViewer } from './handlers/responseOverrides.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
 import { handleClarificationCancel } from './handlers/clarificationCancel.js';
 import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
@@ -329,9 +329,12 @@ app.action(/show_reasoning_.*/, async ({ action, ack, body, client }) => {
   if (!compoundKey) return;
 
   const ctx = await getResponseContext(compoundKey);
-  if (!ctx) return;
-
   const channel = (body as any).channel?.id;
+  if (!ctx) {
+    if (channel) await notifyContextUnavailable(client, channel, overrideViewer(body));
+    return;
+  }
+
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
 
@@ -475,6 +478,13 @@ const overrideConfig = {
   geminiApiKey: config.gemini.apiKey,
 };
 
+function overrideViewer(body: unknown): OverrideViewer | undefined {
+  const userId = (body as any).user?.id;
+  if (!userId) return undefined;
+  const threadTs = (body as any).message?.thread_ts || (body as any).message?.ts;
+  return threadTs ? { userId, threadTs } : { userId };
+}
+
 app.action(/override_table_.*/, async ({ action, ack, body, client }) => {
   await ack();
   const btn = action as { value?: string };
@@ -482,7 +492,7 @@ app.action(/override_table_.*/, async ({ action, ack, body, client }) => {
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
-  await handleTableOverride(btn.value, channel, messageTs, client, overrideConfig);
+  await handleTableOverride(btn.value, channel, messageTs, client, overrideConfig, overrideViewer(body));
 });
 
 app.action(/override_summary_.*/, async ({ action, ack, body, client }) => {
@@ -492,7 +502,7 @@ app.action(/override_summary_.*/, async ({ action, ack, body, client }) => {
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
-  await handleSummaryOverride(btn.value, channel, messageTs, client, overrideConfig);
+  await handleSummaryOverride(btn.value, channel, messageTs, client, overrideConfig, overrideViewer(body));
 });
 
 app.action(/override_csv_.*/, async ({ action, ack, body, client }) => {

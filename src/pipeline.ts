@@ -307,6 +307,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         supervisorDecision: 'required',
         supervisorTriggers: ['dbt_status_route'],
         fastPathIneligibleReasons: ['not_data_query'],
+      }).catch(error => {
+        logger.error({ error, traceId }, 'Response context persistence failed after answer delivery');
       });
 
       logStage(logger, { traceId, stage: 'format', durationMs: Date.now() - startTime });
@@ -621,6 +623,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           dataType: c.dataType,
         })),
       })),
+    }).catch(error => {
+      logger.error({ error, traceId }, 'Response context persistence failed after answer delivery');
     });
 
     // Stage 7b: Chart generation (fire-and-forget — failures silently skipped)

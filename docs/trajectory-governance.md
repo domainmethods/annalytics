@@ -523,3 +523,7 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Trust maintenance: text replies and checkmarks claim an awaiting escalation transactionally before resuming a query or posting a confirmation. Timeout transitions also check the current state.
 - Delivery is at most once. A crash or delivery error leaves a resolving record; neither event retries nor the lifecycle sweep reclaim it, since a remote operation may already have succeeded. Recovery is an explicit fresh question or direct analyst assistance, not replay of the old claim. Resolved and resolving records stay outside awaiting-only reminder/timeout queries; existing query shapes and indexes remain unchanged.
 - No product tranche or deferred feature is activated. Evidence is synthetic concurrency and state regression coverage; no live services are changed.
+
+### 2026-11-18 - Bounded response persistence (#84)
+
+- Shared response persistence now budgets serialized context bytes and trims schema column details while retaining considered table names. Meta-question prompts disclose missing detail; SQL, reasoning and override inputs remain intact. Slack persistence failure preserves the delivered answer, matching WhatsApp. This repairs the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic large-schema and write-failure regressions cover the defect.
