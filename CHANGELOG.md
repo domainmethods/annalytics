@@ -15,6 +15,10 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ## Unreleased
 
+### Fixed
+
+- Per-user hourly rate limits admit and count concurrent requests atomically (#31).
+
 ## 0.1.0 - 2026-11-18
 
 ### Added

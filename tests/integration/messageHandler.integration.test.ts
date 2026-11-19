@@ -45,7 +45,17 @@ const {
     };
   }
 
+  let transactionQueue = Promise.resolve();
   const mockDb = {
+    runTransaction: vi.fn((callback: (tx: any) => Promise<any>) => {
+      const result = transactionQueue.then(() => callback({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any) => ref.set(data),
+        update: (ref: any, data: any) => ref.update(data),
+      }));
+      transactionQueue = result.then(() => undefined, () => undefined);
+      return result;
+    }),
     doc: vi.fn((path: string) => createDocRef(...(path.split('/') as [string, string]))),
     collection: vi.fn((name: string) => {
       const chain: any = {};
