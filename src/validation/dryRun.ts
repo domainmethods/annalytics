@@ -1,8 +1,12 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import type { ValidationResult } from '../types.js';
 
-export type ReferencedTable = { datasetId?: string };
-export type DryRunValidationResult = ValidationResult & { referencedTables?: ReferencedTable[] };
+export type ReferencedTable = { projectId?: string; datasetId?: string; tableId?: string };
+export type QueryRelationMetadata = {
+  referencedTables?: ReferencedTable[];
+  referencedLogicalViews?: ReferencedTable[];
+};
+export type DryRunValidationResult = ValidationResult & QueryRelationMetadata;
 
 let bigquery: BigQuery;
 
@@ -30,8 +34,12 @@ export async function dryRunValidation(sql: string): Promise<DryRunValidationRes
     }
 
     const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
-    const { referencedTables } = statistics.query;
-    return { valid: true, layer: 'L3-dryrun', bytesProcessed, ...(referencedTables && { referencedTables }) };
+    const { referencedTables, referencedLogicalViews } = statistics.query;
+    return {
+      valid: true, layer: 'L3-dryrun', bytesProcessed,
+      ...(referencedTables && { referencedTables }),
+      ...(referencedLogicalViews && { referencedLogicalViews }),
+    };
   } catch (error) {
     return {
       valid: false,

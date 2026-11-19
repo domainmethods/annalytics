@@ -224,33 +224,67 @@ it('drafts and labels 20 inputs at a time and spreads them across categories', a
 });
 
 const relationSql = 'SELECT * FROM tv_thelook.orders';
-const allowedTable = { datasetId: 'tv_thelook', tableId: 'orders' };
-const foreignTable = { datasetId: 'elsewhere', tableId: 'orders' };
+const projectId = 'test-project';
+const approvedView = { projectId, datasetId: 'tv_thelook', tableId: 'orders' };
+const sourceTable = { projectId: 'bigquery-public-data', datasetId: 'thelook_ecommerce', tableId: 'orders' };
 
-it('checks every dry-run reference and rejects missing metadata for FROM', () => {
-  expect(checkTemplateRelations(relationSql, [allowedTable])).toBeUndefined();
-  expect(checkTemplateRelations(relationSql, [allowedTable, foreignTable])).toBeInstanceOf(Error);
-  expect(checkTemplateRelations(relationSql, [])).toBeInstanceOf(Error);
-  expect(checkTemplateRelations(relationSql, undefined)).toBeInstanceOf(Error);
-  expect(checkTemplateRelations("SELECT 'FROM' AS label", [])).toBeUndefined();
+it('accepts exact TheLook lineage for a query that names an approved view', () => {
+  expect(checkTemplateRelations(relationSql, projectId, {
+    referencedTables: [sourceTable], referencedLogicalViews: [approvedView],
+  })).toBeUndefined();
+  expect(checkTemplateRelations(relationSql, projectId, { referencedTables: [sourceTable] })).toBeUndefined();
+  expect(checkTemplateRelations(relationSql, projectId, { referencedLogicalViews: [approvedView] })).toBeUndefined();
+  expect(checkTemplateRelations(relationSql, projectId, { referencedTables: [approvedView] })).toBeUndefined();
+  expect(checkTemplateRelations(
+    'WITH selected AS (SELECT * FROM `tv_thelook.orders`) SELECT * FROM selected',
+    projectId, { referencedTables: [sourceTable] },
+  )).toBeUndefined();
 });
 
-it('blocks foreign dry-run references before executing and rejects federated SQL before validation', async () => {
-  initBigQuery('test-project');
-  const dryRunJob = (referencedTables: typeof allowedTable[]) => ({
-    metadata: { statistics: { totalBytesProcessed: '100', query: { statementType: 'SELECT', referencedTables } } },
+it.each([
+  { ...sourceTable, projectId: 'other-project' },
+  { ...sourceTable, datasetId: 'elsewhere' },
+  { ...sourceTable, tableId: 'unknown' },
+  { ...approvedView, projectId: 'other-project' },
+  { ...approvedView, projectId: undefined },
+])('rejects off-allowlist metadata %j', table => {
+  expect(checkTemplateRelations(relationSql, projectId, {
+    referencedTables: [sourceTable, table], referencedLogicalViews: [approvedView],
+  })).toBeInstanceOf(Error);
+});
+
+it('rejects direct sources, foreign views and missing relation evidence', () => {
+  const metadata = { referencedTables: [sourceTable], referencedLogicalViews: [approvedView] };
+  expect(checkTemplateRelations('SELECT * FROM `bigquery-public-data.thelook_ecommerce.orders`', projectId, metadata))
+    .toBeInstanceOf(Error);
+  expect(checkTemplateRelations('SELECT * FROM `other-project.tv_thelook.orders`', projectId, metadata))
+    .toBeInstanceOf(Error);
+  expect(checkTemplateRelations('SELECT * FROM orders', projectId, metadata)).toBeInstanceOf(Error);
+  expect(checkTemplateRelations(relationSql, projectId, {
+    ...metadata, referencedLogicalViews: [{ ...approvedView, projectId: 'other-project' }],
+  })).toBeInstanceOf(Error);
+  expect(checkTemplateRelations(relationSql, projectId, {})).toBeInstanceOf(Error);
+  expect(checkTemplateRelations("SELECT 'FROM' AS label", projectId, {})).toBeUndefined();
+});
+
+it('uses dry-run table and view metadata before executing and blocks federated SQL up front', async () => {
+  initBigQuery(projectId);
+  const dryRunJob = (referencedLogicalViews: typeof approvedView[]) => ({
+    metadata: { statistics: { totalBytesProcessed: '100', query: {
+      statementType: 'SELECT', referencedTables: [sourceTable], referencedLogicalViews,
+    } } },
   });
-  mockCreateQueryJob.mockReset().mockResolvedValueOnce([dryRunJob([foreignTable])])
-    .mockResolvedValueOnce([dryRunJob([allowedTable])]);
+  mockCreateQueryJob.mockReset().mockResolvedValueOnce([dryRunJob([{ ...approvedView, projectId: 'other-project' }])])
+    .mockResolvedValueOnce([dryRunJob([approvedView])]);
   const execute = vi.spyOn(runner, 'executeQuery').mockResolvedValue({
     columnNames: [], rows: [], truncated: false, bytesProcessed: 0, totalRows: 0,
   });
-  await expect(executeTemplateSql('SELECT * FROM eXtErNaL_QuErY("c", "SELECT 1")')).resolves.toBeInstanceOf(Error);
+  await expect(executeTemplateSql('SELECT * FROM eXtErNaL_QuErY("c", "SELECT 1")', projectId)).resolves.toBeInstanceOf(Error);
   expect(mockCreateQueryJob).not.toHaveBeenCalled();
-  await expect(executeTemplateSql(relationSql)).resolves.toBeInstanceOf(Error);
+  await expect(executeTemplateSql(relationSql, projectId)).resolves.toBeInstanceOf(Error);
   expect(execute).not.toHaveBeenCalled();
 
-  await expect(executeTemplateSql(relationSql)).resolves.not.toBeInstanceOf(Error);
+  await expect(executeTemplateSql(relationSql, projectId)).resolves.not.toBeInstanceOf(Error);
   expect(mockCreateQueryJob.mock.calls).toEqual([
     [{ query: relationSql, dryRun: true, useLegacySql: false }],
     [{ query: relationSql, dryRun: true, useLegacySql: false }],

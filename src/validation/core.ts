@@ -1,7 +1,7 @@
 import type { ValidationResult } from '../types.js';
 import { staticAnalysis } from './staticAnalysis.js';
 import { astValidation } from './astValidation.js';
-import { dryRunValidation, type ReferencedTable } from './dryRun.js';
+import { dryRunValidation, type QueryRelationMetadata } from './dryRun.js';
 
 /**
  * One record per validation layer attempt. Shared by every path that keeps a
@@ -39,7 +39,7 @@ export function toLayerRecord(
  * is intentionally NOT here — it is policy applied per-path (inline for
  * single-pass paths; once after the retry loop in qualityLoop).
  */
-export interface CoreValidationOutcome {
+export interface CoreValidationOutcome extends QueryRelationMetadata {
   /** l1, l2, l3 records in order, each stamped with `attempt`. */
   records: ValidationLayerRecord[];
   /** Discriminant of which layer blocked, or null when L1 and L3 both passed. */
@@ -48,7 +48,6 @@ export interface CoreValidationOutcome {
   blocked: ValidationResult | null;
   /** Dry-run bytes when L3 passed; undefined when blocked before L3 succeeded. */
   bytesProcessed?: number;
-  referencedTables?: ReferencedTable[];
   /**
    * Raw L3 dry-run bytes, un-coalesced — `undefined` when the dry run reported
    * no byte estimate. Callers that must preserve the undefined/null distinction
@@ -91,5 +90,6 @@ export async function runCoreValidation(
     bytesProcessed: l3.bytesProcessed ?? 0,
     rawBytesProcessed: l3.bytesProcessed,
     ...(l3.referencedTables && { referencedTables: l3.referencedTables }),
+    ...(l3.referencedLogicalViews && { referencedLogicalViews: l3.referencedLogicalViews }),
   };
 }

@@ -4,6 +4,8 @@ import { BigQuery } from '@google-cloud/bigquery';
 import { parse } from 'yaml';
 
 export const TV_DATASET = 'tv_thelook';
+export const TV_SOURCE_PROJECT = 'bigquery-public-data';
+export const TV_SOURCE_DATASET = 'thelook_ecommerce';
 export const TV_TABLES = ['orders', 'order_items', 'users', 'products', 'inventory_items', 'events', 'distribution_centers'] as const;
 export const TV_ROOT = 'benchmarks/template-validation';
 
@@ -19,7 +21,7 @@ export function viewDdl(projectId: string, table: string): string {
   if (!/^[a-z0-9-]+$/.test(projectId) || !TV_TABLES.some((name) => name === table)) {
     throw new Error('Invalid project ID or template validation table.');
   }
-  return `CREATE OR REPLACE VIEW \`${projectId}.${TV_DATASET}.${table}\` AS SELECT * FROM \`bigquery-public-data.thelook_ecommerce.${table}\``;
+  return `CREATE OR REPLACE VIEW \`${projectId}.${TV_DATASET}.${table}\` AS SELECT * FROM \`${TV_SOURCE_PROJECT}.${TV_SOURCE_DATASET}.${table}\``;
 }
 
 export function checkSchemaDrift(modelsYaml: string, columns: Column[]): string[] {

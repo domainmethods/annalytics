@@ -5,13 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import { executeQuery, initBigQueryClient } from '../../src/execution/runner.js';
-import { initBigQuery, type ReferencedTable } from '../../src/validation/dryRun.js';
+import { initBigQuery, type QueryRelationMetadata, type ReferencedTable } from '../../src/validation/dryRun.js';
 import { validateSql } from '../../src/validation/pipeline.js';
+import { warehouseRelations } from '../benchmarkSupport.js';
 import { hasSqlFrom, ITEM_SCHEMAS, scanTemplateSafety } from './items.js';
 import { checkAvailable, loadLabelers, runLabeler, type LabelerConfig, type SpawnFn } from './labelers.js';
 import { runLabelQuorum } from './labelQuorum.js';
 import { validateQuorum } from './quorum.js';
-import { TV_DATASET, TV_ROOT } from './warehouse.js';
+import { TV_DATASET, TV_ROOT, TV_SOURCE_DATASET, TV_SOURCE_PROJECT, TV_TABLES } from './warehouse.js';
 
 const limits = { maxRows: 10_000, timeoutMs: 60_000, maxBytes: 1024 ** 3 };
 
@@ -23,16 +24,38 @@ export async function availableLabelers(labelers: LabelerConfig[], spawn: SpawnF
   });
 }
 
-export function checkTemplateRelations(sql: string, tables: ReferencedTable[] | undefined): Error | undefined {
-  if (tables?.some(table => table.datasetId !== TV_DATASET)) {
-    return new Error(`SQL must use the ${TV_DATASET} views`);
+const templateViews = new Set(TV_TABLES.map(table => `${TV_DATASET}.${table}`));
+
+export function checkTemplateRelations(
+  sql: string, projectId: string, { referencedTables = [], referencedLogicalViews = [] }: QueryRelationMetadata,
+): Error | undefined {
+  let relations: string[];
+  try {
+    relations = warehouseRelations(sql);
+  } catch {
+    return new Error('Could not resolve SQL relations for template validation');
   }
-  if (!tables?.length && hasSqlFrom(sql)) {
-    return new Error('Dry run did not report referenced tables for SQL with FROM');
+  if (relations.some(relation => !templateViews.has(relation))) {
+    return new Error(`SQL must name only approved ${TV_DATASET} views`);
+  }
+  if (!referencedTables.length && !referencedLogicalViews.length && hasSqlFrom(sql)) {
+    return new Error('Dry run did not report referenced tables or views for SQL with FROM');
+  }
+
+  const named = new Set(relations);
+  const matchesNamedView = (table: ReferencedTable) => named.has(`${TV_DATASET}.${table.tableId}`);
+  const isTemplateView = (table: ReferencedTable) =>
+    table.projectId === projectId && table.datasetId === TV_DATASET && matchesNamedView(table);
+  // Dry runs can report the base table behind a logical view.
+  const isViewSource = (table: ReferencedTable) =>
+    table.projectId === TV_SOURCE_PROJECT && table.datasetId === TV_SOURCE_DATASET && matchesNamedView(table);
+  if (referencedLogicalViews.some(view => !isTemplateView(view)) ||
+      referencedTables.some(table => !isTemplateView(table) && !isViewSource(table))) {
+    return new Error('Dry run reported a relation outside the template warehouse');
   }
 }
 
-export async function executeTemplateSql(sql: string) {
+export async function executeTemplateSql(sql: string, projectId: string) {
   try {
     if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new Error('Federated SQL is not allowed for template validation');
     if (scanTemplateSafety(sql).length || /\bbigquery-public-data\b/i.test(sql)) {
@@ -40,7 +63,7 @@ export async function executeTemplateSql(sql: string) {
     }
     const validation = await validateSql(sql, limits.maxBytes);
     if (!validation.valid) return new Error(`SQL failed validation at ${validation.layer}`);
-    const relationError = checkTemplateRelations(sql, validation.referencedTables);
+    const relationError = checkTemplateRelations(sql, projectId, validation);
     if (relationError) return relationError;
     const result = await executeQuery(sql, limits);
     return result.truncated ? new Error('SQL exceeded the result row limit') : result;
@@ -73,8 +96,8 @@ async function main(): Promise<void> {
   const labelers = await availableLabelers(loadLabelers(), spawn, console.log);
   validateQuorum(labelers, values['allow-single-family']);
 
+  const projectId = process.env.GCP_PROJECT_ID ?? '';
   if (nodes.includes('sqlGenerator') || nodes.includes('supervisor')) {
-    const projectId = process.env.GCP_PROJECT_ID;
     if (!projectId) throw new Error('GCP_PROJECT_ID is required for SQL labeling');
     initBigQuery(projectId);
     initBigQueryClient(projectId);
@@ -82,7 +105,7 @@ async function main(): Promise<void> {
 
   const result = await runLabelQuorum({
     nodes, drafter: values.drafter, allowSingleFamily: values['allow-single-family'], targetCounts: {},
-  }, { labelers, runLabeler, execute: executeTemplateSql, root: TV_ROOT, now: () => new Date(), spawn });
+  }, { labelers, runLabeler, execute: sql => executeTemplateSql(sql, projectId), root: TV_ROOT, now: () => new Date(), spawn });
   console.log(JSON.stringify(result, null, 2));
 }
 

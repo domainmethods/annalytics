@@ -342,7 +342,7 @@ interface BigQueryFromItem {
   expr?: unknown;
 }
 
-function warehouseRelations(sql: string): string[] {
+export function warehouseRelations(sql: string): string[] {
   const options = { database: 'BigQuery', trimQuery: false, parseOptions: { includeLocations: true } };
   let source = prepareBenchmarkSql(sql);
   let patchedThrough = 0;
