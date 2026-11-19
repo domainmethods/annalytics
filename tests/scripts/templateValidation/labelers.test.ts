@@ -223,3 +223,47 @@ it.each(['direct', 'symlink'] as const)('refuses a TMPDIR inside the checkout (%
     rmSync(internalRoot, { recursive: true, force: true });
   }
 });
+
+function formattedBatch(format: string) {
+  return { ...batch, schema: { ...schema, properties: { answer: { type: 'string', format } } } };
+}
+
+it.each(['fresh', 'cached'] as const)('rejects invalid E.164 in %s labeler output', async (source) => {
+  const value = { answer: '+01234567' };
+  const spawn = vi.fn(async () => ({
+    stdout: JSON.stringify({ type: 'result', subtype: 'success', structured_output: value }),
+    code: 0,
+  }));
+  if (source === 'cached') {
+    const modelCache = join(cacheDir, cfg.id, cfg.model);
+    mkdirSync(modelCache, { recursive: true });
+    writeFileSync(join(modelCache, 'example-key.json'), JSON.stringify({ value }));
+  }
+  await expect(runLabeler(cfg, formattedBatch('e164'), spawn, cacheDir)).rejects.toThrow(LabelerOutputError);
+  expect(spawn).toHaveBeenCalledTimes(source === 'fresh' ? 1 : 0);
+  if (source === 'fresh') expect(readdirSync(cacheDir)).toEqual([]);
+});
+
+it('accepts a valid E.164 number', async () => {
+  const value = { answer: '+12025550123' };
+  const stdout = JSON.stringify({ type: 'result', subtype: 'success', structured_output: value });
+  await expect(runLabeler(cfg, formattedBatch('e164'), async () => ({ stdout, code: 0 }), cacheDir))
+    .resolves.toEqual({ value, cached: false });
+});
+
+it.each(['unknown-labeler-format', 'binary', 'password'])('rejects unsupported format %s before spawn', async (format) => {
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, formattedBatch(format), spawn, cacheDir)).rejects.toThrow(/format/i);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it('rejects an unsupported format in an unused schema definition', async () => {
+  const unsupportedSchema = {
+    ...schema,
+    $defs: { unused: { type: 'string', format: 'unknown-labeler-format' } },
+  };
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, { ...batch, schema: unsupportedSchema }, spawn, cacheDir))
+    .rejects.toThrow(/format.*unknown-labeler-format/i);
+  expect(spawn).not.toHaveBeenCalled();
+});

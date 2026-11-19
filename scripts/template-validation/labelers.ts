@@ -133,14 +133,39 @@ export function parseLabelerOutput(parser: LabelerConfig['outputParser'], stdout
   return output(parseJson(envelope.response), envelope.model ?? (models.length === 1 ? models[0] : undefined));
 }
 
-function assertCodexStrictSchema(schema: unknown, path = '#'): void {
+function visitSchemaNodes(
+  schema: unknown,
+  visit: (node: Record<string, unknown>, path: string) => void,
+  path = '#',
+): void {
   if (Array.isArray(schema)) {
-    schema.forEach((child, index) => assertCodexStrictSchema(child, `${path}/${index}`));
+    schema.forEach((child, index) => visitSchemaNodes(child, visit, `${path}/${index}`));
     return;
   }
   if (schema === null || typeof schema !== 'object') return;
 
   const node = schema as Record<string, unknown>;
+  visit(node, path);
+
+  // Visit schema locations only. Examples and defaults can contain arbitrary objects.
+  for (const keyword of ['properties', '$defs', 'definitions', 'patternProperties', 'dependentSchemas', 'dependencies']) {
+    const children = node[keyword];
+    if (children && typeof children === 'object') {
+      for (const [key, child] of Object.entries(children)) {
+        const segment = key.replaceAll('~', '~0').replaceAll('/', '~1');
+        visitSchemaNodes(child, visit, `${path}/${keyword}/${segment}`);
+      }
+    }
+  }
+  for (const keyword of [
+    'items', 'prefixItems', 'additionalItems', 'contains', 'additionalProperties', 'unevaluatedItems',
+    'unevaluatedProperties', 'propertyNames', 'anyOf', 'allOf', 'oneOf', 'not', 'if', 'then', 'else', 'contentSchema',
+  ]) {
+    visitSchemaNodes(node[keyword], visit, `${path}/${keyword}`);
+  }
+}
+
+function assertCodexStrictSchema(node: Record<string, unknown>, path: string): void {
   const objectKeywords = [
     'properties', 'required', 'additionalProperties', 'patternProperties', 'propertyNames',
     'minProperties', 'maxProperties', 'dependentRequired', 'dependentSchemas', 'dependencies', 'unevaluatedProperties',
@@ -156,32 +181,46 @@ function assertCodexStrictSchema(schema: unknown, path = '#'): void {
       );
     }
   }
-
-  // Visit schema locations only. Examples and defaults can contain arbitrary objects.
-  for (const keyword of ['properties', '$defs', 'definitions', 'patternProperties', 'dependentSchemas', 'dependencies']) {
-    const children = node[keyword];
-    if (children && typeof children === 'object') {
-      for (const [key, child] of Object.entries(children)) {
-        const segment = key.replaceAll('~', '~0').replaceAll('/', '~1');
-        assertCodexStrictSchema(child, `${path}/${keyword}/${segment}`);
-      }
-    }
-  }
-  for (const keyword of [
-    'items', 'prefixItems', 'additionalItems', 'contains', 'additionalProperties', 'unevaluatedItems',
-    'unevaluatedProperties', 'propertyNames', 'anyOf', 'allOf', 'oneOf', 'not', 'if', 'then', 'else', 'contentSchema',
-  ]) {
-    assertCodexStrictSchema(node[keyword], `${path}/${keyword}`);
-  }
 }
 
+// Keep Zod's former JSON Schema checks for formats that ajv-formats lacks.
+const zodResponseFormats = {
+  guid: z.uuid(),
+  mac: z.mac(),
+  cidr: z.cidrv4(),
+  'cidr-v6': z.cidrv6(),
+  base64: z.base64(),
+  base64url: z.base64url(),
+  e164: z.e164(),
+  jwt: z.jwt(),
+  emoji: z.emoji(),
+  nanoid: z.nanoid(),
+  cuid: z.cuid(),
+  cuid2: z.cuid2(),
+  ulid: z.ulid(),
+  xid: z.xid(),
+  ksuid: z.ksuid(),
+};
+
 function compileResponseSchema(schema: Record<string, unknown>): ValidateFunction {
-  const options = { strict: false, ownProperties: true };
+  const options = { strict: false, strictSchema: true, ownProperties: true };
   const dialect = schema.$schema;
   const ajv = dialect === 'http://json-schema.org/draft-04/schema#' ? new AjvDraft4(options)
     : dialect === 'http://json-schema.org/draft-07/schema#' ? new Ajv(options)
       : new Ajv2020(options);
-  const validator = addFormats(ajv).compile(schema);
+  addFormats(ajv);
+  for (const [format, check] of Object.entries(zodResponseFormats)) {
+    ajv.addFormat(format, (value: string) => check.safeParse(value).success);
+  }
+  visitSchemaNodes(schema, (node, path) => {
+    if (!Object.hasOwn(node, 'format')) return;
+    const { format } = node;
+    // Ajv skips unused definitions and accepts true-valued formats as annotations.
+    if (typeof format !== 'string' || !Object.hasOwn(ajv.formats, format) || ajv.formats[format] === true) {
+      throw new LabelerOutputError(`Unsupported response schema format "${String(format)}" at ${path}`);
+    }
+  });
+  const validator = ajv.compile(schema);
   if ('$async' in validator && validator.$async) {
     throw new LabelerOutputError('Async response schemas are unsupported');
   }
@@ -212,7 +251,7 @@ export async function runLabeler(
     if (schema.type !== 'object' || Object.hasOwn(schema, 'anyOf')) {
       throw new LabelerOutputError('Codex strict schema root must be an object without anyOf');
     }
-    assertCodexStrictSchema(schema);
+    visitSchemaNodes(schema, assertCodexStrictSchema);
   }
   const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
     cacheSegment.parse(batch.cacheKey) + '.json');
