@@ -116,7 +116,6 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
 }
 
 const publicProject = 'bigquery-public-data';
-const scanToken = /`{3,}|`[^`\r\n]*`|"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|bigquery-public-data\b|[a-z0-9_]+|\s+|./gi;
 const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
 const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
@@ -128,45 +127,75 @@ type ScanToken = {
 };
 
 function decodeScanEscapes(text: string): string {
-  return text.replace(/\\([nt"])/g, (_match, escaped: string) =>
-    escaped === 'n' ? '\n' : escaped === 't' ? '\t' : '"',
+  return text.replace(/\\([nt"\\])/g, (_match, escaped: string) =>
+    escaped === 'n' ? '\n' : escaped === 't' ? '\t' : escaped,
   );
 }
 
+function findStringEnd(text: string, start: number, delimiter: string): number {
+  const serialized = delimiter === '\\"';
+  const backslash = serialized ? '\\\\' : '\\';
+  let index = start;
+  while (index < text.length && text[index] !== '\r' && text[index] !== '\n') {
+    if (text.startsWith(backslash, index)) {
+      index += backslash.length;
+      // A SQL escape consumes one character, which may itself be JSON-escaped.
+      index += serialized && /\\[nt"\\]/.test(text.slice(index, index + 2)) ? 2 : 1;
+    } else if (text.startsWith(delimiter, index)) {
+      if (!text.startsWith(delimiter, index + delimiter.length)) return index;
+      index += 2 * delimiter.length;
+    } else {
+      index++;
+    }
+  }
+  return -1;
+}
+
 function tokenizeReferences(text: string, references: Set<string>): ScanToken[] {
+  // Line comments stop at physical or JSON-escaped line breaks.
+  const tokenPattern = /\s+|\\[nt]|`+|\/\*[\s\S]*?\*\/|(?:--|#)(?:[^\\\r\n]|\\[^n\r\n])*(?:\\(?!n))?|["']|\\"|\\\\|bigquery-public-data\b|[a-z0-9_]+|./giy;
+  const backtickSpan = /(`{1,2})(?!`)((?:[^`\\\r\n]|\\[^`n\r\n]|\\(?=`)|`(?!`))*?)\1(?!`)/y;
   const tokens: ScanToken[] = [];
   let spaceBefore = false;
-  // Decode line breaks before finding comments, but keep escaped quotes inside their literals.
-  const input = text.replace(/\\([nt])|\\[\\"]/g, (escape, whitespace) =>
-    whitespace ? decodeScanEscapes(escape) : escape,
-  );
-  for (const [value] of input.matchAll(scanToken)) {
-    if (/^(?:\s|`{3})/.test(value)) {
+  // Consume each delimited span before classifying any of its contents.
+  for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
+    const [value] = tokenPattern.exec(text)!;
+    const bodyStart = tokenPattern.lastIndex;
+    if (/^(?:\s|\\[nt]|`{3})/.test(value)) {
       spaceBefore = true;
       continue;
     }
     if (/^(?:\/\*|--|#)/.test(value)) {
       const body = value.startsWith('/*') ? value.slice(2, -2) :
         value.startsWith('--') ? value.slice(2) : value.slice(1);
-      collectReferences(decodeScanEscapes(body), references);
+      collectReferences(body, references);
       spaceBefore = true;
       continue;
     }
-    if (/^["']/.test(value) && value.length > 1) {
-      // Scan serialized SQL independently of the surrounding JSON or SQL literal.
-      collectReferences(decodeScanEscapes(value.slice(1, -1)), references);
-    }
-    if (value.startsWith('`') && value.length > 1) {
-      for (const [part] of value.slice(1, -1).trim().matchAll(quotedPart)) {
-        const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
-        tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
-        spaceBefore = false;
+    if (value === '"' || value === "'" || value === '\\"') {
+      const end = findStringEnd(text, bodyStart, value);
+      if (end !== -1) {
+        // A JSON string can carry SQL. Scan it with its own table-position state.
+        collectReferences(decodeScanEscapes(text.slice(bodyStart, end)), references);
+        tokenPattern.lastIndex = end + value.length;
       }
-    } else {
-      const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
-      tokens.push({ value, kind, spaceBefore });
-      spaceBefore = false;
     }
+    if (value.startsWith('`')) {
+      backtickSpan.lastIndex = start;
+      const span = backtickSpan.exec(text);
+      if (span) {
+        for (const [part] of decodeScanEscapes(span[2]).trim().matchAll(quotedPart)) {
+          const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
+          tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
+          spaceBefore = false;
+        }
+        tokenPattern.lastIndex = backtickSpan.lastIndex;
+        continue;
+      }
+    }
+    const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
+    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore });
+    spaceBefore = false;
   }
   return tokens;
 }
@@ -191,8 +220,9 @@ function collectReferences(text: string, references: Set<string>): void {
     if (token.kind !== 'syntax') {
       const hyphen = tokens[index - 1];
       const beforeHyphen = tokens[index - 2];
-      const attachedPrefix = hyphen?.value === '-' && !hyphen.spaceBefore && !token.spaceBefore &&
-        beforeHyphen && beforeHyphen.kind !== 'syntax' &&
+      const hyphenAttached = hyphen?.value === '-' && !hyphen.spaceBefore && !token.spaceBefore &&
+        beforeHyphen && beforeHyphen.kind !== 'syntax';
+      const attachedPrefix = hyphenAttached &&
         (hyphen.quotedHyphen || token.value.toLowerCase() === publicProject)
         ? beforeHyphen.value + '-' : '';
 
@@ -225,10 +255,9 @@ function collectReferences(text: string, references: Set<string>): void {
 
       if (segments.length >= 2) {
         const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
-        // Digit-only chains in free text are numeric literals.
-        const hasIdentifier = segments.some((segment) => /[a-z_]/i.test(segment));
+        const standaloneNumber = !hyphenAttached && segments.every((segment) => /^\d+$/.test(segment));
         const prefix = tablePrefix || attachedPrefix;
-        if ((namesTable || (segments.length >= 3 && hasIdentifier)) &&
+        if ((namesTable || (segments.length >= 3 && !standaloneNumber)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));
         }
