@@ -115,10 +115,8 @@ it.each([
 
 it('includes the end of stderr when a labeler exits non-zero', async () => {
   const stderr = 'x'.repeat(2000) + '\nError: --json-schema is not a valid JSON Schema';
-  await expect(runLabeler(cfg, batch, async () => ({ stdout: '', stderr, code: 1 }), cacheDir))
-    .rejects.toThrow(/^claude exited with code 1: x+\nError: --json-schema is not a valid JSON Schema$/);
-  await expect(runLabeler(cfg, batch, async () => ({ stdout: '', stderr, code: 1 }), cacheDir))
-    .rejects.toThrow(expect.objectContaining({ message: expect.stringMatching(/^.{0,560}$/s) }));
+  const error = await runLabeler(cfg, batch, async () => ({ stdout: '', stderr, code: 1 }), cacheDir).catch(e => e as Error);
+  expect((error as Error).message).toBe(`claude exited with code 1: ${stderr.slice(-500)}`);
 });
 
 it('names a labeler timeout and allows 20 minutes per batch', async () => {

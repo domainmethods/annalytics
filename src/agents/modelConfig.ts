@@ -82,6 +82,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
   },
   // Gemini 3.6 and 3.8 Flash are $0.75/$3.75 through 2026-12-31. These are the rates
   // from 2027-01-01, the ones a default chosen now will be billed at.
+  // gemini-3.7-flash is not registered: Google routes it to gemini-3.8-flash.
   'flash/3.6': {
     tier: 'flash',
     version: '3.6',

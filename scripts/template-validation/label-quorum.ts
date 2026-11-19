@@ -120,8 +120,8 @@ async function main(): Promise<void> {
   const shell = { ...process.env };
   const spawn: SpawnFn = (cmd, args, { cwd, timeoutMs, outputParser }) => new Promise(resolve => {
     const env = Object.fromEntries([...shellEnv, ...loginEnv[outputParser]].map(key => [key, shell[key]]));
-    // Only the timeout and maxBuffer kill the child. A CLI that traps SIGTERM leaves signal null.
-    const child = execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
+    // Only the timeout and maxBuffer kill the child. SIGKILL so a CLI that traps SIGTERM can't hang the run.
+    const child = execFile(cmd, args, { cwd, env, timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
       resolve({ stdout, stderr, code: error ? 1 : 0,
         timedOut: error?.killed === true && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
     // The prompt is an argument. Close stdin so CLIs don't wait for piped input.
