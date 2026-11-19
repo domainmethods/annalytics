@@ -1,3 +1,4 @@
+import { validateSql } from '../validation/pipeline.js';
 import type { ChannelClient, ChannelMessage } from '../channels/types.js';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
@@ -328,6 +329,9 @@ export async function answerWhatsAppQuestion(
       clarificationConfidence: clarification.confidence,
     });
   }
+
+  const finalValidation = await validateSql(qualityResult.sqlResult.sql, config.maxBytesProcessed);
+  if (!finalValidation.valid) throw new Error('Final SQL validation failed');
 
   const result = await executeQuery(qualityResult.sqlResult.sql, {
     maxRows: config.maxResultRows,

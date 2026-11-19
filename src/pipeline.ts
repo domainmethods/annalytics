@@ -1,3 +1,4 @@
+import { validateSql } from './validation/pipeline.js';
 import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import type { TableContext } from './dbt/types.js';
@@ -534,6 +535,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       await updateStatus(
         `I wasn't able to generate a valid query for that question. (trace: ${traceId})`,
       );
+      return;
+    }
+
+    const finalValidation = await validateSql(qualityResult.sqlResult.sql, config.maxBytesProcessed);
+    if (!finalValidation.valid) {
+      await updateStatus(finalValidation.layer === 'L4-cost'
+        ? `This query would scan ${((finalValidation.bytesProcessed ?? 0) / (1024 ** 3)).toFixed(1)} GB (limit: ${(config.maxBytesProcessed / (1024 ** 3)).toFixed(1)} GB). Try narrowing with a date range or specific filter. (trace: ${traceId})`
+        : `I wasn't able to generate a valid query for that question. (trace: ${traceId})`);
       return;
     }
 

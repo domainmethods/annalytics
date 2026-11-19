@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('../src/validation/pipeline.js');
+import { validateSql } from '../src/validation/pipeline.js';
+
 // Mock all domain modules
 vi.mock('../src/agents/clarificationAgent.js');
 vi.mock('../src/agents/ambiguityClassifier.js');
@@ -164,6 +167,7 @@ function setupHappyPath() {
 describe('runPipeline', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all' });
     setupHappyPath();
   });
 
@@ -335,6 +339,18 @@ describe('runPipeline', () => {
       expect.objectContaining({
         stuckDescription: expect.stringContaining('[semantic]'),
       }),
+    );
+  });
+
+  it.each(['L3-dryrun', 'L4-cost'] as const)('blocks best effort when %s fails', async (layer) => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, verdict: 'exhausted' });
+    mockDecideEscalation.mockReturnValue({ shouldEscalate: true, behavior: 'best_effort_verify', trigger: 'quality_loop_exhausted' });
+    vi.mocked(validateSql).mockResolvedValue({ valid: false, layer, bytesProcessed: baseInput.config.maxBytesProcessed * 2, error: 'Try narrowing with a date filter.' });
+    await runPipeline({ ...baseInput, config: { ...baseInput.config, escalation: { mode: 'channel', channelId: 'C-ESCALATION', timeoutHours: 4 } } });
+    expect(validateSql).toHaveBeenCalledWith(baseQualityResult.sqlResult.sql, baseInput.config.maxBytesProcessed);
+    expect(mockExecute).not.toHaveBeenCalled();
+    if (layer === 'L4-cost') expect(mockClient.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('Try narrowing with a date range or specific filter') }),
     );
   });
 
