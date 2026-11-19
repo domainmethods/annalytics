@@ -230,7 +230,7 @@ describe('registerCommands /anna seam', () => {
     expect(mockRunPipeline).toHaveBeenCalledTimes(1);
   });
 
-  it('does not mark a thread when intake answers the command', async () => {
+  it('leaves marking to intake when intake answers the command', async () => {
     mockMaybeHandleSlackIntake.mockResolvedValue(true);
     await invokeCommand({ text: 'hi' });
     expect(mockMarkThreadParticipation).not.toHaveBeenCalled();

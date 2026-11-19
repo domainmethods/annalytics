@@ -43,6 +43,11 @@ describe('threadParticipation (#53)', () => {
     await expect(hasThreadParticipation('C1', 'T1')).resolves.toBe(false);
   });
 
+  it('is false for a mark with no expiresAt', async () => {
+    mockGet.mockResolvedValue({ exists: true, data: () => ({ channel: 'C1', threadTs: 'T1' }) });
+    await expect(hasThreadParticipation('C1', 'T1')).resolves.toBe(false);
+  });
+
   it('is true for a live mark, including Firestore Timestamps', async () => {
     mockGet.mockResolvedValue({
       exists: true,

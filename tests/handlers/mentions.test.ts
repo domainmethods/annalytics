@@ -151,11 +151,12 @@ describe('registerMentions app_mention seam', () => {
   });
 
   describe('thread participation (#53)', () => {
-    it('marks the thread after an immediate intake reply', async () => {
+    it('leaves marking an immediate intake reply to intake itself', async () => {
       mockMaybeHandleSlackIntake.mockResolvedValue(true);
       const handler = captureMentionHandler();
       await handler({ event: { text: '<@U1> hi', user: 'U2', channel: 'C1', ts: 'T1' }, body: {}, client: makeClient() });
-      expect(mockRecordThreadParticipation).toHaveBeenCalledWith('C1', 'T1');
+      expect(mockMaybeHandleSlackIntake).toHaveBeenCalledWith(expect.objectContaining({ channel: 'C1', threadTs: 'T1' }));
+      expect(mockRecordThreadParticipation).not.toHaveBeenCalled();
     });
 
     it('marks the thread when the status message posts, before the pipeline runs', async () => {

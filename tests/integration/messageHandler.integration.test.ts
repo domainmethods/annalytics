@@ -131,6 +131,7 @@ vi.mock('../../src/handlers/followUpRouter.js', () => ({
 // ─── Real imports (system under test + real collaborators) ───────
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
 import { registerMentions } from '../../src/handlers/mentions.js';
+import { registerCommands } from '../../src/handlers/commands.js';
 import type { AppConfig } from '../../src/config.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
@@ -592,6 +593,34 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       });
 
       expect(mockGenerateContent).toHaveBeenCalled(); // intake classified it
+      expect(statusPosts()).toContain(STATUS_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a /anna greeting as rooting a thread the bot is in (#53)', async () => {
+      let commandHandler: any;
+      const app = { command: vi.fn((_name: string, h: any) => { commandHandler = h; }) } as any;
+      registerCommands(app, () => config, getTables);
+      // Not a canned greeting, so the model's immediate reply is what posts.
+      mockGenerateContent.mockResolvedValue(intakeResponse('immediate_response', 'Happy to help — ask me about a metric.'));
+
+      await commandHandler({
+        command: { channel_id: 'C-CHAN', user_id: 'U1', text: 'hey anna, what can you do' },
+        ack: vi.fn(), respond: vi.fn(), client: mockClient,
+      });
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // The greeting posted top-level as 1700000000.000200, rooting a new thread.
+      expect(firestoreStore.has('thread_participation/C-CHAN:1700000000.000200')).toBe(true);
+
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      await handleMessageEvent({
+        event: {
+          type: 'message', channel_type: 'channel', channel: 'C-CHAN', user: 'U1',
+          text: 'show leads last month by channel', ts: '1700000000.000300', thread_ts: '1700000000.000200',
+        } as any,
+        body: bodyWithEventId('EvCommandFollowUp'), client: mockClient, config, getTables,
+      });
       expect(statusPosts()).toContain(STATUS_TEXT);
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
     });

@@ -57,8 +57,8 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
         releaseLock: () => releaseThreadLock(event.channel, threadTs, ownerToken),
       });
       if (handledByIntake) {
+        // Intake marked the thread itself when it posted (#53).
         visibleResponse = true;
-        await markThreadParticipation(event.channel, threadTs);
         lockHeld = false;
         return;
       }
