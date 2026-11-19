@@ -47,6 +47,19 @@ it('allows references to the template view and public source', () => {
 
 it.each([
   ['FROM tv_thelook.orders, private_dataset.customers', 'private_dataset.customers'],
+  ['SELECT * FROM tv_thelook.orders, (private_dataset.customers RIGHT JOIN tv_thelook.users ON TRUE)', 'private_dataset.customers'],
+  ['SELECT * FROM tv_thelook.orders JOIN (private_dataset.customers JOIN tv_thelook.users ON TRUE) ON TRUE', 'private_dataset.customers'],
+  ['FROM (private_dataset.customers JOIN tv_thelook.users ON TRUE)', 'private_dataset.customers'],
+  ['SELECT o.shipping_address.city FROM tv_thelook.orders /* note */ AS o', 'o.shipping_address.city'],
+  ['The data from tv_thelook.orders arrives daily. Compare it to arrives.analytics.orders.', 'arrives.analytics.orders'],
+  ['Use `private_dataset` . customers', 'private_dataset.customers'],
+  ['Use acme /* note */ . analytics . `orders`', 'acme.analytics.orders'],
+  ['Use acme. analytics. orders', 'acme.analytics.orders'],
+  ['FROM private_dataset./* note */customers', 'private_dataset.customers'],
+  ['Use tv_thelook./* acme.analytics.orders */orders', 'acme.analytics.orders'],
+  ['Use tv_thelook./* FROM private_dataset.customers */orders', 'private_dataset.customers'],
+  ['Use acme.analytics.2020', 'acme.analytics.2020'],
+  ['FROM tv_thelook.orders--note: WHERE clause follows later\n, private_dataset.customers', 'private_dataset.customers'],
   ['FROM tv_thelook.orders o, tv_thelook.users u LEFT JOIN private_dataset.customers c ON c.id = u.id', 'private_dataset.customers'],
   ['FROM (SELECT * FROM tv_thelook.orders) AS o, private_dataset.customers WHERE TRUE', 'private_dataset.customers'],
   ['FROM tv_thelook.orders o JOIN tv_thelook.users u ON u.name = "Example", private_dataset.customers', 'private_dataset.customers'],
@@ -76,8 +89,9 @@ it.each([
   expect(scanTemplateSafety(text)).toEqual([]);
 });
 
-it.each(['o', 'AS o'])('allows a nested field path through an alias declared with %s', (alias) => {
-  expect(scanTemplateSafety(`FROM tv_thelook.orders ${alias} WHERE o.shipping_address.city = 'Paris'`)).toEqual([]);
+it.each(['o', 'AS o'])('flags a three-part path through an alias declared with %s', (alias) => {
+  expect(scanTemplateSafety(`FROM tv_thelook.orders ${alias} WHERE o.shipping_address.city = 'Paris'`))
+    .toContain('Foreign table reference: o.shipping_address.city');
 });
 
 it('hashes nested input keys canonically and ignores labels and provenance', () => {

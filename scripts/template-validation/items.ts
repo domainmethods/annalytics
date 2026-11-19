@@ -115,13 +115,45 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
   return JSON.parse(readFileSync(join(root, 'fixtures', filename), 'utf8'));
 }
 
-const sqlTablePath = /(?:`[\w.*-]+`|[a-z_][\w-]*)(?:[ \t]*\.[ \t]*(?:`[\w.*-]+`|[\w*-]+))*/i;
-const textTablePath = /(?<![\w.-])(?:`[\w.*-]+`|[a-z_][\w-]*)\.(?:`[\w.*-]+`|[a-z_]\w*)(?:\.(?:`[\w.*-]+`|[\w*]+))*|`[\w.*-]+`(?:[ \t]*\.[ \t]*`[\w.*-]+`)*/gi;
+const sqlComment = /--[^\n]*|\/\*[\s\S]*?\*\//;
+const dotTrivia = `(?:[\\s]|(?:${sqlComment.source}))*`;
+const separator = `${dotTrivia}\\.${dotTrivia}`;
+const quotedName = /`[\w.*-]+`/.source;
+const identifier = /[a-z_](?:[\w-]*\w)?/.source;
+const tableSegment = `(?:${quotedName}|[\\w*](?:[\\w*-]*[\\w*])?)`;
+const name = `(?:${quotedName}|${identifier})`;
+const sqlName = `(?:${quotedName}|[a-z_](?:\\w|-(?!-))*)`;
+const sqlTableSegment = `(?:${quotedName}|[\\w*](?:[\\w*]|-(?!-))*)`;
+const sqlTablePath = `${sqlName}(?:${separator}${sqlTableSegment})*`;
+const textTablePath = new RegExp(`(?<![\\w.-])${name}(?:${separator}${tableSegment})*`, 'gi');
+const pathTrivia = new RegExp(`(${quotedName})|(${sqlComment.source})|\\s+`, 'g');
 const endFrom = /^(?:WHERE|GROUP|ORDER|LIMIT|HAVING|QUALIFY|WINDOW|UNION|INTERSECT|EXCEPT|;)$/i;
-const reservedAlias = /^(?:FROM|AS|JOIN|LEFT|RIGHT|FULL|INNER|OUTER|CROSS|ON|USING|SELECT|OFFSET|PIVOT|UNPIVOT|TABLESAMPLE|FOR)$/i;
 
-function normalizeTablePath(path: string): string {
-  return path.replace(/[` \t]/g, '');
+function normalizeTablePath(path: string, onComment?: (content: string) => void): string {
+  return path.replace(pathTrivia, (_match, quoted?: string, comment?: string) => {
+    if (comment) onComment?.(comment.slice(2));
+    return quoted ? quoted.slice(1, -1) : '';
+  });
+}
+
+function collectTextTables(text: string, tables: Set<string>): void {
+  for (const [path] of text.matchAll(textTablePath)) {
+    const reference = normalizeTablePath(path, (comment) => {
+      collectTextTables(comment, tables);
+      if (/\b(?:FROM|JOIN)\b/i.test(comment)) collectSqlTables(comment, tables);
+    });
+    const count = reference.split('.').length;
+    if (count >= 3) {
+      // A period followed by whitespace also ends an abbreviation or a sentence.
+      if (/^v?\d+(?:\.\d+){2,}$/i.test(path) ||
+          /^(?:[a-z]\.){2,}\s+[a-z]+$/i.test(path) ||
+          /^(?:[A-Z][a-z]+\.\s+){2,}[A-Z][a-z]+$/.test(path)) continue;
+      tables.add(reference);
+    } else if (count === 2 && path.includes('`')) {
+      if (/^(?:`[\w-]+`\.\s+[A-Z][a-z]+|[A-Za-z]+\.\s+`[\w-]+`)$/.test(path)) continue;
+      tables.add(reference);
+    }
+  }
 }
 
 function isAllowedTable(reference: string): boolean {
@@ -129,27 +161,27 @@ function isAllowedTable(reference: string): boolean {
     reference.startsWith('bigquery-public-data.thelook_ecommerce.');
 }
 
-function collectSqlTables(text: string, tables: Set<string>, aliases: Set<string>): void {
+function collectSqlTables(text: string, tables: Set<string>): void {
   const tokens = text.match(new RegExp(
-    /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/.source +
-      '|' + sqlTablePath.source + '|[(),;]',
+    sqlComment.source + '|' + /'(?:''|\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/.source +
+      '|' + sqlTablePath + '|[(),;]',
     'gi',
   )) ?? [];
   const fromLists = [false];
   let expectsTable = false;
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index];
+  for (const token of tokens) {
     const depth = fromLists.length - 1;
     if (/^(?:--|\/\*|['"])/.test(token)) {
       if (/\b(?:FROM|JOIN)\b/i.test(token)) {
         const content = token.startsWith('--') ? token.slice(2) :
           token.startsWith('/*') ? token.slice(2, -2) : token.slice(1, -1);
-        collectSqlTables(content.replace(/\\n/g, '\n').replace(/\\[rt]/g, ' ').replace(/\\"/g, '"'), tables, aliases);
+        collectSqlTables(content.replace(/\\n/g, '\n').replace(/\\[rt]/g, ' ').replace(/\\"/g, '"'), tables);
       }
       continue;
     }
     if (token === '(') {
-      fromLists.push(false);
+      fromLists.push(expectsTable);
+      continue;
     } else if (token === ')') {
       if (depth > 0) fromLists.pop();
       else fromLists[0] = false;
@@ -163,14 +195,9 @@ function collectSqlTables(text: string, tables: Set<string>, aliases: Set<string
       expectsTable = true;
       continue;
     } else if (expectsTable) {
+      if (/^(?:SELECT|WITH)$/i.test(token)) fromLists[depth] = false;
       const reference = normalizeTablePath(token);
       if (reference.includes('.')) tables.add(reference);
-
-      const next = tokens[index + 1];
-      const alias = /^AS$/i.test(next ?? '') ? tokens[index + 2] : next;
-      if (isAllowedTable(reference) && alias && /^`?[a-z_]\w*`?$/i.test(alias) && !reservedAlias.test(alias) && !endFrom.test(alias)) {
-        aliases.add(normalizeTablePath(alias).toLowerCase());
-      }
     }
     expectsTable = false;
   }
@@ -180,19 +207,10 @@ export function scanTemplateSafety(text: string): string[] {
   const emails = text.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[a-z\d-]+(?:\.[a-z\d-]+)+/gi) ?? [];
   const projects = text.match(/\bprojects\/[a-z\d][a-z\d-]*/gi) ?? [];
   const tables = new Set<string>();
-  const aliases = new Set<string>();
 
   // shortcut: lexical scan, use a parser if dialect-specific table syntax needs coverage
-  collectSqlTables(text, tables, aliases);
-  for (const [path] of text.matchAll(textTablePath)) {
-    const reference = normalizeTablePath(path);
-    const segments = reference.split('.');
-    const quoted = path.includes('`');
-    if ((quoted && segments.length >= 2) ||
-        (segments.length >= 3 && !aliases.has(segments[0].toLowerCase()))) {
-      tables.add(reference);
-    }
-  }
+  collectSqlTables(text, tables);
+  collectTextTables(text, tables);
 
   const foreignRefs = [...tables].filter((reference) => !isAllowedTable(reference));
   return [
