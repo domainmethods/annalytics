@@ -38,35 +38,32 @@ export async function agreeSql(
 ): Promise<{ agreed: true; reference: string } | { agreed: false; reason: string }> {
   if (sqls.length === 0) return { agreed: false, reason: 'No SQL members' };
 
-  let firstResult: QueryResultLike | undefined;
-  let ordered = false;
-  let reference = '';
+  const queries: { sql: string; trimmed: string; index: number }[] = [];
   for (const [index, sql] of sqls.entries()) {
     if (sql instanceof Error) return { agreed: false, reason: `Member ${index} failed to supply SQL` };
+    queries.push({ sql, trimmed: sql.trim(), index });
+  }
+  const reference = queries.reduce((shortest, query) =>
+    query.trimmed.length < shortest.trimmed.length ? query : shortest);
+  const ordered = referenceIsOrdered(reference.trimmed);
+  let referenceResult: QueryResultLike | undefined;
 
+  for (const query of [reference, ...queries.filter(query => query !== reference)]) {
     let result: QueryResultLike | Error;
     try {
-      result = await execute(sql);
+      result = await execute(query.sql);
     } catch {
-      return { agreed: false, reason: `Member ${index} SQL execution failed` };
+      return { agreed: false, reason: `Member ${query.index} SQL execution failed` };
     }
     if (result instanceof Error) {
-      return { agreed: false, reason: `Member ${index} SQL execution failed` };
+      return { agreed: false, reason: `Member ${query.index} SQL execution failed` };
     }
-
-    const trimmedSql = sql.trim();
-    if (firstResult === undefined) {
-      firstResult = result;
-      ordered = referenceIsOrdered(sql);
-      reference = trimmedSql;
-    } else {
-      if (!resultsEquivalent(firstResult, result, { ordered })) {
-        return { agreed: false, reason: `Member ${index} SQL result differs from member 0` };
-      }
-      if (trimmedSql.length < reference.length) reference = trimmedSql;
+    if (!referenceResult) referenceResult = result;
+    else if (!resultsEquivalent(referenceResult, result, { ordered })) {
+      return { agreed: false, reason: `Member ${query.index} SQL result differs from member ${reference.index}` };
     }
   }
-  return { agreed: true, reference };
+  return { agreed: true, reference: reference.trimmed };
 }
 
 export function agreeRubric(proposed: string[], votes: boolean[][]): string[] {

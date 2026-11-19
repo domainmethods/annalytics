@@ -1,13 +1,16 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import type { ValidationResult } from '../types.js';
 
+export type ReferencedTable = { datasetId?: string };
+export type DryRunValidationResult = ValidationResult & { referencedTables?: ReferencedTable[] };
+
 let bigquery: BigQuery;
 
 export function initBigQuery(projectId?: string): void {
   bigquery = new BigQuery({ projectId });
 }
 
-export async function dryRunValidation(sql: string): Promise<ValidationResult> {
+export async function dryRunValidation(sql: string): Promise<DryRunValidationResult> {
   if (!bigquery) throw new Error('BigQuery client not initialized — call initBigQuery() first');
 
   try {
@@ -27,7 +30,8 @@ export async function dryRunValidation(sql: string): Promise<ValidationResult> {
     }
 
     const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
-    return { valid: true, layer: 'L3-dryrun', bytesProcessed };
+    const { referencedTables } = statistics.query;
+    return { valid: true, layer: 'L3-dryrun', bytesProcessed, ...(referencedTables && { referencedTables }) };
   } catch (error) {
     return {
       valid: false,

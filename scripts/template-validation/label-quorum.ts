@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import { executeQuery, initBigQueryClient } from '../../src/execution/runner.js';
-import { initBigQuery } from '../../src/validation/dryRun.js';
+import { initBigQuery, type ReferencedTable } from '../../src/validation/dryRun.js';
 import { validateSql } from '../../src/validation/pipeline.js';
-import { ITEM_SCHEMAS, scanTemplateSafety } from './items.js';
+import { hasSqlFrom, ITEM_SCHEMAS, scanTemplateSafety } from './items.js';
 import { checkAvailable, loadLabelers, runLabeler, type LabelerConfig, type SpawnFn } from './labelers.js';
 import { runLabelQuorum } from './labelQuorum.js';
 import { validateQuorum } from './quorum.js';
@@ -23,13 +23,25 @@ export async function availableLabelers(labelers: LabelerConfig[], spawn: SpawnF
   });
 }
 
-async function execute(sql: string) {
+export function checkTemplateRelations(sql: string, tables: ReferencedTable[] | undefined): Error | undefined {
+  if (tables?.some(table => table.datasetId !== TV_DATASET)) {
+    return new Error(`SQL must use the ${TV_DATASET} views`);
+  }
+  if (!tables?.length && hasSqlFrom(sql)) {
+    return new Error('Dry run did not report referenced tables for SQL with FROM');
+  }
+}
+
+export async function executeTemplateSql(sql: string) {
   try {
+    if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new Error('Federated SQL is not allowed for template validation');
     if (scanTemplateSafety(sql).length || /\bbigquery-public-data\b/i.test(sql)) {
       return new Error(`SQL must use the ${TV_DATASET} views`);
     }
     const validation = await validateSql(sql, limits.maxBytes);
     if (!validation.valid) return new Error(`SQL failed validation at ${validation.layer}`);
+    const relationError = checkTemplateRelations(sql, validation.referencedTables);
+    if (relationError) return relationError;
     const result = await executeQuery(sql, limits);
     return result.truncated ? new Error('SQL exceeded the result row limit') : result;
   } catch {
@@ -70,7 +82,7 @@ async function main(): Promise<void> {
 
   const result = await runLabelQuorum({
     nodes, drafter: values.drafter, allowSingleFamily: values['allow-single-family'], targetCounts: {},
-  }, { labelers, runLabeler, execute, root: TV_ROOT, now: () => new Date(), spawn });
+  }, { labelers, runLabeler, execute: executeTemplateSql, root: TV_ROOT, now: () => new Date(), spawn });
   console.log(JSON.stringify(result, null, 2));
 }
 

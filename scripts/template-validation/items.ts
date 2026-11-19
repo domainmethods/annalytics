@@ -316,6 +316,11 @@ function collectReferences(text: string, references: Set<string>, serializedApos
   if (ambiguousApostrophe) collectReferences(text, references, true);
 }
 
+export function hasSqlFrom(sql: string): boolean {
+  const { tokens } = tokenizeReferences(sql, new Set(), false);
+  return tokens.some(token => token.kind === 'name' && token.value.toUpperCase() === 'FROM');
+}
+
 export function scanTemplateSafety(text: string): string[] {
   const emails = text.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[a-z\d-]+(?:\.[a-z\d-]+)+/gi) ?? [];
   const projects = text.match(/\bprojects\/[a-z\d][a-z\d-]*/gi) ?? [];

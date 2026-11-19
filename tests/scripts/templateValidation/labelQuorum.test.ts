@@ -2,10 +2,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { availableLabelers } from '../../../scripts/template-validation/label-quorum.js';
+import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '../../../scripts/template-validation/label-quorum.js';
+import * as runner from '../../../src/execution/runner.js';
+import { initBigQuery } from '../../../src/validation/dryRun.js';
 import { labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
 import { loadLabelers, runLabeler, type SpawnFn } from '../../../scripts/template-validation/labelers.js';
+
+const mockCreateQueryJob = vi.hoisted(() => vi.fn());
+vi.mock('@google-cloud/bigquery', () => ({
+  BigQuery: class { createQueryJob = mockCreateQueryJob; },
+}));
 
 const version = 'tv-v1';
 const labelers = loadLabelers().slice(0, 2);
@@ -44,7 +51,10 @@ beforeEach(() => {
     cacheDir: join(root, 'cache'),
   };
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(root, { recursive: true, force: true });
+});
 
 it('accepts unanimous items and quarantines splits without exposing labels between calls', async () => {
   const split = { category: 'edge_case', text: 'Thanks, how did you get that?' };
@@ -107,7 +117,7 @@ it('refuses to overwrite provenance at the same VERSION before drafting', async 
   expect(deps.runLabeler).not.toHaveBeenCalled();
 });
 
-it('resumes using cached drafts and labels without spawning again', async () => {
+it('resumes without spawning in the same VERSION and spawns again after a bump', async () => {
   deps.runLabeler = runLabeler;
   deps.spawn = vi.fn<SpawnFn>(async (cmd, args) => {
     if (cmd === 'claude') return claude({ labels: [route] });
@@ -126,6 +136,10 @@ it('resumes using cached drafts and labels without spawning again', async () => 
   vi.mocked(deps.spawn).mockClear();
   await run({ drafter: 'codex' });
   expect(deps.spawn).not.toHaveBeenCalled();
+
+  writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
+  await expect(run({ drafter: 'codex' })).resolves.toMatchObject({ version: 'tv-v2' });
+  expect(deps.spawn).toHaveBeenCalledTimes(3);
 });
 
 it('records reduced quorum and reported models for two families', async () => {
@@ -207,4 +221,122 @@ it('drafts and labels 20 inputs at a time and spreads them across categories', a
   expect(provenance.perNode.slackIntake).toMatchObject({ drafted: 40, accepted: 40, quarantined: 0 });
   expect(Object.keys(provenance.perNode.slackIntake.dropRateByCategory)).toHaveLength(6);
   expect(deps.runLabeler).toHaveBeenCalledTimes(6);
+});
+
+const relationSql = 'SELECT * FROM tv_thelook.orders';
+const allowedTable = { datasetId: 'tv_thelook', tableId: 'orders' };
+const foreignTable = { datasetId: 'elsewhere', tableId: 'orders' };
+
+it('checks every dry-run reference and rejects missing metadata for FROM', () => {
+  expect(checkTemplateRelations(relationSql, [allowedTable])).toBeUndefined();
+  expect(checkTemplateRelations(relationSql, [allowedTable, foreignTable])).toBeInstanceOf(Error);
+  expect(checkTemplateRelations(relationSql, [])).toBeInstanceOf(Error);
+  expect(checkTemplateRelations(relationSql, undefined)).toBeInstanceOf(Error);
+  expect(checkTemplateRelations("SELECT 'FROM' AS label", [])).toBeUndefined();
+});
+
+it('blocks foreign dry-run references before executing and rejects federated SQL before validation', async () => {
+  initBigQuery('test-project');
+  const dryRunJob = (referencedTables: typeof allowedTable[]) => ({
+    metadata: { statistics: { totalBytesProcessed: '100', query: { statementType: 'SELECT', referencedTables } } },
+  });
+  mockCreateQueryJob.mockReset().mockResolvedValueOnce([dryRunJob([foreignTable])])
+    .mockResolvedValueOnce([dryRunJob([allowedTable])]);
+  const execute = vi.spyOn(runner, 'executeQuery').mockResolvedValue({
+    columnNames: [], rows: [], truncated: false, bytesProcessed: 0, totalRows: 0,
+  });
+  await expect(executeTemplateSql('SELECT * FROM eXtErNaL_QuErY("c", "SELECT 1")')).resolves.toBeInstanceOf(Error);
+  expect(mockCreateQueryJob).not.toHaveBeenCalled();
+  await expect(executeTemplateSql(relationSql)).resolves.toBeInstanceOf(Error);
+  expect(execute).not.toHaveBeenCalled();
+
+  await expect(executeTemplateSql(relationSql)).resolves.not.toBeInstanceOf(Error);
+  expect(mockCreateQueryJob.mock.calls).toEqual([
+    [{ query: relationSql, dryRun: true, useLegacySql: false }],
+    [{ query: relationSql, dryRun: true, useLegacySql: false }],
+  ]);
+  expect(execute).toHaveBeenCalledWith(relationSql, { maxRows: 10_000, timeoutMs: 60_000, maxBytes: 1024 ** 3 });
+});
+
+it.each(['sqlGenerator', 'supervisor'] as const)('does not publish an empty %s set after warehouse failures', async node => {
+  const sql = 'SELECT 1';
+  const reference = {
+    id: 'reference', category: 'simple', question: 'Return one.', referenceSql: sql,
+    inputHash: hashItemInput({ question: 'Return one.' }), agreement: { members: ['manual'] },
+  };
+  if (node === 'supervisor') {
+    mkdirSync(join(root, 'items'));
+    writeFileSync(join(root, 'items', 'sqlGenerator.jsonl'), JSON.stringify(reference) + '\n');
+  }
+  deps.execute = vi.fn(async () => new Error('warehouse unavailable'));
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft') ? { items: [{ category: 'simple', question: reference.question }] }
+      : { labels: [{ referenceSql: sql }] },
+  }));
+
+  await expect(run({ nodes: [node], targetCounts: { [node]: 1 } })).rejects.toThrow(/tv:setup|warehouse/i);
+  for (const name of [`items/${node}.jsonl`, 'quarantine', 'fixtures', 'provenance.json']) {
+    expect(existsSync(join(root, name))).toBe(false);
+  }
+});
+
+it('reserves fixture filenames used by retained items with or without an extension', async () => {
+  mkdirSync(join(root, 'items'));
+  mkdirSync(join(root, 'fixtures'));
+  const seedInput = { category: 'simple', question: 'Did orders fail?', runHistoryFixture: 'dbt-history-1.json' };
+  const seed = {
+    ...seedInput, id: 'seed', inputHash: hashItemInput(seedInput),
+    agreement: { members: ['manual'] }, requiredFacts: ['error'],
+  };
+  const originalFixture = [{ ...history[0], status: 'error' }];
+  writeFileSync(join(root, 'fixtures', 'dbt-history-1.json'), JSON.stringify(originalFixture));
+  writeFileSync(join(root, 'items', 'dbtStatus.jsonl'), JSON.stringify(seed) + '\n');
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft fixtures') ? { fixtures: [history] }
+      : prompt.startsWith('Draft') ? {
+        items: [{ ...seedInput, question: 'Did orders succeed?', runHistoryFixture: 'dbt-history-2' }],
+      } : { labels: [{ requiredFacts: ['success'] }] },
+  }));
+
+  await run({ nodes: ['dbtStatus'], targetCounts: { dbtStatus: 2 } });
+  expect(loadFixture('dbt-history-1', root)).toEqual(originalFixture);
+  expect(loadFixture('dbt-history-2', root)).toEqual(history);
+  expect(loadItems('dbtStatus', root)).toEqual([seed, expect.objectContaining({ runHistoryFixture: 'dbt-history-2' })]);
+});
+
+it('stores the planted discrepancy defect outside the context and checks blind labels against it', async () => {
+  const context = {
+    responseId: 'fixture-1', threadTs: '1', statusMsgTs: '2', clarifiedQuestion: 'Count only returned orders.',
+    assumptions: [], reasoningChain: 'Count matching rows.', generatedSql: 'SELECT COUNT(*) FROM tv_thelook.orders',
+    explanation: 'Counted orders.', tablesUsed: ['tv_thelook.orders'], confidence: 'high', primaryAgentConfidence: 'high',
+    queryResults: { rowCount: 1, columnNames: ['n'], bytesProcessed: 100 }, pipelineDurationMs: 100,
+    traceId: 'fixture-trace', createdAt: '2026-01-01T00:00:00Z', groundingCitations: [],
+    teachingsUsed: [], supervisorVerdict: 'pass', supervisorNotes: '',
+  };
+  let diagnosed = 'missing filter';
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft fixtures') ? { fixtures: [{ context, defect: 'missing filter' }] }
+      : prompt.startsWith('Draft') ? {
+        items: [{ category: 'edge_case', complaint: 'That count looks high.', contextFixture: 'discrepancy-context-1' }],
+      } : { labels: [{ defect: diagnosed, rubric: ['COUNT(*)'] }] },
+  }));
+  const discrepancy = { nodes: ['discrepancy'] as ['discrepancy'], targetCounts: { discrepancy: 1 } };
+  await run(discrepancy);
+  expect(loadFixture('discrepancy-context-1', root)).toEqual(context);
+  expect(loadItems('discrepancy', root)).toEqual([expect.objectContaining({ defect: 'missing filter' })]);
+  const blindPrompts = vi.mocked(deps.runLabeler).mock.calls.filter(([, { prompt }]) => prompt.startsWith('Label'));
+  expect(blindPrompts).toHaveLength(2);
+  for (const [, { prompt }] of blindPrompts) {
+    expect(prompt).toContain(context.generatedSql);
+    expect(prompt).not.toMatch(/missing filter|"defect"/);
+  }
+
+  writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
+  diagnosed = 'wrong grain';
+  await run(discrepancy);
+  expect(loadItems('discrepancy', root)).toEqual([]);
+  expect(readFileSync(join(root, 'quarantine', 'discrepancy.jsonl'), 'utf8')).toContain('"defect":"missing filter"');
 });

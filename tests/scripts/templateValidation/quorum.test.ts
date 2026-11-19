@@ -71,19 +71,29 @@ describe('agreeSql', () => {
     expect(await agreeSql([], execute)).toMatchObject({ agreed: false });
   });
 
-  it('uses the first SQL to decide row ordering even when another SQL is shorter', async () => {
+  it('ignores row order when the shortest reference is unordered', async () => {
     const ordered = 'SELECT n FROM t ORDER BY n LIMIT 2';
     const unordered = 'SELECT n FROM t';
     const executeRows = async (sql: string) => ({
       columnNames: ['n'], rows: sql === ordered ? [{ n: 1 }, { n: 2 }] : [{ n: 2 }, { n: 1 }],
     });
 
-    expect(await agreeSql([ordered, unordered], executeRows)).toMatchObject({ agreed: false });
+    expect(await agreeSql([ordered, unordered], executeRows)).toEqual({ agreed: true, reference: unordered });
     expect(await agreeSql([unordered, ordered], executeRows)).toEqual({ agreed: true, reference: unordered });
   });
 
-  it('compares each result with the first when numeric tolerance is non-transitive', async () => {
-    expect(await agreeSql(['1', '1.0000009', '0.9999991'], async sql => ({
+  it('requires the shortest ordered reference’s row sequence even when the first query is unordered', async () => {
+    const ordered = 'SELECT n FROM t ORDER BY n LIMIT 2';
+    const unordered = 'SELECT n FROM t WHERE n IS NOT NULL AND n IN (1, 2)';
+    const executeRows = async (sql: string) => ({
+      columnNames: ['n'], rows: sql === ordered ? [{ n: 1 }, { n: 2 }] : [{ n: 2 }, { n: 1 }],
+    });
+
+    expect(await agreeSql([unordered, ordered], executeRows)).toMatchObject({ agreed: false });
+  });
+
+  it('compares each result with the reference when numeric tolerance is non-transitive', async () => {
+    expect(await agreeSql(['1.0000009', '1', '0.9999991'], async sql => ({
       columnNames: ['n'], rows: [{ n: Number(sql) }],
     }))).toEqual({ agreed: true, reference: '1' });
   });
