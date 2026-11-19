@@ -199,6 +199,13 @@ describe('override handlers keep the best-effort verification warning (#47)', ()
     expect(lastBlocks()).toContain('The data team is verifying it');
   });
 
+  it('keeps the warning when the summary comes back empty', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).toContain("Couldn't generate a summary");
+    expect(lastBlocks()).toContain('The data team is verifying it');
+  });
+
   it('adds no warning to a verified answer', async () => {
     mockGetCtx.mockResolvedValue(baseCtx);
     await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
