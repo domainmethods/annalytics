@@ -348,12 +348,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       }
     }
 
-    // Stage 2: Load sample rows (parallel fetch)
+    // Stage 2: Load sample rows (parallel fetch). Samples are optional prompt
+    // context: a failed read counts as a missing sample, not a pipeline error.
     const sampleRowsMap = new Map<string, { rows: Record<string, unknown>[]; stale: boolean }>();
     const sampleResults = await Promise.all(
       tables.map(async (table) => {
-        const cached = await getSampleRows(table.name);
-        return cached ? { name: table.name, data: cached } : null;
+        try {
+          const cached = await getSampleRows(table.name);
+          return cached ? { name: table.name, data: cached } : null;
+        } catch (err) {
+          logger.warn({ err, traceId, table: table.name }, 'pipeline.sample_rows_failed');
+          return null;
+        }
       }),
     );
     for (const r of sampleResults) {
@@ -362,7 +368,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
     // Stage 3: Unified Quality Loop (generate + validate + supervise)
-    const negativeExample = await getLatestNegativeFeedback(channel, threadTs);
+    // Also optional prompt context: a failed read means no negative example.
+    const negativeExample = await getLatestNegativeFeedback(channel, threadTs).catch((err: unknown) => {
+      logger.warn({ err, traceId }, 'pipeline.negative_feedback_failed');
+      return null;
+    });
 
     let pipelineMode: 'full_quality_loop' | 'routine_fast_path' = 'full_quality_loop';
     let supervisorDecision: 'skipped' | 'required' = 'required';
