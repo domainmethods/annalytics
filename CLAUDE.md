@@ -25,7 +25,7 @@ npm run build              # tsc → dist/
 npm run dev                # tsx src/app.ts (requires .env)
 npm run model:discover     # list and probe Gemini model changes
 npm run tv:setup           # create template validation views and dbt artifacts
-npm run tv:label           # quorum-label a new template validation set version
+npm run tv:label           # quorum-label the initial set or a new set version
 npm run sweep:template     # size all nodes against the frozen template set
 ```
 

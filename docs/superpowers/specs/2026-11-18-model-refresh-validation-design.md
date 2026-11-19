@@ -332,16 +332,20 @@ The current rule forbids template defaults for install-coupled nodes. Amend it:
 1. `npm run model:discover`: review new/missing models; paste probed entries; set tier + price
    from the live pricing page.
 2. First time on a machine/project: `npm run tv:setup` (creates the `tv_thelook` views).
-   Only when building a new set version: `npm run tv:label`.
+   Run `npm run tv:label` to build the initial set and when the set version changes.
+   Verify all node item files and matching provenance before sweeping. Later refreshes
+   reuse the completed frozen set.
 3. `npm run sweep:template`: runs `node-sweep --corpus template` over all 12 nodes against
    the frozen set; writes the refresh report.
-4. Review the report: apply only rows with strong/medium signal and ε below the delta; weak
-   rows need a judgment call, recorded in the commit.
+4. Use the report's final `Applicable` column. Apply eligible strong/medium rows. Weak
+   rows need a judgment call, recorded in the commit. Follow the
+   [runbook](../../model-refresh.md) for override cleanup and cross-pass details.
 5. Edit `DEFAULTS`, the `.env.example` defaults, and `DEFAULT_*_MODEL`; mark superseded registry
    entries `retired` once no default or documented override uses them.
 6. Commit only the default changes. Each `DEFAULTS` comment cites the validation-set version
    and the date measured (e.g. `TEMPLATE-MEASURED tv-v1 2026-12-02`). The report stays local.
-7. Installs: optionally re-run `node-sweep` on their own corpus and update overrides.
+7. Installs can export their environment, run `npm run node-sweep -- --corpus <path>`
+   on their own corpus, and update overrides.
 
 ## Left to the builder
 
