@@ -861,86 +861,78 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     return { node, items };
   });
   const setHash = hashValidationSet();
-  const previous = process.env.NODE_PROFILE_OVERRIDES;
-  // Baselines and the SQL generator's companion supervisor use the template defaults.
-  delete process.env.NODE_PROFILE_OVERRIDES;
-  try {
-    const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
-    const env = await loadTemplateEnv(apiKey);
-    const outcomes: NodeOutcome[] = [];
-    const epsByNode = new Map<NodeId, number>();
-    const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
-    const blocked = new Set<NodeId>();
-    const profileOf = (node: NodeId) => formatSweepProfile(getNodeProfile(node));
-    const recordFailures = (node: NodeId, profile: string, { perEntry }: CorpusRunResult) => {
-      for (const { failure } of perEntry) {
-        if (!failure) continue;
-        const counts = failuresByNode.get(node) ?? [];
-        const current = counts.find(entry => entry.profile === profile && entry.category === failure.category && entry.code === failure.code);
-        if (current) current.count++;
-        else counts.push({ ...failure, profile, count: 1 });
-        failuresByNode.set(node, counts);
-      }
+  const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
+  const env = await loadTemplateEnv(apiKey);
+  const outcomes: NodeOutcome[] = [];
+  const epsByNode = new Map<NodeId, number>();
+  const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
+  const blocked = new Set<NodeId>();
+  const profileOf = (node: NodeId) => formatSweepProfile(getNodeProfile(node));
+  const recordFailures = (node: NodeId, profile: string, { perEntry }: CorpusRunResult) => {
+    for (const { failure } of perEntry) {
+      if (!failure) continue;
+      const counts = failuresByNode.get(node) ?? [];
+      const current = counts.find(entry => entry.profile === profile && entry.category === failure.category && entry.code === failure.code);
+      if (current) current.count++;
+      else counts.push({ ...failure, profile, count: 1 });
+      failuresByNode.set(node, counts);
+    }
+  };
+  let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
+  for (const { node, items } of corpora) {
+    const runner = createTemplateRunner(node, items, env);
+    const runCorpusOnce = async () => {
+      const run = await runner();
+      recordFailures(node, profileOf(node), run);
+      return run;
     };
-    let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
-    for (const { node, items } of corpora) {
-      const runner = createTemplateRunner(node, items, env);
-      const runCorpusOnce = async () => {
-        const run = await runner();
-        recordFailures(node, profileOf(node), run);
-        return run;
-      };
-      if (node === 'sqlGenerator') sqlRunner = runner;
-      const result = await runSweep({
-        nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
-      });
-      outcomes.push(...result.outcomes);
-      epsByNode.set(node, result.epsByNode.get(node)!);
-    }
+    if (node === 'sqlGenerator') sqlRunner = runner;
+    const result = await runSweep({
+      nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
+    });
+    outcomes.push(...result.outcomes);
+    epsByNode.set(node, result.epsByNode.get(node)!);
+  }
 
-    const sqlOutcome = outcomes.find(outcome => outcome.nodeId === 'sqlGenerator');
-    const supervisor = outcomes.find(outcome => outcome.nodeId === 'supervisor');
-    if (sqlRunner && sqlOutcome && supervisor) {
-      const [sqlRow, supervisorRow] = buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance, failuresByNode);
-      if (supervisorRow.applicable) {
-        const sqlPick = sqlRow.applicable ? sqlOutcome.chosenRung : undefined;
-        const comparator = sqlPick ? sqlOutcome.chosen : sqlOutcome.baseline;
-        const comparatorProfile = sqlPick ? sqlRow.recommended : sqlRow.current;
-        if (sqlRow.failureCounts.some(failure => failure.profile === comparatorProfile && failure.category !== 'candidate')) {
-          blocked.add('supervisor');
-        } else {
-          const runPaired = async () => {
-            const run = await sqlRunner();
-            recordFailures('supervisor', `${profileOf('sqlGenerator')} + ${profileOf('supervisor')}`, run);
-            return run;
-          };
-          const cross = await verifyCrossPass(runPaired, { sqlGenerator: sqlPick, supervisor: supervisor.chosenRung },
-            comparator.metric, sqlRow.eps, comparator.exhaustionRate);
-          const pairedInfrastructureFailure = failuresByNode.get('supervisor')?.some(failure => failure.category !== 'candidate');
-          if (cross.revertSupervisor && !pairedInfrastructureFailure) {
-            supervisor.chosen = supervisor.baseline;
-            supervisor.chosenRung = undefined;
-          }
-          console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}, exhaustion: ${cross.exhaustionRate.toFixed(3)}`);
+  const sqlOutcome = outcomes.find(outcome => outcome.nodeId === 'sqlGenerator');
+  const supervisor = outcomes.find(outcome => outcome.nodeId === 'supervisor');
+  if (sqlRunner && sqlOutcome && supervisor) {
+    const [sqlRow, supervisorRow] = buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance, failuresByNode);
+    if (supervisorRow.applicable) {
+      const sqlPick = sqlRow.applicable ? sqlOutcome.chosenRung : undefined;
+      const comparator = sqlPick ? sqlOutcome.chosen : sqlOutcome.baseline;
+      const comparatorProfile = sqlPick ? sqlRow.recommended : sqlRow.current;
+      if (sqlRow.failureCounts.some(failure => failure.profile === comparatorProfile && failure.category !== 'candidate')) {
+        blocked.add('supervisor');
+      } else {
+        const runPaired = async () => {
+          const run = await sqlRunner();
+          recordFailures('supervisor', `${profileOf('sqlGenerator')} + ${profileOf('supervisor')}`, run);
+          return run;
+        };
+        const cross = await verifyCrossPass(runPaired, { sqlGenerator: sqlPick, supervisor: supervisor.chosenRung },
+          comparator.metric, sqlRow.eps, comparator.exhaustionRate);
+        const pairedInfrastructureFailure = failuresByNode.get('supervisor')?.some(failure => failure.category !== 'candidate');
+        if (cross.revertSupervisor && !pairedInfrastructureFailure) {
+          supervisor.chosen = supervisor.baseline;
+          supervisor.chosenRung = undefined;
         }
+        console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}, exhaustion: ${cross.exhaustionRate.toFixed(3)}`);
       }
     }
-
-    const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
-    const unverifiedSupervisor = !sqlOutcome && rows.find(row => row.node === 'supervisor');
-    if (unverifiedSupervisor && unverifiedSupervisor.applicationReason !== 'underfilled corpus') {
-      unverifiedSupervisor.applicable = false;
-      unverifiedSupervisor.applicationReason = 'pending SQL comparator verification';
-    }
-    const base = await writeRefreshReport(resultsDir, rows, {
-      date: runDate, setVersion, setHash, provenance,
-      ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
-    });
-    console.log(`\nReport written to ${base}.md and .json`);
-  } finally {
-    if (previous === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
-    else process.env.NODE_PROFILE_OVERRIDES = previous;
   }
+
+  const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
+  const unverifiedSupervisor = !sqlOutcome && rows.find(row => row.node === 'supervisor');
+  if (unverifiedSupervisor && unverifiedSupervisor.applicationReason !== 'underfilled corpus') {
+    unverifiedSupervisor.applicable = false;
+    unverifiedSupervisor.applicationReason = 'pending SQL comparator verification';
+  }
+  const base = await writeRefreshReport(resultsDir, rows, {
+    date: runDate, setVersion, setHash, provenance,
+    ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
+  });
+  console.log(`\nReport written to ${base}.md and .json`);
 }
 
 export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
