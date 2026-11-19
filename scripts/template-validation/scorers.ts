@@ -106,7 +106,9 @@ export async function scoreSummaryOverride(
   item: SummaryOverrideItem,
   judge: (text: string, fact: string) => Promise<boolean>,
 ): Promise<number> {
+  if (!summary.trim()) return 0;
   const numericScore = scoreSummaryNumbers(summary, item.rows);
-  const rubricScore = await scoreRubric(summary, ['answers the question asked'], judge);
+  const context = `Question: ${item.question}\nSummary: ${summary}`;
+  const rubricScore = await scoreRubric(context, ['answers the question asked'], judge);
   return (numericScore + rubricScore) / 2;
 }

@@ -151,5 +151,12 @@ it('weights numeric accuracy and the summary rubric equally', async () => {
     totalRows: 1,
   };
   await expect(scoreSummaryOverride('42.', item, judge)).resolves.toBe(0.5);
-  expect(judge).toHaveBeenCalledWith('42.', 'answers the question asked');
+  expect(judge).toHaveBeenCalledWith(
+    'Question: How many orders?\nSummary: 42.',
+    'answers the question asked',
+  );
+
+  judge.mockClear();
+  await expect(scoreSummaryOverride('  ', item, judge)).resolves.toBe(0);
+  expect(judge).not.toHaveBeenCalled();
 });
