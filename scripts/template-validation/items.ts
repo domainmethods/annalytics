@@ -94,6 +94,10 @@ export type SummaryOverrideItem = Item<'summaryOverride'>;
 export type MetaQuestionItem = Item<'metaQuestion'>;
 export type DiscrepancyItem = Item<'discrepancy'>;
 
+export function templateTargetCount(node: NodeId): number {
+  return node === 'sqlGenerator' || node === 'supervisor' ? 100 : 40;
+}
+
 export function hashItemFile(content: Buffer | string): string {
   return createHash('sha256').update(content).digest('hex');
 }

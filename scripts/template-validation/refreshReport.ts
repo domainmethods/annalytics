@@ -4,6 +4,7 @@ import { getRegisteredModel, resolveModelId } from '../../src/agents/modelConfig
 import { defaultProfileForNode, type NodeId } from '../../src/agents/nodeProfiles.js';
 import type { NodeOutcome } from '../node-sweep.js';
 import { formatSweepProfile, type SweepFailure } from '../node-sweep-types.js';
+import { templateTargetCount } from './items.js';
 import type { Provenance } from './labelQuorum.js';
 
 export type ProfileFailureCount = SweepFailure & { profile: string; count: number };
@@ -18,6 +19,8 @@ export interface RefreshRow {
   signal: 'strong' | 'medium' | 'weak';
   costDelta: number;
   p95Ms: number;
+  acceptedCount: number;
+  dropRate: number | null;
   applicable: boolean;
   applicationReason?: string;
   failureCounts: ProfileFailureCount[];
@@ -58,10 +61,14 @@ export function buildRefreshRows(
     const metrics = [...stage1, ...stage2].map(point => point.metric);
     const max = Math.max(...metrics);
     const flatAtFloor = max - Math.min(...metrics) <= eps && max < 0.9;
+    const { accepted: acceptedCount, drafted, quarantined } = provenance.perNode[node];
+    const dropRate = drafted === 0 ? null : quarantined / drafted;
     const failureCounts = failuresByNode.get(node) ?? [];
     const infrastructureFailure = blocked.has(node) || failureCounts.some(failure => failure.category !== 'candidate');
     let applicationReason: string | undefined;
-    if (infrastructureFailure) {
+    if (acceptedCount * 2 < templateTargetCount(node)) {
+      applicationReason = 'underfilled corpus';
+    } else if (infrastructureFailure) {
       applicationReason = 'Infrastructure failures affected the comparison.';
     } else if (currentModel === recommendedModel && defaultProfile.thinkingLevel === recommendedProfile.thinkingLevel) {
       applicationReason = 'same resolved model';
@@ -71,7 +78,7 @@ export function buildRefreshRows(
     }
     return {
       node, current, recommended, currentMetric: baseline.metric, recommendedMetric: chosen.metric,
-      eps, signal: signal[node], costDelta: chosen.cost - baseline.cost, p95Ms: chosen.p95LatencyMs,
+      eps, signal: signal[node], costDelta: chosen.cost - baseline.cost, p95Ms: chosen.p95LatencyMs, acceptedCount, dropRate,
       applicable: applicationReason === undefined && eps <= 0.05 && !flatAtFloor,
       ...(applicationReason && { applicationReason }),
       failureCounts,
@@ -89,13 +96,14 @@ export function renderRefreshReport(rows: RefreshRow[], meta: RefreshMeta): stri
   lines.push(
     `# Model refresh · ${meta.date}`, '',
     `Validation set ${meta.setVersion} · ${meta.setHash}`, '',
-    '| Node | Current | Recommended | Current metric | Recommended metric | ε | Signal | Cost Δ (USD) | p95 (ms) | Applicable | Reason | Flat at floor | Quorum member | Set version | Set hash |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Node | Current | Recommended | Current metric | Recommended metric | ε | Signal | Cost Δ (USD) | p95 (ms) | Accepted | Drop rate | Applicable | Reason | Flat at floor | Quorum member | Set version | Set hash |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
   );
   for (const row of rows) {
     lines.push(`| ${[
       row.node, row.current, row.recommended, row.currentMetric.toFixed(3), row.recommendedMetric.toFixed(3),
-      row.eps.toFixed(4), row.signal, row.costDelta.toExponential(2), row.p95Ms, row.applicable, row.applicationReason ?? '',
+      row.eps.toFixed(4), row.signal, row.costDelta.toExponential(2), row.p95Ms, row.acceptedCount,
+      row.dropRate === null ? 'n/a' : `${(row.dropRate * 100).toFixed(1)}%`, row.applicable, row.applicationReason ?? '',
       row.flatAtFloor, row.quorumMemberWinner, meta.setVersion, meta.setHash,
     ].join(' | ')} |`);
   }

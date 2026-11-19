@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { NODE_IDS, type NodeId } from '../../src/agents/nodeProfiles.js';
 import { loadLocalKnowledgeSummaries } from '../benchmarkInputs.js';
-import { hashItemFile, hashItemInput, ITEM_SCHEMAS, loadFixture, loadItems, scanTemplateSafety, type SqlGeneratorItem } from './items.js';
+import { hashItemFile, hashItemInput, ITEM_SCHEMAS, loadFixture, loadItems, scanTemplateSafety, templateTargetCount, type SqlGeneratorItem } from './items.js';
 import { InvalidLabelerResponseError, type LabelerConfig, type runLabeler, type SpawnFn } from './labelers.js';
 import {
   CATEGORIES, draftBatchSchema, draftItemSchema, draftPrompt, fixtureSpecs, labelBatchSchema,
@@ -411,7 +411,7 @@ export async function runLabelQuorum(
     const seeds = retained.get(node) ?? [];
     for (const seed of seeds) assertSafe(seed, node);
     const sqlNode = node === 'sqlGenerator' || node === 'supervisor';
-    const target = opts.targetCounts[node] ?? (sqlNode ? 100 : 40);
+    const target = opts.targetCounts[node] ?? templateTargetCount(node);
     if (!Number.isSafeInteger(target) || target < 0) throw new Error(`Invalid target count for ${node}`);
     const count = Math.max(0, target - seeds.length);
     const context = count ? await templateContext(node, deps.root) : '';

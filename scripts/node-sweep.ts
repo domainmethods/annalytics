@@ -842,12 +842,16 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   const provenance = JSON.parse(provenanceJson) as Provenance;
   if (provenance.version !== setVersion) throw new Error('Template provenance does not match VERSION');
   const corpora = ordered.map(node => {
-    const digest = provenance.perNode?.[node]?.itemsSha256;
-    if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) {
+    const frozen = provenance.perNode?.[node];
+    const digest = frozen?.itemsSha256;
+    if (!frozen || typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) {
       throw new Error(`Template corpus for ${node} is missing its frozen item digest`);
     }
     const items = loadItems(node, TV_ROOT, digest);
     if (!items.length) throw new Error(`Template corpus for ${node} is empty`);
+    if (items.length !== frozen.accepted) {
+      throw new Error(`Template corpus for ${node} does not match its frozen accepted count`);
+    }
     if (new Set(items.map(item => item.id)).size !== items.length) {
       throw new Error(`Template corpus for ${node} contains duplicate item IDs`);
     }
@@ -921,7 +925,7 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
 
     const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
     const unverifiedSupervisor = !sqlOutcome && rows.find(row => row.node === 'supervisor');
-    if (unverifiedSupervisor) {
+    if (unverifiedSupervisor && unverifiedSupervisor.applicationReason !== 'underfilled corpus') {
       unverifiedSupervisor.applicable = false;
       unverifiedSupervisor.applicationReason = 'pending SQL comparator verification';
     }

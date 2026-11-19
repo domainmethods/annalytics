@@ -42,11 +42,15 @@ it.each([
       if (String(path).endsWith('/VERSION')) return 'test';
       if (String(path).endsWith('/provenance.json')) return JSON.stringify({
         version: 'test', members: [],
-        perNode: Object.fromEntries(['sqlGenerator', 'supervisor'].map(node => [node, { itemsSha256: 'a'.repeat(64) }])),
+        perNode: Object.fromEntries(['sqlGenerator', 'supervisor'].map(node => [node, {
+          itemsSha256: 'a'.repeat(64), drafted: 100, accepted: 100, quarantined: 0, dropRateByCategory: {},
+        }])),
       });
       return realFs.readFile(path, options);
     });
-    vi.mocked(loadItems).mockImplementation(node => [{ id: node }] as ReturnType<typeof loadItems>);
+    vi.mocked(loadItems).mockImplementation(node => Array.from({ length: 100 }, (_, i) => ({
+      id: `${node}-${i}`,
+    })) as ReturnType<typeof loadItems>);
     vi.mocked(loadTemplateEnv).mockResolvedValue({
       apiKey: 'test', tables: [], knowledge: [], execute: vi.fn(), judge: vi.fn(),
     });
@@ -59,9 +63,9 @@ it.each([
       const baseline = node === 'sqlGenerator' && !sqlPick && !paired;
       if (baseline) defaults++;
       const comparesExhaustion = scenario === 'paired exhaustion' || scenario === 'stable picked exhaustion';
-      const exhausted = baseline ? 5 : paired && scenario === 'paired exhaustion' ? 12 : 10;
-      const count = node === 'supervisor' ? (supervisorPick ? 40 : 36)
-        : paired ? (comparesExhaustion ? 38 : 34) : sqlPick ? (scenario === 'default comparator' ? 32 : 38) : 32;
+      const exhausted = baseline ? 12 : paired && scenario === 'paired exhaustion' ? 30 : 25;
+      const count = node === 'supervisor' ? (supervisorPick ? 100 : 90)
+        : paired ? (comparesExhaustion ? 95 : 85) : sqlPick ? (scenario === 'default comparator' ? 80 : 95) : 80;
       const failure: PerEntry['failure'] = scenario === 'reference outage' && baseline && defaults <= 2
         ? { category: 'reference', code: 'sql-execution' }
         : scenario === 'candidate rejection' && node === 'sqlGenerator' && sqlPick && !paired
@@ -69,9 +73,9 @@ it.each([
           : scenario === 'paired outage' && paired
             ? { category: 'warehouse', code: 'sql-execution' }
             : undefined;
-      return { perEntry: Array.from({ length: 40 }, (_, index) => ({
+      return { perEntry: Array.from({ length: 100 }, (_, index) => ({
         id: String(index), clarificationPassed: false, overallScore: Number(index < count),
-        sqlGenMetric: Number(index < count), ...(index === 39 && failure ? { failure } : {}),
+        sqlGenMetric: Number(index < count), ...(index === 99 && failure ? { failure } : {}),
         ...(node === 'sqlGenerator' && comparesExhaustion && { exhausted: index < exhausted }),
       })), nodeUsage: new Map() };
     });
@@ -171,7 +175,7 @@ it.each([
     text, expectedRoute: 'analytics_pipeline',
   }));
   vi.mocked(readFile).mockImplementation(async path => String(path).endsWith('/VERSION') ? 'test' : JSON.stringify({
-    version: 'test', members: [], perNode: { slackIntake: { itemsSha256: 'a'.repeat(64) } },
+    version: 'test', members: [], perNode: { slackIntake: { itemsSha256: 'a'.repeat(64), accepted: items.length } },
   }));
   vi.mocked(loadItems).mockReturnValue(items as ReturnType<typeof loadItems>);
   vi.mocked(loadTemplateEnv).mockResolvedValue({
@@ -250,19 +254,22 @@ it('withholds an unpaired supervisor pick and preserves the existing full report
     if (String(path).endsWith('/VERSION')) return 'test';
     if (String(path).endsWith('/provenance.json')) return JSON.stringify({
       version: 'test', members: [], perNode: { supervisor: {
-        itemsSha256: 'a'.repeat(64), drafted: 100, accepted: 100, quarantined: 0, dropRateByCategory: {},
+        itemsSha256: 'a'.repeat(64), drafted: 50, accepted: 50, quarantined: 0, dropRateByCategory: {},
       } },
     });
     return realFs.readFile(path, options);
   });
-  vi.mocked(loadItems).mockReturnValue([{ id: 'supervisor' }] as ReturnType<typeof loadItems>);
+  const items = Array.from({ length: 50 }, (_, i) => ({ id: `supervisor-${i}` }));
+  vi.mocked(loadItems).mockReturnValue(items as ReturnType<typeof loadItems>);
   vi.mocked(loadTemplateEnv).mockResolvedValue({
     apiKey: 'test', tables: [], knowledge: [], execute: vi.fn(), judge: vi.fn(),
   });
   vi.mocked(createTemplateRunner).mockClear().mockImplementation(() => async () => {
     const score = process.env.NODE_PROFILE_OVERRIDES ? 1 : 0;
-    return { perEntry: [{ id: 'supervisor', clarificationPassed: false, overallScore: score, sqlGenMetric: score }],
-      nodeUsage: new Map() };
+    return {
+      perEntry: items.map(({ id }) => ({ id, clarificationPassed: false, overallScore: score, sqlGenMetric: score })),
+      nodeUsage: new Map(),
+    };
   });
 
   const dir = await mkdtemp(join(tmpdir(), 'template-supervisor-report-'));

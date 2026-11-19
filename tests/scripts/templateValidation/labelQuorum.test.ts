@@ -11,6 +11,7 @@ import { initBigQuery } from '../../../src/validation/dryRun.js';
 import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
 import { resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
+import { buildRefreshRows, writeRefreshReport } from '../../../scripts/template-validation/refreshReport.js';
 import { loadLabelers, runLabeler, type SpawnFn } from '../../../scripts/template-validation/labelers.js';
 
 const mockCreateQueryJob = vi.hoisted(() => vi.fn());
@@ -676,4 +677,42 @@ it.each(['reportedModel', 'cliVersion'])('rejects unsafe CLI %s before publishin
   for (const name of ['items', 'fixtures', 'quarantine', 'provenance.json']) {
     expect(existsSync(join(root, name))).toBe(false);
   }
+});
+
+it('reports a 1-of-40 chart corpus as underfilled even when its candidate scores perfectly', async () => {
+  let draftIndex = 0;
+  let codexBatches = 0;
+  deps.runLabeler = vi.fn(async (cfg, { prompt }) => {
+    if (prompt.startsWith('Draft')) {
+      return { cached: false, value: {
+        items: Array.from({ length: 20 }, () => ({
+          category: 'simple', question: `Plot the count for order group ${++draftIndex}.`,
+          columnNames: ['count'], sampleRows: [[7]],
+        })),
+      } };
+    }
+    const keepFirst = cfg.id === 'codex' && codexBatches++ === 0;
+    return { cached: false, value: {
+      labels: Array.from({ length: 20 }, (_, i) => ({
+        allowedMarks: cfg.id === 'claude' || (keepFirst && i === 0) ? ['bar'] : ['line'],
+      })),
+    } };
+  });
+  const provenance = await run({ nodes: ['chart'], targetCounts: {} });
+  const baseline = { label: 'DEFAULT', metric: 1, e2e: 1, p95LatencyMs: 1, cost: 1 };
+  const chosen = { ...baseline, label: 'flash-lite/3.1@minimal', cost: 0.5 };
+  const chosenRung = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' } as const;
+  const rows = buildRefreshRows([{
+    nodeId: 'chart', baseline, chosen, chosenRung, stage1Winner: chosenRung,
+    stage1: [chosen], stage2: [chosen], e2eCritical: false,
+  }], new Map([['chart', 0.01]]), provenance);
+  await writeRefreshReport(root, rows, { setVersion: version, setHash: 'test', date: '2026-11-18', provenance });
+  const base = join(root, '2026-11-18-model-refresh');
+  expect(JSON.parse(readFileSync(base + '.json', 'utf8')).rows).toMatchObject([{
+    node: 'chart', acceptedCount: 1, dropRate: 0.975, applicable: false, applicationReason: 'underfilled corpus',
+  }]);
+  const markdown = readFileSync(base + '.md', 'utf8');
+  expect(markdown).toContain('| Accepted | Drop rate |');
+  expect(markdown.split('\n').find(line => line.startsWith('| chart |')))
+    .toContain('| 1 | 97.5% | false | underfilled corpus |');
 });

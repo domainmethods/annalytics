@@ -10,7 +10,11 @@ import { resolveModelId } from '../../../src/agents/modelConfig.js';
 const chosenRung = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' } as const;
 const provenance: Provenance = {
   version: 'test', createdAt: '2026-11-18', quorumKind: 'reduced', reducedQuorum: true, singleFamily: false,
-  drafter: 'test', perNode: {}, members: [
+  drafter: 'test',
+  perNode: Object.fromEntries(([['supervisor', 50], ['chart', 20], ['metaQuestion', 20]] as const).map(([node, accepted]) => [
+    node, { accepted, drafted: 0, quarantined: 0, dropRateByCategory: {}, itemsSha256: 'a'.repeat(64) },
+  ])),
+  members: [
     { id: 'test', family: 'gemini', cliVersion: '1', requestedModel: 'other', reportedModels: [resolveModelId(chosenRung.tier, chosenRung.version)] },
   ],
 };
