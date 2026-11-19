@@ -4,10 +4,9 @@ Anna Lytics is a Slack bot that answers business questions by translating natura
 
 ## Releases
 
-See [CHANGELOG.md](CHANGELOG.md) for the proposed release baseline and update
-notes, and [Updating from the template](IMPLEMENTATION.md#updating-from-the-template)
-for syncing an existing implementation. Releases are cut by maintainers; the
-proposed baseline is not yet a published tag.
+See [CHANGELOG.md](CHANGELOG.md) for release history and update notes, and [Updating from the template](IMPLEMENTATION.md#updating-from-the-template)
+for syncing an existing implementation. Releases are cut by maintainers as
+`vX.Y.Z` tags; the first is `v0.1.0`.
 
 ## Architecture
 
