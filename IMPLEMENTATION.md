@@ -73,19 +73,28 @@ implementation-owned content. Add the remote once:
 
 ```bash
 git remote add template https://github.com/domainmethods/annalytics.git
-git fetch template --tags
+```
+
+Then, for each update, fetch template tags into their own namespace (so they
+cannot collide with your implementation's own `vX.Y.Z` tags) and merge:
+
+```bash
+git fetch template 'refs/tags/*:refs/tags/template/*'
 git switch -c update/template-release
 # Replace vX.Y.Z with an actual published template release tag.
-git merge vX.Y.Z
+git merge template/vX.Y.Z
 ```
 
 No release tags exist until the first maintainer release. Do not assume the
 proposed changelog version is already available. For a repository created with
 GitHub **Use this template** (or another copy without shared history), use
-`git merge --allow-unrelated-histories vX.Y.Z` for the first sync instead.
+`git merge --allow-unrelated-histories template/vX.Y.Z` for the first sync instead.
 With unrelated histories there is no merge base: files changed upstream can
 produce add/add conflicts even when you never edited them locally, including
-runtime code, tests, infrastructure, and deploy configuration.
+runtime code, tests, infrastructure, and deploy configuration. Files the
+template deleted after your snapshot are not removed for you and produce no
+conflict; after the merge, compare `git ls-tree -r --name-only template/vX.Y.Z`
+against your tree and delete obsolete template files deliberately.
 
 In this merge direction (template into your implementation), resolve each file
 you never customized with the template version:

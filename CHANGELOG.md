@@ -4,6 +4,8 @@ Notable template changes follow [Keep a Changelog](https://keepachangelog.com/en
 Versions follow Semantic Versioning. Before 1.0, minor versions may contain
 breaking configuration changes, always flagged **Action required**. This first baseline summarizes merged history;
 0.1.0 matches package.json and is proposed, not yet tagged or released.
+package.json previously read 1.0.0 (an npm default, never a release), so
+recorded `packageVersion` metadata may appear to move backwards.
 
 Maintainers: at release time, move Unreleased entries into a dated version section
 (or finalize the proposed baseline), leave an empty Unreleased section, and align
@@ -101,7 +103,6 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
   warehouse relations with query scope rather than incidental names; unsupported
   SQL earns no table credit and may be unscorable. Re-run implementation acceptance
   with the corrected instruments before relying on prior verdicts.
-
 - **Action required — INT64 results (#104):** unsafe INT64 values retain exact
   decimal strings, including nested results. Consumers of query results should
   allow strings for integers outside the JavaScript safe range.
