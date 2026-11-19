@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Anna Lytics is a Slack bot that translates natural-language questions into BigQuery SQL using configurable Gemini model aliases, with dbt metadata as the semantic layer. It runs on Cloud Run, uses Firestore for state, and communicates via Bolt.js (HTTP mode with ExpressReceiver).
+Anna Lytics is a Slack bot that translates natural-language questions into BigQuery SQL using Gemini models selected per pipeline node (`src/agents/nodeProfiles.ts`), with dbt metadata as the semantic layer. It runs on Cloud Run, uses Firestore for state, and communicates via Bolt.js (HTTP mode with ExpressReceiver).
 
 ## Trajectory Governance
 
@@ -40,7 +40,7 @@ Slack Event → ack() → preflightChecks (lock + clarification + escalation) �
   2. Thread Context (conversations.replies → last 4 msgs, 4K char limit)
   3. SQL Generation + Supervisor Loop (generateSql → supervisor review → retry)
   3b. Escalation Decision (if exhausted: park_wait or best_effort_verify → save state, post to escalation channel, return)
-  4. Validation (L1 static → L2 AST → L3 BigQuery dry run → L4 cost gate, short-circuit on failure)
+  4. Validation (L1 static → L2 AST → L3 BigQuery dry run → L4 cost gate, short-circuit on failure; the final SQL is always re-validated right before execution, even when the quality loop already validated it)
   5. Execution (BigQuery with timeout/row/byte limits)
   6. Format + Respond (chooseFormat → Block Kit → chat.update + feedback/reasoning/override buttons)
   7. Persist ResponseContext (including retrievedSchema with all considered tables) → Firestore
@@ -59,7 +59,7 @@ These boundaries are enforced by convention and must not be violated:
 ### Dual `ts` Values Pattern
 
 The pipeline receives two Slack timestamps that serve different purposes:
-- **`threadTs`**: Thread identity. Used for state (locks, ResponseContext), thread context retrieval, reply threading.
+- **`threadTs`**: Thread identity. Used for state (locks, ResponseContext), thread context retrieval, reply threading. Slack timestamps are only unique within a conversation, so thread state is always keyed by `channel` + `threadTs` (`conversationThreadKey()` / `findOwnedDoc()` in `src/state/threadScope.ts`); never key or look up thread state by `threadTs` alone.
 - **`statusMsgTs`**: The bot's status message. Used exclusively for `chat.update()` calls. Never conflated with thread identity.
 
 ### Singleton Initialization
@@ -82,7 +82,7 @@ These are called at startup in `src/app.ts` and must also be called in integrati
 |-------|------|------|-------------------|
 | L1 Static | `staticAnalysis.ts` | Regex DML/DDL blocking | Block (word-boundary matching, strips string literals first) |
 | L2 AST | `astValidation.ts` | node-sql-parser SELECT check | **Advisory only** — parse failures pass through to L3 |
-| L3 Dry Run | `dryRun.ts` | BigQuery `dryRun: true` | Block (authoritative validator) |
+| L3 Dry Run | `dryRun.ts` | BigQuery `dryRun: true` | Block (authoritative validator; also blocks unless `statistics.query.statementType` is `SELECT`) |
 | L4 Cost Gate | `costGate.ts` | Pure bytes threshold check | Block |
 
 ### Preflight Guards
@@ -102,6 +102,8 @@ Thread replies are classified by `followUpClassifier.ts` before entering the pip
 - **`discrepancy`** → Diagnostic SQL via Pro + validation + lightweight supervisor review + execution
 - **`new_query`** → Standard pipeline
 
+If a `meta_question`/`refinement`/`discrepancy` handler fails, the user gets an error with a trace ID; it never falls back to a fresh SQL run. Only a failed *classification* falls back to the standard pipeline.
+
 ### Escalation (Human-in-the-Loop)
 
 When the supervisor loop returns `exhausted`, `decideEscalation()` chooses a behavior:
@@ -111,21 +113,23 @@ When the supervisor loop returns `exhausted`, `decideEscalation()` chooses a beh
 
 Escalation supports `channel` mode (shared channel) and `dm` mode (direct message to analyst). State is persisted to `escalation_state` collection for cross-request resume. `resolveEscalationTarget()` in pipeline.ts resolves the target based on mode.
 
-Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. A ✅ reaction on an escalation card that shows proposed SQL confirms it (`handleEscalationReaction()` in `handlers/escalationReaction.ts`; skips teaching-candidate harvesting since the reaction carries no new guidance). Reminders and timeouts run via `checkOverdueEscalations()`, driven both by incoming event traffic and by the `POST /api/lifecycle-sweep` endpoint (Cloud Scheduler). Teaching promotions enqueue pending_notifications docs that the sweep delivers to the originating thread (closing the feedback loop to the user).
+Human replies in the escalation thread are matched via `checkEscalationResponse()` and forwarded to the original user thread. Replies and ✅ reactions both take an atomic resolution claim first (`claimEscalation()` moves `awaiting_human` → `resolving` in a transaction), so only one resolves; delivery is at most once and a claimed resolution is never replayed. A ✅ reaction on an escalation card that shows proposed SQL confirms it (`handleEscalationReaction()` in `handlers/escalationReaction.ts`; skips teaching-candidate harvesting since the reaction carries no new guidance). Reminders and timeouts run via `checkOverdueEscalations()`, driven both by incoming event traffic and by the `POST /api/lifecycle-sweep` endpoint (Cloud Scheduler); each sweep scans every pending escalation, acts on at most 100 due ones (most overdue first, the rest reported as `deferred`), and claims each reminder transactionally before posting. Teaching promotions enqueue pending_notifications docs that the sweep delivers to the originating thread (closing the feedback loop to the user).
 
 ### Response Buttons
 
-Every response includes: feedback (thumbs up/down), reasoning toggle, and override buttons (Table, Summary, CSV). Reasoning toggle loads from persisted ResponseContext — no LLM call. Override buttons re-execute the original SQL (BigQuery 24h cache) through the validation pipeline.
+Every response includes: feedback (thumbs up/down), reasoning toggle, and override buttons (Table, Summary, CSV). Reasoning toggle loads from persisted ResponseContext — no LLM call. Override buttons re-execute the original SQL (BigQuery 24h cache) through the validation pipeline. If the answer's ResponseContext is missing or logically expired (`isExpiredResponseContext()`: `expiresAt`, or `createdAt` + retention for legacy records), controls reply privately (`chat.postEphemeral`) instead of overwriting the answer. Every request-time reader of `response_context` applies that same expiry rule, because TTL deletion lags by up to ~72h.
 
 ### Firestore Collections
 
 | Collection | Key | Purpose |
 |---|---|---|
-| `processing_threads` | `channel:threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
-| `rate_limits` | `userId` | Per-user rate limiting (1-hour sliding window) |
+| `processing_threads` | `channel:threadTs` | Thread lease: acquired in a transaction that admits only when absent or expired, stamped with an `ownerToken`; release deletes only if the token still matches (300s `expiresAt`) |
+| `rate_limits` | `userId` | Per-user rate limiting (fixed 1-hour window that starts at the first admitted request and resets once it expires; admit-and-count in one transaction) |
+| `slack_event_dedupe` | Slack event id | Slack retry dedupe, claimed via `create()`; `expiresAt` TTL (30s while pending, 24h once visible) |
+| `sample_rows` | physical table name | Cached sample rows for SQL-generator prompts; 7-day staleness, refreshed in the background at startup. Overwritten in place, so it has no TTL |
 | `response_context` | `channel:threadTs_statusMsgTs` (Slack; pre-#30 answers: `threadTs_statusMsgTs`), `conversationId_statusMsgTs` (WhatsApp) | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
-| `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
+| `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `pipelineState` `awaiting_human` → `resolving` (atomic claim by a reply or ✅), or `awaiting_human` → `timed_out` (sweep timeout, also transactional); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
 | `config` | `metadata_state` | `/health/doctor` Firestore connectivity probe target (cheap read; the doc need not exist). The dbt-metadata-freshness writer was never wired; its dead module was removed 2026-06-19. |
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
@@ -188,7 +192,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
   ```
 - `vi.clearAllMocks()` resets mock return values — re-setup in `beforeEach`
 - BigQuery job metadata is at `job.metadata.statistics` (not `job.statistics`)
-- Firestore `create()` throws error code 6 (ALREADY_EXISTS) for lock contention — test with `{ code: 6 }`
+- Firestore `create()` throws error code 6 (ALREADY_EXISTS) for contention on event dedupe (`slack_event_dedupe`, `whatsapp_event_dedupe`) — test with `{ code: 6 }`. Thread leases, rate limits and escalation claims use `db.runTransaction()` instead, so mock `runTransaction` with a fake `transaction.get/set/update/delete`.
 
 ## Testing
 
