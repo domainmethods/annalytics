@@ -55,8 +55,8 @@ export async function executeQuery(
     const remaining = options.maxRows - rows.length;
     if (response?.jobComplete === false) {
       // Still running: the API long-polls (~10s) per call, so retry the same
-      // request until the job finishes or the query timeout passes.
-      if (!nextQuery) break;
+      // request until the job finishes or the query timeout passes. Never break
+      // here: returning now would report a still-running job as an empty result.
       if (Date.now() > deadline) {
         throw new Error(`Query timeout: did not complete before ${options.timeoutMs}ms`);
       }
