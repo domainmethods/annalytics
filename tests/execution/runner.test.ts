@@ -11,89 +11,118 @@ vi.mock('@google-cloud/bigquery', () => ({
   },
 }));
 
+const OPTS = { maxRows: 100, timeoutMs: 30000, maxBytes: 10_000_000_000 };
+const rowsOf = (n: number, from = 0) => Array.from({ length: n }, (_, i) => ({ id: from + i }));
+
+/**
+ * The SDK resolves `job.getQueryResults({ maxResults })` as one API page:
+ * `[rows, nextQuery, response]`, where `response.totalRows` is the result's
+ * total and `nextQuery` (with a `pageToken`) is set only when rows remain.
+ */
+function page(rows: unknown[], totalRows: string | undefined, pageToken?: string, extra: Record<string, unknown> = {}) {
+  const response: Record<string, unknown> = { jobComplete: true, ...extra };
+  if (totalRows !== undefined) response.totalRows = totalRows;
+  const nextQuery = pageToken ? { maxResults: 100, pageToken } : null;
+  return [rows, nextQuery, response];
+}
+
 describe('executeQuery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     initBigQueryClient('test-project');
-  });
-
-  it('returns rows and metadata on success', async () => {
-    const rows = [
-      { id: '1', name: 'Alice' },
-      { id: '2', name: 'Bob' },
-    ];
     mockCreateQueryJob.mockResolvedValue([{
       getQueryResults: mockGetQueryResults,
       getMetadata: mockGetMetadata,
     }]);
-    mockGetQueryResults.mockResolvedValue([rows]);
-    mockGetMetadata.mockResolvedValue([{
-      statistics: {
-        query: { totalRows: '2' },
-        totalBytesProcessed: '1000',
-      },
-    }]);
+    // Job statistics deliberately carry no row count: the runner must read the
+    // count from the results response, not from here.
+    mockGetMetadata.mockResolvedValue([{ statistics: { query: {}, totalBytesProcessed: '1000' } }]);
+  });
 
-    const result = await executeQuery('SELECT id, name FROM users', {
-      maxRows: 1000,
-      timeoutMs: 30000,
-      maxBytes: 10_000_000_000,
-    });
+  it('returns rows and metadata on success', async () => {
+    const rows = [{ id: '1', name: 'Alice' }, { id: '2', name: 'Bob' }];
+    mockGetQueryResults.mockResolvedValueOnce(page(rows, '2'));
+
+    const result = await executeQuery('SELECT id, name FROM users', OPTS);
 
     expect(result.rows).toEqual(rows);
     expect(result.columnNames).toEqual(['id', 'name']);
     expect(result.totalRows).toBe(2);
+    expect(result.bytesProcessed).toBe(1000);
+    expect(result.truncated).toBe(false);
+    expect(mockGetQueryResults).toHaveBeenCalledTimes(1);
+    expect(mockGetQueryResults.mock.calls[0][0].maxResults).toBe(100);
+  });
+
+  it('a complete result of exactly the cap is not truncated (#38)', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page(rowsOf(100), '100'));
+
+    const result = await executeQuery('SELECT id FROM t', OPTS);
+
+    expect(result.rows).toHaveLength(100);
+    expect(result.totalRows).toBe(100);
     expect(result.truncated).toBe(false);
   });
 
-  it('detects truncated results when totalRows > maxRows', async () => {
-    const rows = Array.from({ length: 1000 }, (_, i) => ({ id: String(i) }));
-    mockCreateQueryJob.mockResolvedValue([{
-      getQueryResults: mockGetQueryResults,
-      getMetadata: mockGetMetadata,
-    }]);
-    mockGetQueryResults.mockResolvedValue([rows]);
-    mockGetMetadata.mockResolvedValue([{
-      statistics: {
-        query: { totalRows: '50000' },
-        totalBytesProcessed: '5000000',
-      },
-    }]);
+  it('reports the full total when the result exceeds the cap (#38)', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page(rowsOf(100), '150', 'tok-2'));
 
-    const result = await executeQuery('SELECT id FROM big_table', {
-      maxRows: 1000,
-      timeoutMs: 30000,
-      maxBytes: 10_000_000_000,
-    });
+    const result = await executeQuery('SELECT id FROM t', OPTS);
 
-    expect(result.rows).toHaveLength(1000);
-    expect(result.totalRows).toBe(50000);
+    expect(result.rows).toHaveLength(100);
+    expect(result.totalRows).toBe(150);
     expect(result.truncated).toBe(true);
+    expect(mockGetQueryResults).toHaveBeenCalledTimes(1); // cap filled; no extra page
   });
 
-  it('counts returned rows when statistics.query.totalRows is absent (aggregate jobs)', async () => {
-    // Regression: BigQuery leaves statistics.query.totalRows undefined for some
-    // completed aggregate jobs. A 1-row COUNT(...) must not be mistaken for an
-    // empty result — totalRows is derived from the materialized rows, not the
-    // missing stat. Otherwise chooseFormat renders a real answer as "no results".
-    const rows = [{ unique_visitors: 1000 }];
-    mockCreateQueryJob.mockResolvedValue([{
-      getQueryResults: mockGetQueryResults,
-      getMetadata: mockGetMetadata,
-    }]);
-    mockGetQueryResults.mockResolvedValue([rows]);
-    mockGetMetadata.mockResolvedValue([{
-      statistics: {
-        query: {}, // totalRows undefined
-        totalBytesProcessed: '2048',
-      },
-    }]);
+  it('follows a continuation after a short page until the cap is filled (#38)', async () => {
+    mockGetQueryResults
+      .mockResolvedValueOnce(page(rowsOf(40), '150', 'tok-2'))
+      .mockResolvedValueOnce(page(rowsOf(60, 40), '150', 'tok-3'));
 
-    const result = await executeQuery('SELECT COUNT(DISTINCT client_key) AS unique_visitors FROM t', {
-      maxRows: 1000,
-      timeoutMs: 30000,
-      maxBytes: 10_000_000_000,
-    });
+    const result = await executeQuery('SELECT id FROM t', OPTS);
+
+    expect(result.rows).toHaveLength(100);
+    expect(result.rows[99]).toEqual({ id: 99 });
+    expect(result.totalRows).toBe(150);
+    expect(result.truncated).toBe(true);
+    const second = mockGetQueryResults.mock.calls[1][0];
+    expect(second.pageToken).toBe('tok-2');
+    expect(second.maxResults).toBe(60);
+    expect(second.wrapIntegers).toBeDefined();
+  });
+
+  it('follows a continuation to the end of a short-paged complete result (#38)', async () => {
+    mockGetQueryResults
+      .mockResolvedValueOnce(page(rowsOf(40), '70', 'tok-2'))
+      .mockResolvedValueOnce(page(rowsOf(30, 40), '70'));
+
+    const result = await executeQuery('SELECT id FROM t', OPTS);
+
+    expect(result.rows).toHaveLength(70);
+    expect(result.totalRows).toBe(70);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('waits for a job that is still running before reading rows', async () => {
+    mockGetQueryResults
+      .mockResolvedValueOnce([[], { maxResults: 100 }, { jobComplete: false }])
+      .mockResolvedValueOnce(page([{ n: 5 }], '1'));
+
+    const result = await executeQuery('SELECT COUNT(*) AS n FROM t', OPTS);
+
+    expect(result.rows).toEqual([{ n: 5 }]);
+    expect(result.totalRows).toBe(1);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('counts returned rows for an uncapped one-row aggregate without a reported total', async () => {
+    // Regression: a 1-row COUNT(...) must not be mistaken for an empty result
+    // when no total is reported, or chooseFormat renders it as "no results".
+    const rows = [{ unique_visitors: 1000 }];
+    mockGetQueryResults.mockResolvedValueOnce(page(rows, undefined));
+
+    const result = await executeQuery('SELECT COUNT(DISTINCT client_key) AS unique_visitors FROM t', OPTS);
 
     expect(result.rows).toEqual(rows);
     expect(result.totalRows).toBe(1);
@@ -101,24 +130,19 @@ describe('executeQuery', () => {
     expect(result.truncated).toBe(false);
   });
 
-  it('returns empty result gracefully', async () => {
-    mockCreateQueryJob.mockResolvedValue([{
-      getQueryResults: mockGetQueryResults,
-      getMetadata: mockGetMetadata,
-    }]);
-    mockGetQueryResults.mockResolvedValue([[]]);
-    mockGetMetadata.mockResolvedValue([{
-      statistics: {
-        query: { totalRows: '0' },
-        totalBytesProcessed: '500',
-      },
-    }]);
+  it('without a reported total, a remaining page token marks the result truncated', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page(rowsOf(100), undefined, 'tok-2'));
 
-    const result = await executeQuery('SELECT * FROM users WHERE 1=0', {
-      maxRows: 1000,
-      timeoutMs: 30000,
-      maxBytes: 10_000_000_000,
-    });
+    const result = await executeQuery('SELECT id FROM t', OPTS);
+
+    expect(result.totalRows).toBe(100);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('returns empty result gracefully', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([], '0'));
+
+    const result = await executeQuery('SELECT * FROM users WHERE 1=0', OPTS);
 
     expect(result.rows).toEqual([]);
     expect(result.totalRows).toBe(0);

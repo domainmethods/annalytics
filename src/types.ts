@@ -22,9 +22,9 @@ export interface ValidationResult {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   columnNames: string[];
-  totalRows: number;          // from job metadata (not COUNT(*))
+  totalRows: number;          // full result count from the results response (at least rows.length)
   bytesProcessed: number;
-  truncated: boolean;         // true if totalRows > maxResultRows
+  truncated: boolean;         // true if the result holds more rows than were returned
 }
 
 export interface ResponseContext {
