@@ -401,6 +401,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
   });
 
   it('notifies both threads and skips the pipeline when an analyst reply arrives after timeout', async () => {
+    firestoreStore.set('escalation_state/esc-late', { pipelineState: 'awaiting_human' });
     firestoreQueryResults.set('escalation_state', {
       empty: false,
       docs: [{

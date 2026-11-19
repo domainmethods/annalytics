@@ -1,3 +1,4 @@
+import { LOCK_TTL_MS } from './threadLock.js';
 import { getDb } from './firestore.js';
 import type { EscalationState } from '../types.js';
 
@@ -60,17 +61,37 @@ async function queryPendingEscalation(
   const state = toEscalationState(doc.data());
 
   if (state.expiresAt < new Date()) {
-    await doc.ref.update({ pipelineState: 'timed_out' });
+    if (!await timeoutEscalation(state.escalationId)) return null;
     return { status: 'expired_now', state };
   }
 
   return { status: 'pending', state };
 }
 
+/**
+ * A claimed resolution is re-running the pipeline for this thread. Keep the
+ * original thread guarded while it does, but only for the thread-lock TTL so a
+ * resolution interrupted mid-delivery does not wedge the thread forever.
+ */
+export const RESOLVING_GUARD_MS = LOCK_TTL_MS;
+
 export async function getEscalationByThread(
   threadTs: string,
 ): Promise<EscalationLookup> {
-  return queryPendingEscalation('originalThreadTs', threadTs);
+  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs);
+  if (awaiting) return awaiting;
+
+  const snapshot = await getDb().collection(COLLECTION)
+    .where('originalThreadTs', '==', threadTs)
+    .where('pipelineState', '==', 'resolving')
+    .limit(1)
+    .get();
+  if (snapshot.empty) return null;
+
+  const data = snapshot.docs[0].data();
+  const claimedAt = toDate(data.claimedAt as Date | FirestoreTimestamp | undefined);
+  if (!claimedAt || Date.now() - claimedAt.getTime() > RESOLVING_GUARD_MS) return null;
+  return { status: 'pending', state: toEscalationState(data) };
 }
 
 export async function getEscalationByEscalationThread(
@@ -90,6 +111,21 @@ export async function getEscalationById(
   const doc = await getDb().collection(COLLECTION).doc(escalationId).get();
   if (!doc.exists) return null;
   return toEscalationState(doc.data() as Record<string, unknown>);
+}
+
+/**
+ * At-most-once delivery: never replay a claim after an interrupted Slack/BQ call.
+ * Operators recover by asking a fresh question; replay could duplicate a query.
+ */
+export async function claimEscalation(escalationId: string): Promise<boolean> {
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists || doc.data()?.pipelineState !== 'awaiting_human') return false;
+    transaction.update(ref, { pipelineState: 'resolving', claimedAt: new Date() });
+    return true;
+  });
 }
 
 export async function resolveEscalation(
@@ -122,10 +158,14 @@ export async function getAllPendingEscalations(): Promise<EscalationState[]> {
 
 export async function timeoutEscalation(
   escalationId: string,
-): Promise<void> {
+): Promise<boolean> {
   const db = getDb();
-  await db.collection(COLLECTION).doc(escalationId).update({
-    pipelineState: 'timed_out',
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists || doc.data()?.pipelineState !== 'awaiting_human') return false;
+    transaction.update(ref, { pipelineState: 'timed_out' });
+    return true;
   });
 }
 

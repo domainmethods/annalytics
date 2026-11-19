@@ -517,3 +517,9 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Evidence: merged PRs #96–#107, #111–#117 and #119, and git history; changelog notes identify operator
   actions for validation, admission, deployment billing, ingestion, sampling,
   and corrected acceptance semantics. No implementation evidence is included.
+
+### 2026-11-18 - Escalation resolution claim (#50)
+
+- Trust maintenance: text replies and checkmarks claim an awaiting escalation transactionally before resuming a query or posting a confirmation. Timeout transitions also check the current state.
+- Delivery is at most once. A crash or delivery error leaves a resolving record; neither event retries nor the lifecycle sweep reclaim it, since a remote operation may already have succeeded. Recovery is an explicit fresh question or direct analyst assistance, not replay of the old claim. Resolved and resolving records stay outside awaiting-only reminder/timeout queries; existing query shapes and indexes remain unchanged.
+- No product tranche or deferred feature is activated. Evidence is synthetic concurrency and state regression coverage; no live services are changed.

@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   saveEscalationState,
+  claimEscalation,
   getEscalationByThread,
   getEscalationByEscalationThread,
   getEscalationById,
   resolveEscalation,
   updateReminderTime,
   hasPendingEscalation,
+  RESOLVING_GUARD_MS,
 } from '../../src/state/escalationState.js';
 
+let transactionState = 'awaiting_human';
 const mockSet = vi.fn();
 const mockUpdate = vi.fn();
 const mockDelete = vi.fn();
@@ -21,12 +24,17 @@ const mockCollection = vi.fn(() => ({ doc: mockDoc, where: mockWhere }));
 vi.mock('../../src/state/firestore.js', () => ({
   getDb: vi.fn(() => ({
     collection: mockCollection,
+    runTransaction: async (fn: any) => fn({
+      get: async () => ({ exists: true, data: () => ({ pipelineState: transactionState }) }),
+      update: (_ref: any, data: any) => { transactionState = data.pipelineState; mockUpdate(data); },
+    }),
   })),
 }));
 
 describe('saveEscalationState', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockSet.mockResolvedValue(undefined);
   });
 
@@ -77,6 +85,7 @@ describe('saveEscalationState', () => {
 describe('getEscalationByThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
   });
 
@@ -120,6 +129,32 @@ describe('getEscalationByThread', () => {
     expect(result).toBeNull();
   });
 
+  it('treats a recently claimed resolution as pending so the thread stays guarded', async () => {
+    const resolvingDoc = (claimedAt: Date) => ({
+      get: vi.fn().mockResolvedValue({
+        empty: false,
+        docs: [{
+          data: () => ({
+            escalationId: 'esc-123',
+            originalThreadTs: '1234.5678',
+            pipelineState: 'resolving',
+            claimedAt,
+            createdAt: new Date(),
+            expiresAt: new Date(Date.now() + 60_000),
+          }),
+        }],
+      }),
+    });
+    const empty = { get: vi.fn().mockResolvedValue({ empty: true, docs: [] }) };
+
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date()));
+    const fresh = await getEscalationByThread('1234.5678');
+    expect(fresh?.status).toBe('pending');
+
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date(Date.now() - RESOLVING_GUARD_MS - 1)));
+    expect(await getEscalationByThread('1234.5678')).toBeNull();
+  });
+
   it('returns expired_now and marks expired escalation as timed_out', async () => {
     const pastDate = new Date(Date.now() - 1000);
     const mockUpdateRef = vi.fn().mockResolvedValue(undefined);
@@ -143,7 +178,7 @@ describe('getEscalationByThread', () => {
       status: 'expired_now',
       state: { escalationId: 'esc-expired' },
     });
-    expect(mockUpdateRef).toHaveBeenCalledWith({ pipelineState: 'timed_out' });
+    expect(mockUpdate).toHaveBeenCalledWith({ pipelineState: 'timed_out' });
   });
 
   it('returns null on a subsequent lookup after the lazy timeout flip', async () => {
@@ -172,13 +207,14 @@ describe('getEscalationByThread', () => {
 
     expect(first?.status).toBe('expired_now');
     expect(second).toBeNull();
-    expect(mockUpdateRef).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('getEscalationByEscalationThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
   });
 
@@ -215,6 +251,7 @@ describe('getEscalationByEscalationThread', () => {
 describe('resolveEscalation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockUpdate.mockResolvedValue(undefined);
   });
 
@@ -230,6 +267,7 @@ describe('resolveEscalation', () => {
 describe('updateReminderTime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockUpdate.mockResolvedValue(undefined);
   });
 
@@ -247,6 +285,7 @@ describe('updateReminderTime', () => {
 describe('hasPendingEscalation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
     mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
   });
 
@@ -275,6 +314,7 @@ describe('hasPendingEscalation', () => {
 describe('getEscalationById', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    transactionState = 'awaiting_human';
   });
 
   it('returns the mapped state for an existing doc regardless of pipelineState', async () => {
@@ -302,5 +342,24 @@ describe('getEscalationById', () => {
   it('returns null when the doc does not exist', async () => {
     mockGet.mockResolvedValue({ exists: false });
     expect(await getEscalationById('esc_gone')).toBeNull();
+  });
+});
+
+describe('claimEscalation', () => {
+  it('claims once and writes no undefined values', async () => {
+    transactionState = 'awaiting_human';
+    mockUpdate.mockClear();
+    expect(await claimEscalation('esc-claim')).toBe(true);
+    expect(await claimEscalation('esc-claim')).toBe(false);
+    expect(mockUpdate).toHaveBeenCalledExactlyOnceWith({
+      pipelineState: 'resolving', claimedAt: expect.any(Date),
+    });
+  });
+
+  it.each(['resolved', 'resolving', 'timed_out'])('does not claim %s', async status => {
+    transactionState = status;
+    mockUpdate.mockClear();
+    expect(await claimEscalation('esc-claim')).toBe(false);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

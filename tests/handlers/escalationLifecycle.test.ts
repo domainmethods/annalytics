@@ -56,7 +56,7 @@ describe('checkOverdueEscalations', () => {
     vi.clearAllMocks();
     _resetThrottle();
     mockUpdateReminder.mockResolvedValue(undefined);
-    mockTimeout.mockResolvedValue(undefined);
+    mockTimeout.mockResolvedValue(true);
     mockBuildReminder.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'reminder' } }] as any);
     mockClient.chat.postMessage.mockResolvedValue({});
   });
@@ -128,6 +128,21 @@ describe('checkOverdueEscalations', () => {
         text: expect.stringContaining("wasn't able to get an answer"),
       }),
     );
+  });
+
+  it('skips the timeout notice when a concurrent resolution already claimed the escalation', async () => {
+    mockGetAll.mockResolvedValue([{
+      ...baseEscalation,
+      behavior: 'park_wait' as const,
+      expiresAt: new Date(Date.now() - 1000), // expired
+    }]);
+    mockTimeout.mockResolvedValueOnce(false);
+
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(mockTimeout).toHaveBeenCalledWith('esc_trace-1');
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(result.timedOut).toBe(0);
   });
 
   it('marks timed_out and posts best_effort_verify timeout message', async () => {

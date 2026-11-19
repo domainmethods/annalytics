@@ -57,6 +57,10 @@ const {
   }
 
   const mockDb = {
+    runTransaction: async (fn: any) => fn({
+      get: (ref: any) => ref.get(),
+      update: (ref: any, patch: any) => ref.update(patch),
+    }),
     doc: vi.fn((path: string) => ({
       get: vi.fn(async () => ({
         exists: firestoreStore.has(path),
@@ -482,6 +486,7 @@ describe('Phase 2b Features — Integration', () => {
       traceId: 'trace-1',
     };
 
+    firestoreStore.set('escalation_state/esc_trace-1', { pipelineState: 'awaiting_human' });
     await resumeFromEscalation(ctx, mockClient as any, tables, config);
 
     // Flush microtask queue so the fire-and-forget promise chain resolves

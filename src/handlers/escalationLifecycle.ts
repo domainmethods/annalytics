@@ -62,7 +62,7 @@ export async function checkOverdueEscalations(
   for (const esc of escalations) {
     // Expired: mark timed_out and notify the user
     if (esc.expiresAt < now) {
-      await timeoutEscalation(esc.escalationId);
+      if (!await timeoutEscalation(esc.escalationId)) continue;
       await notifyEscalationTimeout(esc, client);
       result.timedOut += 1;
       continue;
