@@ -1,5 +1,5 @@
 export interface TableContext {
-  name: string;               // e.g., "analytics.fct_orders"
+  name: string;               // Physical relation, e.g., "project.analytics.fct_orders"
   schema: string;             // e.g., "analytics"
   description: string;
   materialization: string;    // "table" | "view" | "incremental"

@@ -156,11 +156,11 @@ function extractFallbackTableRefs(
     const datasetId = parts[parts.length - 2];
     const projectId = parts.length === 3 ? parts[0] : defaultProjectId;
     const displayName = `${datasetId}.${tableId}`;
-    const canBeCoveredByKnownTables = parts.length === 2 || projectId.toLowerCase() === defaultProjectId.toLowerCase();
+    const qualifiedName = `${projectId}.${displayName}`;
 
     if (
-      canBeCoveredByKnownTables
-      && knownTables.some((t) => t.name === ref || t.name === displayName || t.name.endsWith(`.${displayName}`))
+      knownTables.some((t) => t.name === qualifiedName
+        || (projectId.toLowerCase() === defaultProjectId.toLowerCase() && t.name === displayName))
     ) {
       continue;
     }

@@ -493,3 +493,8 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.
 
 - PR #116 review correction: preserve dbt no-op and reused as distinct non-failure outcomes in ingestion, stored-history readback, and dbt_status formatting. Unknown and missing statuses still map conservatively to error. Regression tests cover failure-query exclusion and formatter guidance. Queries and composite indexes are unchanged.
+### 2026-11-18 - dbt physical relation identity (#42, #43)
+
+- Correct existing schema and sampling inputs to use dbt database/schema/alias or relation_name. Ephemeral nodes are excluded from queryable schema; dependency node IDs remain intact for lineage.
+- INFORMATION_SCHEMA contexts retain project qualification. ReferenceCard and benchmark inputs inherit physical names from the parser; no new evaluation machinery or product tranche is introduced.
+- Synthetic offline regressions cover aliased cross-project relations and ephemeral exclusion. Deployment and production acceptance remain outside this change.

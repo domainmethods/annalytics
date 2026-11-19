@@ -20,7 +20,7 @@ export async function fetchSampleRows(
     return { tableName: table.name, rows: [], error: 'Sampling byte budget must be positive' };
   }
 
-  const fqn = `\`${table.schema}.${table.name.split('.').pop()}\``;
+  const fqn = `\`${table.name}\``;
   let query: string;
 
   if (partitionColumn) {

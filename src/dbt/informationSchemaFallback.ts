@@ -43,12 +43,12 @@ export async function getSchemaFallback(
     }));
 
     const tableContext: TableContext = {
-      name: displayName,
+      name: cacheKey,
       schema: datasetId,
       description: '',
       materialization: 'unknown',
       columns,
-      sampleDDL: generateDDL(datasetId, tableId, columns),
+      sampleDDL: generateDDL(`${projectId}.${datasetId}`, tableId, columns),
       dependsOn: [],
       tags: ['no-dbt-metadata'],
     };

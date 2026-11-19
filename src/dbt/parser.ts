@@ -19,6 +19,9 @@ interface ManifestNode {
   resource_type?: unknown;
   name?: unknown;
   schema?: unknown;
+  database?: unknown;
+  alias?: unknown;
+  relation_name?: unknown;
   description?: unknown;
   columns?: unknown;
   config?: unknown;
@@ -201,6 +204,7 @@ export function parseDbtArtifacts(
     if (!isRecord(rawNode) || rawNode.resource_type !== 'model') continue;
 
     const node = rawNode as ManifestNode;
+    if (materializationFor(node) === 'ephemeral') continue;
     const catalogNode = catalogNodes[nodeId] as CatalogNode | undefined;
 
     // Normalize catalog column keys to lowercase - BigQuery's catalog.json
@@ -228,16 +232,19 @@ export function parseDbtArtifacts(
     const withinCap = documented.length + undocumented.length <= maxColumnsPerTable;
     const columns = withinCap ? [...documented, ...undocumented] : documented;
     const omittedColumnCount = withinCap ? 0 : undocumented.length;
-    const schema = stringValue(node.schema);
-    const name = stringValue(node.name, nodeId);
+    const relation = stringValue(node.relation_name).replace(/`/g, '').split('.');
+    const schema = stringValue(node.schema) || relation.at(-2) || '';
+    const name = stringValue(node.alias) || relation.at(-1) || stringValue(node.name, nodeId);
+    const database = stringValue(node.database) || (relation.length === 3 ? relation[0] : '');
+    const qualifiedSchema = database ? `${database}.${schema}` : schema;
 
     const table: TableContext = {
-      name: `${schema}.${name}`,
+      name: `${qualifiedSchema}.${name}`,
       schema,
       description: stringValue(node.description),
       materialization: materializationFor(node),
       columns,
-      sampleDDL: generateDDL(schema, name, columns, omittedColumnCount),
+      sampleDDL: generateDDL(qualifiedSchema, name, columns, omittedColumnCount),
       dependsOn: dependsOnFor(node),
       tags: tagsFor(node),
     };
