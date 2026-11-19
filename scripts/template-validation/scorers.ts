@@ -29,17 +29,18 @@ export async function scoreChart(spec: ChartSpec | null, item: ChartItem): Promi
   }
 }
 
-const MONTH_CONTEXT = [
-  /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i,
-  /\bMay\b/,
-].map(month => ({
-  before: new RegExp(`${month.source}[.,]?\\s+$`, month.flags),
-  after: new RegExp(`^,?\\s+${month.source}`, month.flags),
-}));
+const MONTH_NAME = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/.source;
+const MONTH_BEFORE = new RegExp(`${MONTH_NAME}[.,]?\\s+$`, 'i');
+const MONTH_AFTER = new RegExp(`^,?\\s+${MONTH_NAME}`, 'i');
+const MAY_WITH_PREPOSITION = /\b(?:in|on|since|during|by|until|through|per)\s+may\s+$/i;
 const NUMBER_SCALES: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
-const ISO_DATE = /(?:19\d{2}|20\d{2}|2100)-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/;
+const YEAR = /(?:19\d{2}|20\d{2}|2100)/.source;
+const DAY = /(?:0?[1-9]|[12]\d|3[01])/.source;
+const ISO_DATE = `${YEAR}${/-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/.source}`;
+const MAY_DATE = `(?:may\\s+${DAY},?\\s+${YEAR}|${DAY}\\s+may,?\\s+${YEAR}|${YEAR},?\\s+may\\s+${DAY})`;
 const NUMBER_CLAIM = /((?:[-+]\$?|\$[-+]?)?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+))(e[+-]?\d+)?([kmb%]?)/;
-const SUMMARY_TOKENS = new RegExp(`(?<![\\w.])(?:${ISO_DATE.source}|${NUMBER_CLAIM.source})(?!\\w|\\.\\d)`, 'gi');
+const SUMMARY_TOKENS = new RegExp(`(?<![\\w.])(?:${ISO_DATE}|${MAY_DATE}|${NUMBER_CLAIM.source})(?!\\w|\\.\\d)`, 'gi');
+const BARE_YEAR = new RegExp(`^${YEAR}$`);
 
 export function scoreSummaryNumbers(summary: string, rows: Record<string, unknown>[]): number {
   if (!summary.trim()) return 0;
@@ -49,7 +50,8 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
     .map(Number)
     .filter(Number.isFinite);
   // Skip ISO dates and timestamps whole. Skip bare years beside English months,
-  // with May capitalized. Exponents and suffixes scale the displayed precision.
+  // with a day or preceding date preposition required for May. Exponents and
+  // suffixes scale the displayed precision, including for fractional percentages.
   let matches = 0;
   let count = 0;
   for (const match of summary.matchAll(SUMMARY_TOKENS)) {
@@ -57,10 +59,10 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
     if (magnitude === undefined) continue;
     // A signed, grouped, or suffixed number is a value even beside a month name.
     const index = match.index!;
-    if (/^(?:19\d{2}|20\d{2}|2100)$/.test(token) && MONTH_CONTEXT.some(({ before, after }) =>
-      before.test(summary.slice(0, index)) || after.test(summary.slice(index + token.length)),
-    )) {
-      continue;
+    if (BARE_YEAR.test(token)) {
+      const before = summary.slice(0, index);
+      const after = summary.slice(index + token.length);
+      if (MONTH_BEFORE.test(before) || MONTH_AFTER.test(after) || MAY_WITH_PREPOSITION.test(before)) continue;
     }
 
     count++;
@@ -73,7 +75,7 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
     );
 
     if (Number.isFinite(displayed) && Number.isFinite(scale) && scale > 0 && rowNumbers.some(value =>
-      matchesValue(value / scale) || (suffix === '%' && matchesValue(value * 100)),
+      matchesValue(value / scale) || (suffix === '%' && matchesValue(value / (scale / 100))),
     )) matches++;
   }
   return count === 0 ? 1 : matches / count;

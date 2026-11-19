@@ -104,7 +104,15 @@ describe('scoreSummaryNumbers', () => {
     const summary = 'Of these, 2024 may qualify for refunds, per May 2025 records.';
     expect(scoreSummaryNumbers(summary, [])).toBe(0);
     expect(scoreSummaryNumbers(summary, [{ orders: 2024 }])).toBe(1);
+    expect(scoreSummaryNumbers('2024 May Qualify for Refunds', [])).toBe(0);
   });
+
+  it.each(['In MAY 2024', 'in may 2024', 'May 3, 2024', '3 MAY 2024'])(
+    'skips %s as a date and scores the count',
+    (date) => {
+      expect(scoreSummaryNumbers(`${date}, there were 42 orders.`, [{ orders: 42 }])).toBe(1);
+    },
+  );
 
   it('scores scientific notation as one number and rounds on the exponent scale', () => {
     const summary = 'Revenue was $1.2e6.';
@@ -113,6 +121,13 @@ describe('scoreSummaryNumbers', () => {
     expect(scoreSummaryNumbers(summary, [{ revenue: 1234567 }])).toBe(1);
     expect(scoreSummaryNumbers('The rate was 1.2E-3.', [{ rate: 0.001234 }])).toBe(1);
   });
+
+  it.each([[120, 1], [1.2, 1], [0.012, 0]])(
+    'scores a scientific percentage against the row value %s',
+    (rate, expected) => {
+      expect(scoreSummaryNumbers('The rate was 1.2e2%.', [{ rate }])).toBe(expected);
+    },
+  );
 
   it('scores empty and number-free summaries', () => {
     expect(scoreSummaryNumbers('  ', [])).toBe(0);
