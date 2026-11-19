@@ -465,3 +465,7 @@ Enabling WhatsApp requires at least one tester ID. Text, unsupported messages, a
 - The benchmark and node sweep now score warehouse relation references using GoogleSQL query scope. New evaluation scaffolding remains deferred under T3 #4.
 - Parser coverage: a pre-scrub adapts BigQuery syntax the installed parser rejects (IGNORE/RESPECT NULLS, NULLS FIRST/LAST, ORDER BY/LIMIT/DISTINCT inside aggregate calls, TABLESAMPLE, four-part INFORMATION_SCHEMA paths). SQL that still cannot be parsed falls back to a text check (literals and comments scrubbed): if any expected table is absent it is a definite `table_mismatch`; only when every expected table appears is it recorded as unscorable (`tableSelectionPassed: null` with `tableSelectionUnscorableReason`), which earns no table credit, is not counted as a failure, and is listed in the acceptance report. Blank, comment-only, DML and multi-statement SQL score as misses. Recorded results carry no reason field, so their verdicts are unchanged.
 - Evidence comes from offline regression tests and the committed mock acceptance fixture.
+
+### 2026-11-18 - dbt artifact path repair (#36)
+
+Existing benchmark, node sweep, startup, setup-check, and knowledge validation paths now preserve absolute artifact paths and resolve relative paths against the working directory. This repairs existing instruments; no new evaluation scaffolding or product tranche is activated. Coverage uses synthetic paths only; client artifacts and benchmark evidence remain operator-local.

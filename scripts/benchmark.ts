@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
@@ -102,8 +103,8 @@ async function main() {
   console.log(`Corpus file: ${corpusPath}`);
   const corpusRaw = await readFile(corpusPath, 'utf-8');
   const corpus = JSON.parse(corpusRaw) as CorpusEntry[];
-  const resolvedManifestPath = join(root, manifestPath);
-  const resolvedCatalogPath = join(root, catalogPath);
+  const resolvedManifestPath = resolveDbtArtifactPath(manifestPath, root);
+  const resolvedCatalogPath = resolveDbtArtifactPath(catalogPath, root);
   const manifestExists = await fileExists(resolvedManifestPath);
   const catalogExists = await fileExists(resolvedCatalogPath);
   const inputErrors = validateBenchmarkAcceptanceInputs({

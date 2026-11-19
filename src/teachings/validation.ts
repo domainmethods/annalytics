@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { resolveDbtArtifactPath } from '../dbt/artifactPaths.js';
 import type { Teaching } from './types.js';
 import { parseDbtArtifacts } from '../dbt/parser.js';
 
@@ -52,8 +52,8 @@ export function validateTeachingIntegrity(
 
 export async function loadDbtTableNames(rootDir: string): Promise<Set<string> | null> {
   try {
-    const manifestRaw = await readFile(join(rootDir, 'dbt', 'manifest.json'), 'utf-8');
-    const catalogRaw = await readFile(join(rootDir, 'dbt', 'catalog.json'), 'utf-8');
+    const manifestRaw = await readFile(resolveDbtArtifactPath(process.env.DBT_MANIFEST_PATH || './dbt/manifest.json', rootDir), 'utf-8');
+    const catalogRaw = await readFile(resolveDbtArtifactPath(process.env.DBT_CATALOG_PATH || './dbt/catalog.json', rootDir), 'utf-8');
     const manifest = JSON.parse(manifestRaw) as Parameters<typeof parseDbtArtifacts>[0];
     const catalog = JSON.parse(catalogRaw) as Parameters<typeof parseDbtArtifacts>[1];
     return new Set(parseDbtArtifacts(manifest, catalog).map(t => t.name));

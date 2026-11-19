@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateKnowledgeForSync } from './knowledgeSupport.js';
@@ -51,7 +52,7 @@ export async function runSetupCheck(options: RunSetupCheckOptions = {}): Promise
 
   await checkRequiredFiles(rootDir, add);
   checkEnvironment(env, add);
-  await checkDbtArtifacts(rootDir, add);
+  await checkDbtArtifacts(rootDir, env, add);
   await checkKnowledgeValidation(rootDir, add);
   await checkModelDocs(rootDir, add);
   await checkReadme(rootDir, add);
@@ -102,10 +103,11 @@ function checkEnvironment(
 
 async function checkDbtArtifacts(
   rootDir: string,
+  env: Record<string, string | undefined>,
   add: (status: SetupCheckStatus, message: string) => void,
 ): Promise<void> {
-  const manifest = await fileExists(rootDir, 'dbt/manifest.json');
-  const catalog = await fileExists(rootDir, 'dbt/catalog.json');
+  const manifest = await fileExists('', resolveDbtArtifactPath(env.DBT_MANIFEST_PATH || './dbt/manifest.json', rootDir));
+  const catalog = await fileExists('', resolveDbtArtifactPath(env.DBT_CATALOG_PATH || './dbt/catalog.json', rootDir));
 
   if (manifest && catalog) {
     add('ok', 'dbt artifacts present: dbt/manifest.json and dbt/catalog.json');
