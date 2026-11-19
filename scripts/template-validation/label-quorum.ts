@@ -120,8 +120,8 @@ async function main(): Promise<void> {
   const shell = { ...process.env };
   const spawn: SpawnFn = (cmd, args, { cwd, timeoutMs, outputParser }) => new Promise(resolve => {
     const env = Object.fromEntries([...shellEnv, ...loginEnv[outputParser]].map(key => [key, shell[key]]));
-    execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) =>
-      resolve({ stdout, code: error ? 1 : 0 }));
+    execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
+      resolve({ stdout, stderr, code: error ? 1 : 0 }));
   });
   if (existsSync('.env') && typeof process.loadEnvFile === 'function') {
     process.loadEnvFile('.env');

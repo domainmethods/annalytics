@@ -49,7 +49,7 @@ export type SpawnFn = (
   cmd: string,
   args: string[],
   opts: { cwd: string; timeoutMs: number; outputParser: LabelerConfig['outputParser'] },
-) => Promise<{ stdout: string; code: number }>;
+) => Promise<{ stdout: string; stderr?: string; code: number }>;
 
 export function loadLabelers(path = 'benchmarks/template-validation/labelers.json'): LabelerConfig[] {
   return z.array(labelerConfigSchema).parse(JSON.parse(readFileSync(path, 'utf8')));
@@ -211,7 +211,8 @@ export async function runLabeler(
   cacheDir: string,
 ): Promise<LabelerOutput & { cached: boolean }> {
   if (cfg.enabled === false) throw new LabelerOutputError(`${cfg.id} is disabled`);
-  const schema = z.toJSONSchema(batch.schema);
+  // The Claude CLI rejects the 2020-12 `$schema` URI Zod emits, and no labeler needs it.
+  const { $schema: _dialect, ...schema } = z.toJSONSchema(batch.schema);
   if (cfg.outputParser === 'codex-jsonl') {
     if (schema.type !== 'object' || Object.hasOwn(schema, 'anyOf')) {
       throw new LabelerOutputError('Codex strict schema root must be an object without anyOf');
@@ -246,8 +247,11 @@ export async function runLabeler(
     const schemaJson = JSON.stringify(schema);
     await writeFile(schemaPath, schemaJson);
     const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
-    const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });
-    if (code !== 0) throw new LabelerOutputError(`${cfg.id} exited with code ${code}`);
+    const { stdout, stderr, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });
+    if (code !== 0) {
+      const detail = stderr?.trim().slice(-500);
+      throw new LabelerOutputError(`${cfg.id} exited with code ${code}${detail ? `: ${detail}` : ''}`);
+    }
     try {
       result = parseLabelerOutput(cfg.outputParser, stdout);
       validate(result.value);

@@ -27,6 +27,8 @@ const cfg: LabelerConfig = {
 const schema = z.object({ answer: z.string() });
 const batch = { prompt: 'Reply with answer=ok', schema, cacheKey: 'example-key' };
 const success = { stdout: '{"type":"result","subtype":"success","structured_output":{"answer":"ok"}}', code: 0 };
+// The CLI validators reject the 2020-12 `$schema` URI Zod stamps, so labelers get the schema without it.
+const { $schema: _dialect, ...cliSchema } = z.toJSONSchema(schema);
 let cacheDir: string;
 
 beforeEach(() => {
@@ -69,9 +71,10 @@ it('runs in a fresh directory outside the repo containing only the schema and re
     const fromRepo = relative(process.cwd(), cwd);
     expect(isAbsolute(fromRepo) || fromRepo.startsWith('../')).toBe(true);
     expect(readdirSync(cwd)).toEqual(['schema.json']);
-    expect(JSON.parse(readFileSync(join(cwd, 'schema.json'), 'utf8'))).toEqual(z.toJSONSchema(schema));
+    expect(JSON.parse(readFileSync(join(cwd, 'schema.json'), 'utf8'))).toStrictEqual(cliSchema);
     expect(cmd).toBe('claude');
     expect(args[1]).toBe(join(cwd, 'schema.json'));
+    expect(JSON.parse(args[2])).toStrictEqual(cliSchema);
     return success;
   }, cacheDir);
   expect(result).toEqual({ value: { answer: 'ok' }, cached: false });
@@ -108,6 +111,14 @@ it.each([
 ])('rejects failed invocations and schema violations without caching', async (output) => {
   await expect(runLabeler(cfg, batch, async () => output, cacheDir)).rejects.toThrow(LabelerOutputError);
   expect(readdirSync(cacheDir)).toEqual([]);
+});
+
+it('includes the end of stderr when a labeler exits non-zero', async () => {
+  const stderr = 'x'.repeat(2000) + '\nError: --json-schema is not a valid JSON Schema';
+  await expect(runLabeler(cfg, batch, async () => ({ stdout: '', stderr, code: 1 }), cacheDir))
+    .rejects.toThrow(/^claude exited with code 1: x+\nError: --json-schema is not a valid JSON Schema$/);
+  await expect(runLabeler(cfg, batch, async () => ({ stdout: '', stderr, code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: expect.stringMatching(/^.{0,560}$/s) }));
 });
 
 it('reports the CLI version and treats a missing executable as unavailable', async () => {
@@ -155,7 +166,7 @@ it.each([
 it('passes a compatible Codex schema through unchanged', async () => {
   const stdout = readFileSync(new URL('../../fixtures/labeler-output/codex.txt', import.meta.url), 'utf8');
   const spawn = vi.fn<SpawnFn>(async (_cmd, args) => {
-    expect(JSON.parse(readFileSync(args[1], 'utf8'))).toEqual(z.toJSONSchema(schema));
+    expect(JSON.parse(readFileSync(args[1], 'utf8'))).toStrictEqual(cliSchema);
     return { stdout, code: 0 };
   });
   await expect(runLabeler(codexConfig, batch, spawn, cacheDir))
