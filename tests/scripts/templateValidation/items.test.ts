@@ -35,7 +35,7 @@ it.each(['{', '{}'])('reports the line of a malformed item (%s)', (line) => {
 
 it('flags email addresses, foreign table references and GCP resource names', () => {
   const violations = scanTemplateSafety('a@b.com `acme-prod.analytics.orders` projects/acme-prod/datasets');
-  for (const match of ['a@b.com', 'acme-prod.analytics.orders', 'projects/acme-prod']) {
+  for (const match of ['a@b.com', 'prod.analytics.orders', 'projects/acme-prod']) {
     expect(violations.some((violation) => violation.includes(match))).toBe(true);
   }
 });
@@ -46,6 +46,13 @@ it('allows references to the template view and public source', () => {
 });
 
 it.each([
+  ['a@b.com', 'Email address: a@b.com'],
+  ['projects/my-proj', 'GCP resource: projects/my-proj'],
+])('flags %s', (text, violation) => {
+  expect(scanTemplateSafety(text)).toContain(violation);
+});
+
+it.each([
   ['FROM tv_thelook.orders, private_dataset.customers', 'private_dataset.customers'],
   ['SELECT * FROM tv_thelook.orders, (private_dataset.customers RIGHT JOIN tv_thelook.users ON TRUE)', 'private_dataset.customers'],
   ['SELECT * FROM tv_thelook.orders JOIN (private_dataset.customers JOIN tv_thelook.users ON TRUE) ON TRUE', 'private_dataset.customers'],
@@ -53,8 +60,8 @@ it.each([
   ['SELECT o.shipping_address.city FROM tv_thelook.orders /* note */ AS o', 'o.shipping_address.city'],
   ['The data from tv_thelook.orders arrives daily. Compare it to arrives.analytics.orders.', 'arrives.analytics.orders'],
   ['Use `private_dataset` . customers', 'private_dataset.customers'],
-  ['Use acme /* note */ . analytics . `orders`', 'acme.analytics.orders'],
-  ['Use acme. analytics. orders', 'acme.analytics.orders'],
+  ['Use acme /* note */ . analytics . `orders`', 'analytics.orders'],
+  ['Use acme /* note */ . `analytics` . orders', 'acme.analytics.orders'],
   ['FROM private_dataset./* note */customers', 'private_dataset.customers'],
   ['Use tv_thelook./* acme.analytics.orders */orders', 'acme.analytics.orders'],
   ['Use tv_thelook./* FROM private_dataset.customers */orders', 'private_dataset.customers'],
@@ -71,7 +78,25 @@ it.each([
   ['SELECT * FROM tv_thelook.orders AS o INNER JOIN o.shipping_address.city AS c ON TRUE', 'o.shipping_address.city'],
   ['SELECT `o.shipping_address.city` FROM tv_thelook.orders o', 'o.shipping_address.city'],
   ['Use `private_dataset.customers`', 'private_dataset.customers'],
-  ['Use acme-prod.analytics.orders', 'acme-prod.analytics.orders'],
+  ['acme-prod.analytics.orders', 'prod.analytics.orders'],
+  ['`acme-prod.analytics.orders`', 'prod.analytics.orders'],
+  ['Use tv_thelook.orders. acme.analytics.orders.', 'acme.analytics.orders'],
+  ['Use bigquery-public-data.thelook_ecommerce.orders. acme.analytics.orders.', 'acme.analytics.orders'],
+  ['SELECT o.gross-`private_dataset.customers` FROM tv_thelook.orders o', 'private_dataset.customers'],
+  ['SELECT o.gross-`private_dataset`.`customers` FROM tv_thelook.orders o', 'private_dataset.customers'],
+  ['SELECT o.gross-acme-prod.analytics.orders FROM tv_thelook.orders o', 'prod.analytics.orders'],
+  ['Use `private_dataset`. Customers', 'private_dataset.Customers'],
+  ['o.shipping_address.city', 'o.shipping_address.city'],
+  ['tv_thelook.orders.id.extra', 'tv_thelook.orders.id.extra'],
+  ['tv_thelook.not_a_table', 'tv_thelook.not_a_table'],
+  ['Version v1.2.3', 'v1.2.3'],
+  ['Filter by `status`. Return top 10.', 'status.Return'],
+  ['Check orders. `revenue` is up.', 'orders.revenue'],
+  ['SELECT * FROM # a comment\n (private_dataset\n . \t customers JOIN tv_thelook.users ON TRUE)', 'private_dataset.customers'],
+  ['SELECT TRUE # FROM private_dataset.customers', 'private_dataset.customers'],
+  [String.raw`FROM tv_thelook.orders -- note\n, private_dataset.customers`, 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'FROM tv_thelook.orders JOIN tv_thelook.users ON t.name = "Example", private_dataset.customers' }), 'private_dataset.customers'],
+  ['123.analytics.orders', '123.analytics.orders'],
   ['An undeclared x.y.z in prose', 'x.y.z'],
   ['Pull data from the acme warehouse: acme.analytics.orders', 'acme.analytics.orders'],
   [JSON.stringify({ text: 'Pull data from the acme warehouse: acme.analytics.orders' }), 'acme.analytics.orders'],
@@ -86,10 +111,16 @@ it.each([
   'Use e.g. orders.',
   'U.S. customers',
   'Yes. No. Maybe',
-  'Version v1.2.3',
-  'Filter by `status`. Return top 10.',
-  'Check orders. `revenue` is up.',
-])('allows ordinary prose and Markdown in %s', (text) => {
+  'Use acme. analytics. orders',
+  'Use Alpha. Beta. Gamma',
+  'Use a.b. orders',
+  'version 1.2.3',
+  'e.g. revenue',
+  'tv_thelook.orders',
+  'tv_thelook.orders.order_id',
+  'bigquery-public-data.thelook_ecommerce.users',
+  'SELECT o.price-u.cost FROM tv_thelook.orders o JOIN tv_thelook.users u ON TRUE',
+])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });
 

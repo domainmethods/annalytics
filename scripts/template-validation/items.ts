@@ -8,7 +8,7 @@ import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import type { SlackIntakeRoute } from '../../src/agents/slackIntakeAgent.js';
 import type { EscalationTeachingContext } from '../../src/teachings/candidateGenerator.js';
 import type { CorpusEntry } from '../benchmark-types.js';
-import { TV_DATASET, TV_ROOT } from './warehouse.js';
+import { TV_DATASET, TV_ROOT, TV_TABLES } from './warehouse.js';
 
 const strings = z.array(z.string());
 const question = z.string();
@@ -115,110 +115,136 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
   return JSON.parse(readFileSync(join(root, 'fixtures', filename), 'utf8'));
 }
 
-const sqlComment = /--[^\n]*|\/\*[\s\S]*?\*\//;
-const dotTrivia = `(?:[\\s]|(?:${sqlComment.source}))*`;
-const separator = `${dotTrivia}\\.${dotTrivia}`;
-const quotedName = /`[\w.*-]+`/.source;
-const identifier = /[a-z_](?:[\w-]*\w)?/.source;
-const tableSegment = `(?:${quotedName}|[\\w*]+)`;
-const name = `(?:${quotedName}|${identifier})`;
-const sqlName = `(?:${quotedName}|[a-z_](?:\\w|-(?!-))*)`;
-const sqlTableSegment = `(?:${quotedName}|[\\w*](?:[\\w*]|-(?!-))*)`;
-const sqlTablePath = `${sqlName}(?:${separator}${sqlTableSegment})*`;
-const textTablePath = new RegExp(`(?<![\\w.-])${name}(?:${separator}${tableSegment})*`, 'gi');
-const pathTrivia = new RegExp(`(${quotedName})|(${sqlComment.source})|\\s+`, 'g');
-const endFrom = /^(?:WHERE|GROUP|ORDER|LIMIT|HAVING|QUALIFY|WINDOW|UNION|INTERSECT|EXCEPT|;)$/i;
+const publicProject = 'bigquery-public-data';
+const scanToken = /`[^`]*`|"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|bigquery-public-data\b|[a-z0-9_]+|\s+|./gi;
+const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
+const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
-function normalizeTablePath(path: string, onComment?: (content: string) => void): string {
-  return path.replace(pathTrivia, (_match, quoted?: string, comment?: string) => {
-    if (comment) onComment?.(comment.slice(2));
-    return quoted ? quoted.slice(1, -1) : '';
-  });
+type ScanToken = {
+  value: string;
+  kind: 'name' | 'quoted' | 'syntax';
+  spaceBefore: boolean;
+};
+
+function decodeScanEscapes(text: string): string {
+  return text.replace(/\\([nt"])/g, (_match, escaped: string) =>
+    escaped === 'n' ? '\n' : escaped === 't' ? '\t' : '"',
+  );
 }
 
-function collectCommentTables(comment: string, tables: Set<string>): void {
-  collectTextTables(comment, tables);
-  if (/\b(?:FROM|JOIN)\b/i.test(comment)) collectSqlTables(comment, tables);
-}
-
-function collectTextTables(text: string, tables: Set<string>): void {
-  for (const [path] of text.matchAll(textTablePath)) {
-    const reference = normalizeTablePath(path, (comment) => collectCommentTables(comment, tables));
-    const count = reference.split('.').length;
-    if (count >= 3) {
-      // A period followed by whitespace also ends an abbreviation or a sentence.
-      if (/^v?\d+(?:\.\d+){2,}$/i.test(path) ||
-          /^(?:[a-z]\.){2,}\s+[a-z]+$/i.test(path) ||
-          /^(?:[A-Z][a-z]+\.\s+){2,}[A-Z][a-z]+$/.test(path)) continue;
-      tables.add(reference);
-    } else if (count === 2 && path.includes('`')) {
-      if (/^(?:`[\w-]+`\.\s+[A-Z][a-z]+|[A-Za-z]+\.\s+`[\w-]+`)$/.test(path)) continue;
-      tables.add(reference);
+function tokenizeReferences(text: string, references: Set<string>): ScanToken[] {
+  const tokens: ScanToken[] = [];
+  let spaceBefore = false;
+  // Decode line breaks before finding comments, but keep escaped quotes inside their literals.
+  const input = text.replace(/\\([nt])|\\[\\"]/g, (escape, whitespace) =>
+    whitespace ? decodeScanEscapes(escape) : escape,
+  );
+  for (const [value] of input.matchAll(scanToken)) {
+    if (/^\s/.test(value)) {
+      spaceBefore = true;
+      continue;
+    }
+    if (/^(?:\/\*|--|#)/.test(value)) {
+      const body = value.startsWith('/*') ? value.slice(2, -2) :
+        value.startsWith('--') ? value.slice(2) : value.slice(1);
+      collectReferences(decodeScanEscapes(body), references);
+      spaceBefore = true;
+      continue;
+    }
+    if (/^["']/.test(value) && value.length > 1) {
+      // Scan serialized SQL independently of the surrounding JSON or SQL literal.
+      collectReferences(decodeScanEscapes(value.slice(1, -1)), references);
+    }
+    if (value.startsWith('`') && value.length > 1) {
+      for (const [part] of value.slice(1, -1).trim().matchAll(quotedPart)) {
+        const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
+        tokens.push({ value: part.trim(), kind, spaceBefore });
+        spaceBefore = false;
+      }
+    } else {
+      const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
+      tokens.push({ value, kind, spaceBefore });
+      spaceBefore = false;
     }
   }
+  return tokens;
 }
 
-function isAllowedTable(reference: string): boolean {
-  return reference.startsWith(TV_DATASET + '.') ||
-    reference.startsWith('bigquery-public-data.thelook_ecommerce.');
+function isAllowedChain(segments: string[]): boolean {
+  const [first, second] = segments;
+  const tableIndex = first === TV_DATASET ? 1 :
+    first.toLowerCase() === publicProject && second === 'thelook_ecommerce' ? 2 : -1;
+  return tableIndex >= 0 &&
+    (segments.length === tableIndex + 1 || segments.length === tableIndex + 2) &&
+    TV_TABLES.some((table) => table === segments[tableIndex]);
 }
 
-function collectSqlTables(text: string, tables: Set<string>): void {
-  const tokens = text.match(new RegExp(
-    sqlComment.source + '|' + /'(?:''|\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/.source +
-      '|' + sqlTablePath + '|[(),;]',
-    'gi',
-  )) ?? [];
+function collectReferences(text: string, references: Set<string>): void {
+  const tokens = tokenizeReferences(text, references);
   const fromLists = [false];
-  let expectsTable = false;
-  for (const token of tokens) {
+  let tablePosition = false;
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
     const depth = fromLists.length - 1;
-    if (/^(?:--|\/\*|['"])/.test(token)) {
-      if (/\b(?:FROM|JOIN)\b/i.test(token)) {
-        const content = token.startsWith('--') ? token.slice(2) :
-          token.startsWith('/*') ? token.slice(2, -2) : token.slice(1, -1);
-        collectSqlTables(content.replace(/\\n/g, '\n').replace(/\\[rt]/g, ' ').replace(/\\"/g, '"'), tables);
+    if (token.kind !== 'syntax') {
+      const segments = [token.value];
+      let quoted = token.kind === 'quoted';
+      let previous = token;
+
+      while (tokens[index + 1]?.value === '.') {
+        const dot = tokens[index + 1];
+        const next = tokens[index + 2];
+        if (!next || next.kind === 'syntax') break;
+        if (!tablePosition && (dot.spaceBefore || next.spaceBefore) &&
+            previous.kind !== 'quoted' && next.kind !== 'quoted') break;
+        segments.push(next.value);
+        quoted ||= next.kind === 'quoted';
+        previous = next;
+        index += 2;
       }
-      continue;
+
+      if (segments.length >= 2) {
+        const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
+        // Digit-only chains in free text are numeric literals.
+        const hasIdentifier = segments.some((segment) => /[a-z_]/i.test(segment));
+        if ((namesTable || (segments.length >= 3 && hasIdentifier)) && !isAllowedChain(segments)) {
+          references.add(segments.join('.'));
+        }
+        tablePosition = false;
+        continue;
+      }
     }
-    if (token === '(') {
-      fromLists.push(expectsTable);
-      continue;
-    } else if (token === ')') {
+
+    if (token.kind === 'quoted') {
+      tablePosition = false;
+    } else if (token.value === '(') {
+      fromLists.push(tablePosition);
+    } else if (token.value === ')') {
       if (depth > 0) fromLists.pop();
       else fromLists[0] = false;
-    } else if (endFrom.test(token)) {
+      tablePosition = false;
+    } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
       fromLists[depth] = false;
-    } else if (/^FROM$/i.test(token)) {
+      tablePosition = false;
+    } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;
-      expectsTable = true;
-      continue;
-    } else if (/^JOIN$/i.test(token) || (token === ',' && fromLists[depth])) {
-      expectsTable = true;
-      continue;
-    } else if (expectsTable || token.includes('--') || token.includes('/*')) {
-      if (expectsTable && /^(?:SELECT|WITH)$/i.test(token)) fromLists[depth] = false;
-      const reference = normalizeTablePath(token, (comment) => collectCommentTables(comment, tables));
-      if (expectsTable && reference.includes('.')) tables.add(reference);
+      tablePosition = true;
+    } else {
+      tablePosition = /^JOIN$/i.test(token.value) || (token.value === ',' && fromLists[depth]);
     }
-    expectsTable = false;
   }
 }
 
 export function scanTemplateSafety(text: string): string[] {
   const emails = text.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[a-z\d-]+(?:\.[a-z\d-]+)+/gi) ?? [];
   const projects = text.match(/\bprojects\/[a-z\d][a-z\d-]*/gi) ?? [];
-  const tables = new Set<string>();
-
-  // shortcut: lexical scan, use a parser if dialect-specific table syntax needs coverage
-  collectSqlTables(text, tables);
-  collectTextTables(text, tables);
-
-  const foreignRefs = [...tables].filter((reference) => !isAllowedTable(reference));
+  const references = new Set<string>();
+  collectReferences(text, references);
   return [
     ...emails.map((email) => `Email address: ${email}`),
     ...projects.map((project) => `GCP resource: ${project}`),
-    ...foreignRefs.map((reference) => `Foreign table reference: ${reference}`),
+    ...Array.from(references, (reference) => `Foreign table reference: ${reference}`),
   ];
 }
 
