@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -153,5 +153,73 @@ it('passes a compatible Codex schema through unchanged', async () => {
 it('loads the isolation note for each shipped labeler', () => {
   for (const labeler of loadLabelers()) {
     expect(labeler).toHaveProperty('isolation', expect.stringMatching(/\S/));
+  }
+});
+
+const uniqueBatch = {
+  ...batch,
+  schema: {
+    type: 'object',
+    properties: { answers: { type: 'array', items: { type: 'object' }, uniqueItems: true } },
+    required: ['answers'],
+  },
+};
+const duplicateAnswers = { answers: [{ a: 1, b: 2 }, { b: 2, a: 1 }] };
+
+it('rejects structurally equal array entries in fresh output without caching', async () => {
+  const stdout = JSON.stringify({ type: 'result', subtype: 'success', structured_output: duplicateAnswers });
+  await expect(runLabeler(cfg, uniqueBatch, async () => ({ stdout, code: 0 }), cacheDir))
+    .rejects.toThrow(LabelerOutputError);
+  expect(readdirSync(cacheDir)).toEqual([]);
+});
+
+it('rejects structurally equal array entries in an existing cache entry', async () => {
+  const modelCache = join(cacheDir, cfg.id, cfg.model);
+  mkdirSync(modelCache, { recursive: true });
+  writeFileSync(join(modelCache, 'example-key.json'), JSON.stringify({ value: duplicateAnswers }));
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, uniqueBatch, spawn, cacheDir)).rejects.toThrow(LabelerOutputError);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it.each([
+  'https://json-schema.org/draft/2020-12/schema',
+  'http://json-schema.org/draft-07/schema#',
+  'http://json-schema.org/draft-04/schema#',
+])('accepts and caches distinct entries with %s', async ($schema) => {
+  const scopedBatch = { ...uniqueBatch, schema: { ...uniqueBatch.schema, $schema } };
+  const value = { answers: [{ a: 1 }, { a: 2 }] };
+  const stdout = JSON.stringify({ type: 'result', subtype: 'success', structured_output: value });
+  const spawn = vi.fn(async () => ({ stdout, code: 0 }));
+  expect(await runLabeler(cfg, scopedBatch, spawn, cacheDir)).toEqual({ value, cached: false });
+  expect(await runLabeler(cfg, scopedBatch, spawn, cacheDir)).toEqual({ value, cached: true });
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  { type: 'array', items: { type: 'string' } },
+  { ...closedSchema, anyOf: [closedSchema] },
+])('rejects an incompatible Codex root before spawn (%j)', async (rootSchema) => {
+  const spawn = vi.fn(async () => success);
+  const result = runLabeler(codexConfig, { ...batch, schema: rootSchema }, spawn, cacheDir);
+  await expect(result).rejects.toBeInstanceOf(LabelerOutputError);
+  await expect(result).rejects.toThrow(/root.*object.*anyOf/i);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it.each(['direct', 'symlink'] as const)('refuses a TMPDIR inside the checkout (%s)', async (kind) => {
+  const internalRoot = mkdtempSync(join(process.cwd(), '.tv-labeler-test-'));
+  const alias = join(cacheDir, 'alias');
+  try {
+    if (kind === 'symlink') symlinkSync(internalRoot, alias, 'dir');
+    vi.stubEnv('TMPDIR', kind === 'direct' ? internalRoot : alias);
+    const spawn = vi.fn(async () => success);
+    await expect(runLabeler(cfg, batch, spawn, cacheDir)).rejects.toThrow(/temp.*inside.*checkout/i);
+    expect(await checkAvailable(cfg, spawn)).toEqual({ ok: false });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(readdirSync(internalRoot)).toEqual([]);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(internalRoot, { recursive: true, force: true });
   }
 });

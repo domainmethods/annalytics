@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import Ajv, { type ValidateFunction } from 'ajv';
+import Ajv2020 from 'ajv/dist/2020.js';
+import AjvDraft4 from 'ajv-draft-04';
+import addFormats from 'ajv-formats';
 import { z } from 'zod';
 
 const cacheSegment = z.string().regex(/^[\w-][\w.-]*$/);
@@ -170,6 +175,31 @@ function assertCodexStrictSchema(schema: unknown, path = '#'): void {
   }
 }
 
+function compileResponseSchema(schema: Record<string, unknown>): ValidateFunction {
+  const options = { strict: false, ownProperties: true };
+  const dialect = schema.$schema;
+  const ajv = dialect === 'http://json-schema.org/draft-04/schema#' ? new AjvDraft4(options)
+    : dialect === 'http://json-schema.org/draft-07/schema#' ? new Ajv(options)
+      : new Ajv2020(options);
+  const validator = addFormats(ajv).compile(schema);
+  if ('$async' in validator && validator.$async) {
+    throw new LabelerOutputError('Async response schemas are unsupported');
+  }
+  return validator;
+}
+
+async function externalTempRoot(): Promise<string> {
+  const [checkout, tempRoot] = await Promise.all([
+    realpath(fileURLToPath(new URL('../../', import.meta.url))),
+    realpath(tmpdir()),
+  ]);
+  const fromCheckout = relative(checkout, tempRoot);
+  if (!isAbsolute(fromCheckout) && fromCheckout !== '..' && !fromCheckout.startsWith(`..${sep}`)) {
+    throw new LabelerOutputError('Labeler temp directory is inside the checkout');
+  }
+  return tempRoot;
+}
+
 export async function runLabeler(
   cfg: LabelerConfig,
   batch: { prompt: string; schema: object; cacheKey: string },
@@ -177,12 +207,18 @@ export async function runLabeler(
   cacheDir: string,
 ): Promise<LabelerOutput & { cached: boolean }> {
   if (cfg.enabled === false) throw new LabelerOutputError(`${cfg.id} is disabled`);
-  if (cfg.outputParser === 'codex-jsonl') assertCodexStrictSchema(batch.schema);
+  const schema = { ...batch.schema } as Record<string, unknown>;
+  if (cfg.outputParser === 'codex-jsonl') {
+    if (schema.type !== 'object' || Object.hasOwn(schema, 'anyOf')) {
+      throw new LabelerOutputError('Codex strict schema root must be an object without anyOf');
+    }
+    assertCodexStrictSchema(schema);
+  }
   const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
     cacheSegment.parse(batch.cacheKey) + '.json');
-  const validator = z.fromJSONSchema({ ...batch.schema });
+  const validator = compileResponseSchema(schema);
   const validate = (value: unknown) => {
-    if (!validator.safeParse(value).success) throw new LabelerOutputError('Response did not match the batch schema');
+    if (!validator(value)) throw new LabelerOutputError('Response did not match the batch schema');
   };
 
   const cached = await readFile(cachePath, 'utf8').catch((err: NodeJS.ErrnoException) => {
@@ -196,7 +232,7 @@ export async function runLabeler(
     return { ...output(result.value, result.reportedModel), cached: true };
   }
 
-  const cwd = await mkdtemp(join(tmpdir(), 'tv-labeler-'));
+  const cwd = await mkdtemp(join(await externalTempRoot(), 'tv-labeler-'));
   let result: LabelerOutput;
   try {
     const schemaPath = join(cwd, 'schema.json');
@@ -228,7 +264,7 @@ export async function checkAvailable(
 ): Promise<{ ok: boolean; version?: string }> {
   if (cfg.enabled === false) return { ok: false };
   try {
-    const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: tmpdir(), timeoutMs: 10_000 });
+    const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: await externalTempRoot(), timeoutMs: 10_000 });
     return code === 0 ? { ok: true, version: stdout.trim() } : { ok: false };
   } catch {
     return { ok: false };
