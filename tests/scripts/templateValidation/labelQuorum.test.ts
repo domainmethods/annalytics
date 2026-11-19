@@ -354,15 +354,18 @@ it('stores the planted discrepancy defect outside the context and checks blind l
   let diagnosed = 'missing filter';
   deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
     cached: false,
-    value: prompt.startsWith('Draft fixtures') ? { fixtures: [{ context, defect: 'missing filter' }] }
-      : prompt.startsWith('Draft') ? {
-        items: [{ category: 'edge_case', complaint: 'That count looks high.', contextFixture: 'discrepancy-context-1' }],
-      } : { labels: [{ defect: diagnosed, rubric: ['COUNT(*)'] }] },
+    value: prompt.startsWith('Draft fixtures') ? {
+      fixtures: [{ context, defect: 'missing filter' }, { context, defect: 'missing filter' }],
+    } : prompt.startsWith('Draft') ? {
+      items: ['That count looks high.', 'Why is the total so large?'].map((complaint, index) => ({
+        category: 'edge_case', complaint, contextFixture: `discrepancy-context-${index + 1}`,
+      })),
+    } : { labels: [diagnosed, 'missing filter'].map(defect => ({ defect, rubric: ['COUNT(*)'] })) },
   }));
-  const discrepancy = { nodes: ['discrepancy'] as ['discrepancy'], targetCounts: { discrepancy: 1 } };
+  const discrepancy = { nodes: ['discrepancy'] as ['discrepancy'], targetCounts: { discrepancy: 2 } };
   await run(discrepancy);
   expect(loadFixture('discrepancy-context-1', root)).toEqual(context);
-  expect(loadItems('discrepancy', root)).toEqual([expect.objectContaining({ defect: 'missing filter' })]);
+  expect(loadItems('discrepancy', root).map(item => item.defect)).toEqual(['missing filter', 'missing filter']);
   const blindPrompts = vi.mocked(deps.runLabeler).mock.calls.filter(([, { prompt }]) => prompt.startsWith('Label'));
   expect(blindPrompts).toHaveLength(2);
   for (const [, { prompt }] of blindPrompts) {
@@ -373,7 +376,7 @@ it('stores the planted discrepancy defect outside the context and checks blind l
   writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
   diagnosed = 'wrong grain';
   await run(discrepancy);
-  expect(loadItems('discrepancy', root)).toEqual([]);
+  expect(loadItems('discrepancy', root)).toEqual([expect.objectContaining({ contextFixture: 'discrepancy-context-2' })]);
   expect(readFileSync(join(root, 'quarantine', 'discrepancy.jsonl'), 'utf8')).toContain('"defect":"missing filter"');
 });
 
@@ -412,14 +415,52 @@ it('drops a fixture that gives the answer in supervisorNotes before either blind
   expect(loadItems('discrepancy', root)).toHaveLength(2);
 });
 
-it('skips discrepancy labeling when all drafted contexts give away their planted defect', async () => {
-  deps.runLabeler = vi.fn(async () => ({
+it('abort preserves prior discrepancy items and publishes nothing when all drafted fixtures are rejected', async () => {
+  const itemPath = join(root, 'items', 'discrepancy.jsonl');
+  const prior = { category: 'simple', complaint: 'This total seems high.', contextFixture: 'prior-context' };
+  const itemBytes = JSON.stringify({
+    ...prior, id: 'prior-item', inputHash: hashItemInput(prior), agreement: { members: ['claude', 'codex'] },
+    defect: 'missing filter', rubric: ['COUNT(*)'],
+  }) + '\n';
+  mkdirSync(join(root, 'items'));
+  writeFileSync(itemPath, itemBytes);
+  const provenancePath = join(root, 'provenance.json');
+  const priorProvenance = JSON.stringify({ version: 'tv-v0' }) + '\n';
+  writeFileSync(provenancePath, priorProvenance);
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
     cached: false,
-    value: { fixtures: [{ context: { ...discrepancyContext, supervisorNotes: 'Missing filter' }, defect: 'missing filter' }] },
+    value: prompt.startsWith('Draft fixtures') ? {
+      fixtures: [{ context: { ...discrepancyContext, supervisorNotes: 'Missing filter' }, defect: 'missing filter' }],
+    } : prompt.startsWith('Draft') ? { items: [draft] } : { labels: [route] },
   }));
 
-  await run({ nodes: ['discrepancy'], targetCounts: { discrepancy: 1 } });
-  expect(deps.runLabeler).toHaveBeenCalledTimes(1);
-  expect(existsSync(join(root, 'fixtures'))).toBe(false);
-  expect(loadItems('discrepancy', root)).toEqual([]);
+  await expect(run({
+    nodes: ['slackIntake', 'discrepancy'], targetCounts: { slackIntake: 1, discrepancy: 1 },
+  })).rejects.toThrow(/discrepancy.*all drafted fixtures rejected/i);
+  const discrepancyCalls = vi.mocked(deps.runLabeler).mock.calls.filter(([, { prompt }]) => prompt.includes('discrepancy'));
+  expect(discrepancyCalls).toHaveLength(1);
+  expect(discrepancyCalls[0][1].prompt).toMatch(/^Draft fixtures/);
+  for (const path of ['fixtures', 'quarantine', 'items/slackIntake.jsonl']) {
+    expect(existsSync(join(root, path))).toBe(false);
+  }
+  expect(readFileSync(itemPath, 'utf8')).toBe(itemBytes);
+  expect(readFileSync(provenancePath, 'utf8')).toBe(priorProvenance);
+});
+
+it('aborts when a closed-set node has a positive remaining target and no unanimous labels', async () => {
+  const seed = loadItems('slackIntake')[0];
+  const itemPath = join(root, 'items', 'slackIntake.jsonl');
+  const itemBytes = JSON.stringify(seed) + '\n';
+  mkdirSync(join(root, 'items'));
+  writeFileSync(itemPath, itemBytes);
+  deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft') ? { items: [draft] } : {
+      labels: [cfg.id === 'claude' ? route : { expectedRoute: 'immediate_response' }],
+    },
+  }));
+
+  await expect(run({ targetCounts: { slackIntake: 2 } })).rejects.toThrow(/slackIntake.*quorum/i);
+  expect(readFileSync(itemPath, 'utf8')).toBe(itemBytes);
+  expect(existsSync(join(root, 'provenance.json'))).toBe(false);
 });

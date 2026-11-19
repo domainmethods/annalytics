@@ -399,7 +399,8 @@ export async function runLabelQuorum(
     const relativePath = `items/${node}.jsonl`;
     const seeds = retained.get(node) ?? [];
     for (const seed of seeds) assertSafe(seed, node);
-    const target = opts.targetCounts[node] ?? (node === 'sqlGenerator' || node === 'supervisor' ? 100 : 40);
+    const sqlNode = node === 'sqlGenerator' || node === 'supervisor';
+    const target = opts.targetCounts[node] ?? (sqlNode ? 100 : 40);
     if (!Number.isSafeInteger(target) || target < 0) throw new Error(`Invalid target count for ${node}`);
     const count = Math.max(0, target - seeds.length);
     const context = count ? await templateContext(node, deps.root) : '';
@@ -416,8 +417,13 @@ export async function runLabelQuorum(
     }
 
     const { accepted, quarantined } = await labelDrafts(node, drafts, quorumDeps, client, context, fixtures.files, seeds);
-    if (count > 0 && accepted.length === 0 && (node === 'sqlGenerator' || node === 'supervisor')) {
-      throw new Error(`No new ${node} items were accepted. Check tv:setup and the template warehouse.`);
+    if (count > 0 && accepted.length === 0) {
+      const cause = node === 'discrepancy' && drafts.length === 0
+        ? 'All drafted fixtures rejected.'
+        : sqlNode
+          ? 'Check quorum agreement, tv:setup, and warehouse availability.'
+          : 'Check quorum agreement and duplicate inputs.';
+      throw new Error(`No new ${node} items were accepted. ${cause}`);
     }
     const allAccepted = [...seeds, ...accepted];
     assertSafe(quarantined, `${node} quarantine`);
