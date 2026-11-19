@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { resolveModelId } from '../../src/agents/modelConfig.js';
+import { getRegisteredModel, resolveModelId } from '../../src/agents/modelConfig.js';
 import { defaultProfileForNode, type NodeId } from '../../src/agents/nodeProfiles.js';
 import type { NodeOutcome } from '../node-sweep.js';
 import { formatSweepProfile, type SweepFailure } from '../node-sweep-types.js';
@@ -50,6 +50,7 @@ export function buildRefreshRows(
 
     const defaultProfile = defaultProfileForNode(node);
     const recommendedProfile = chosenRung ?? defaultProfile;
+    const currentModel = resolveModelId(defaultProfile.tier, defaultProfile.version);
     const recommendedModel = resolveModelId(recommendedProfile.tier, recommendedProfile.version);
     const current = formatSweepProfile(defaultProfile);
     const recommended = formatSweepProfile(recommendedProfile);
@@ -58,11 +59,20 @@ export function buildRefreshRows(
     const flatAtFloor = max - Math.min(...metrics) <= eps && max < 0.9;
     const failureCounts = failuresByNode.get(node) ?? [];
     const infrastructureFailure = blocked.has(node) || failureCounts.some(failure => failure.category !== 'candidate');
+    let applicationReason: string | undefined;
+    if (infrastructureFailure) {
+      applicationReason = 'Infrastructure failures affected the comparison.';
+    } else if (currentModel === recommendedModel && defaultProfile.thinkingLevel === recommendedProfile.thinkingLevel) {
+      applicationReason = 'same resolved model';
+    } else if (currentModel !== getRegisteredModel(defaultProfile.tier, defaultProfile.version)?.id ||
+        recommendedModel !== getRegisteredModel(recommendedProfile.tier, recommendedProfile.version)?.id) {
+      applicationReason = 'measured under local model override';
+    }
     return {
       node, current, recommended, currentMetric: baseline.metric, recommendedMetric: chosen.metric,
       eps, signal: signal[node], costDelta: chosen.cost - baseline.cost, p95Ms: chosen.p95LatencyMs,
-      applicable: !infrastructureFailure && eps <= 0.05 && !flatAtFloor && recommended !== current,
-      ...(infrastructureFailure && { applicationReason: 'Infrastructure failures affected the comparison.' }),
+      applicable: applicationReason === undefined && eps <= 0.05 && !flatAtFloor,
+      ...(applicationReason && { applicationReason }),
       failureCounts,
       flatAtFloor, quorumMemberWinner: quorumModels.has(recommendedModel),
     };

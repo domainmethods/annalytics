@@ -106,23 +106,26 @@ it.each([
       } else if (scenario === 'default comparator' || scenario === 'stable picked exhaustion') {
         expect(sql.applicable).toBe(scenario === 'stable picked exhaustion');
         expect(supervisor.applicable).toBe(true);
+      } else if (scenario === 'unsafe model override') {
+        for (const row of [sql, supervisor]) {
+          expect(row).toMatchObject({ applicable: false, applicationReason: 'measured under local model override' });
+        }
+        expect(sql.failureCounts).toContainEqual({
+          profile: 'flash/3@high', category: 'candidate', code: 'sql-validation', count: 1,
+        });
+        expect(sql.recommended).not.toBe('flash/3@high');
+        expect(markdown).toContain('measured under local model override');
+        for (const report of [markdown, jsonText]) {
+          expect(report).not.toContain(unsafeUrl);
+          expect(report).not.toContain(unsafeProject);
+          expect(report).toContain('flash/3@high');
+        }
       } else {
         expect(sql).toMatchObject({ currentMetric: 0.8, recommendedMetric: 0.95, eps: 0.01, applicable: true });
         expect(supervisor).toMatchObject({ applicable: false, recommended: supervisor.current, recommendedMetric: 0.9 });
         if (scenario === 'candidate rejection') {
           expect(sql.failureCounts).toContainEqual(expect.objectContaining({ category: 'candidate', code: 'sql-validation' }));
           expect(markdown).toContain('candidate / sql-validation');
-        }
-        if (scenario === 'unsafe model override') {
-          expect(sql.failureCounts).toContainEqual({
-            profile: 'flash/3@high', category: 'candidate', code: 'sql-validation', count: 1,
-          });
-          expect(sql.recommended).not.toBe('flash/3@high');
-          for (const report of [markdown, jsonText]) {
-            expect(report).not.toContain(unsafeUrl);
-            expect(report).not.toContain(unsafeProject);
-            expect(report).toContain('flash/3@high');
-          }
         }
       }
     } finally {

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { NodeOutcome } from '../../../scripts/node-sweep.js';
 import { buildRefreshRows, renderRefreshReport, writeRefreshReport } from '../../../scripts/template-validation/refreshReport.js';
 import type { Provenance } from '../../../scripts/template-validation/labelQuorum.js';
@@ -21,6 +21,60 @@ const outcome: NodeOutcome = {
   stage1: [baseline], stage2: [chosen], e2eCritical: true,
 };
 const meta = { setVersion: 'test', setHash: 'test-set-hash', date: '2026-11-18', provenance };
+const chartPick = { tier: 'flash', version: '3.5', thinkingLevel: 'minimal' } as const;
+const chartOutcome: NodeOutcome = {
+  ...outcome, nodeId: 'chart', chosenRung: chartPick, stage1: [{ ...baseline, metric: 0.9 }],
+};
+const chartEps = new Map([['chart', 0.02]] as const);
+
+afterEach(() => vi.unstubAllEnvs());
+
+it('withholds different registry labels that resolve to the same model and thinking level', () => {
+  vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ 'flash/3.5': 'gemini-3-flash-preview' }));
+  expect(buildRefreshRows([chartOutcome], chartEps, provenance)[0]).toMatchObject({
+    current: 'flash/3@minimal', recommended: 'flash/3.5@minimal', applicable: false,
+    applicationReason: 'same resolved model',
+  });
+});
+
+it('keeps a real model or thinking level change applicable without an override', () => {
+  vi.stubEnv('MODEL_ID_OVERRIDES', undefined);
+  const thinkingOnly: NodeOutcome = {
+    ...chartOutcome, chosenRung: { tier: 'flash', version: '3', thinkingLevel: 'low' },
+  };
+  for (const row of buildRefreshRows([chartOutcome, thinkingOnly], chartEps, provenance)) {
+    expect(row.applicable).toBe(true);
+    expect(row.applicationReason).toBeUndefined();
+  }
+});
+
+it.each(['flash/3', 'flash/3.5'])('withholds and sanitizes a comparison with an override on %s', async target => {
+  const override = 'https://private.invalid/projects/local-project/locations/us/models/custom';
+  vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ [target]: override }));
+  const rows = buildRefreshRows([chartOutcome], chartEps, provenance);
+  const expected = {
+    current: 'flash/3@minimal', recommended: 'flash/3.5@minimal', applicable: false,
+    applicationReason: 'measured under local model override',
+  };
+  expect(rows[0]).toMatchObject(expected);
+
+  const dir = await mkdtemp(join(tmpdir(), 'refresh-override-'));
+  try {
+    await writeRefreshReport(dir, rows, meta);
+    const base = join(dir, '2026-11-18-model-refresh');
+    const [markdown, json] = await Promise.all([
+      readFile(base + '.md', 'utf8'), readFile(base + '.json', 'utf8'),
+    ]);
+    expect(markdown).toContain(expected.applicationReason);
+    expect(JSON.parse(json).rows[0]).toMatchObject(expected);
+    for (const report of [markdown, json]) {
+      expect(report).not.toContain('private.invalid');
+      expect(report).not.toContain('projects/local-project');
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 it('marks flat-at-floor rows inapplicable and flags reported or requested quorum models', () => {
   const eps = new Map([['supervisor', 0.02]] as const);
