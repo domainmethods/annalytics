@@ -184,6 +184,38 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).toHaveBeenCalledWith('C123', 'thread-1', 'lease-1');
   });
 
+  it('treats a failed sample read as a missing sample and still answers (#68)', async () => {
+    const table = (name: string) => ({
+      name, schema: 'analytics', description: '', materialization: 'table',
+      columns: [], sampleDDL: '', dependsOn: [], tags: [],
+    });
+    const tables = [table('analytics.fct_orders'), table('analytics.dim_customers')];
+    const sample = { rows: [{ id: 1 }], stale: false };
+    mockGetSampleRows.mockImplementation(async (name: string) => {
+      if (name === 'analytics.fct_orders') throw new Error('firestore unavailable');
+      return sample;
+    });
+
+    await runPipeline({ ...baseInput, tables });
+
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+    const sampleRows = mockQualityLoop.mock.calls[0][0].sampleRows;
+    expect(sampleRows).toEqual(new Map([['analytics.dim_customers', sample]]));
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+  });
+
+  it('still answers when the negative-feedback read fails (#68)', async () => {
+    mockGetNegative.mockRejectedValue(new Error('firestore unavailable'));
+
+    await runPipeline(baseInput);
+
+    expect(mockQualityLoop).toHaveBeenCalledTimes(1);
+    expect(mockQualityLoop.mock.calls[0][0].negativeExample).toBeUndefined();
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+  });
+
   it('does not release the thread lock when no lease token was passed (resume paths)', async () => {
     const { ownerToken: _ownerToken, ...resumeInput } = baseInput;
     await runPipeline(resumeInput);
