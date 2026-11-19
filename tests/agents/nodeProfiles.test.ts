@@ -3,8 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 // flash/3 nodes — the un-measured minimal/low roles still pinned to flash-preview.
 const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
 // Classifier nodes — provisional flash-lite/3.5@low (tv-v1 pilot, 2026-11-19).
-const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier'] as const;
-const PROVISIONAL_CLASSIFIER_LITE_NODES = ['ambiguityClassifier'] as const;
+const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier','ambiguityClassifier'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
@@ -15,14 +14,9 @@ describe('nodeProfiles', () => {
     for (const n of FLASH_NODES) expect(resolveNodeModel(n)).toBe('gemini-3-flash-preview');
   });
 
-  it('defaults the classifier nodes to gemini-3.5-flash-lite', async () => {
-    const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    for (const n of CLASSIFIER_LITE_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.5-flash-lite');
-  });
-
-  it('defaults the un-sized ambiguity classifier to gemini-3.5-flash-lite provisionally', async () => {
+  it('defaults the classifier nodes to gemini-3.5-flash-lite at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    for (const n of PROVISIONAL_CLASSIFIER_LITE_NODES) {
+    for (const n of CLASSIFIER_LITE_NODES) {
       expect(resolveNodeModel(n)).toBe('gemini-3.5-flash-lite');
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
