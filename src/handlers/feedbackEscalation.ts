@@ -182,11 +182,14 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   // accepted v1 tradeoff — the user still gets the re-ask degrade, and a re-click
   // re-posts rather than silently dropping. (hasPendingEscalation stays false.)
   try {
+    // The user's own wording (#44); answers saved before it was persisted
+    // fall back to the clarified question.
+    const userQuestion = ctx.userQuestion ?? ctx.clarifiedQuestion;
     const escalationMsg = await client.chat.postMessage({
       channel: target,
       text: `Anna Lytics flagged answer: "${ctx.clarifiedQuestion}"`,
       blocks: buildEscalationBlocks({
-        userQuestion: ctx.clarifiedQuestion,
+        userQuestion,
         channelName: `<#${channel}>`,
         threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
         stuckDescription: `User flagged this answer as "${reason.label}". Please verify and reply with a correction.`,
@@ -203,12 +206,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
       stageToResume: 'supervisor_review',
       context: {
         clarifiedQuestion: ctx.clarifiedQuestion,
-        // ResponseContext does not persist the raw user question, so both
-        // fields intentionally collapse to clarifiedQuestion. The downstream
-        // teaching candidate's "original vs clarified" distinction is lost for
-        // feedback-triggered escalations — acceptable given it's the best
-        // available data; revisit if ResponseContext starts persisting the raw question.
-        userQuestion: ctx.clarifiedQuestion,
+        userQuestion,
         groundingCitations: ctx.groundingCitations,
         previousSql: ctx.generatedSql,
         supervisorNotes: ctx.supervisorNotes,

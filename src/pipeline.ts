@@ -515,7 +515,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel: escalationTarget,
         text: `Anna Lytics needs help with: "${question}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription,
@@ -532,7 +532,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'sql_generation',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,
@@ -685,7 +685,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel: escalationTarget,
         text: `Anna Lytics needs verification: "${question}"`,
         blocks: buildEscalationBlocks({
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           channelName: `<#${channel}>`,
           threadLink: `slack://channel?id=${channel}&message=${threadTs}`,
           stuckDescription: qualityResult.supervisorNotes || 'Answer needs verification',
@@ -702,7 +702,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         stageToResume: 'supervisor_review',
         context: {
           clarifiedQuestion: resolvedQuestion,
-          userQuestion: question,
+          userQuestion: supervisorQuestion,
           groundingCitations: qualityResult.sqlResult.groundingCitations,
           previousSql: qualityResult.sqlResult.sql,
           supervisorNotes: qualityResult.supervisorNotes,

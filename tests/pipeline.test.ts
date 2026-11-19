@@ -419,6 +419,29 @@ describe('runPipeline', () => {
     );
   });
 
+  it("escalation state keeps the user's wording on a refinement (#44)", async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, verdict: 'exhausted' });
+    mockDecideEscalation.mockReturnValue({ shouldEscalate: true, behavior: 'park_wait', trigger: 'quality_loop_exhausted' });
+    await runPipeline({
+      ...baseInput,
+      question: 'What is revenue? (Refinement: last week)',
+      originalQuestion: 'What is paid revenue? (Refinement: last week)',
+      config: { ...baseInput.config, escalation: { mode: 'channel', channelId: 'C-ESCALATION', timeoutHours: 4 } },
+    });
+
+    expect(mockSaveEscalation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          userQuestion: 'What is paid revenue? (Refinement: last week)',
+        }),
+      }),
+      4,
+    );
+    expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
+      expect.objectContaining({ userQuestion: 'What is paid revenue? (Refinement: last week)' }),
+    );
+  });
+
   it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {
     mockQualityLoop.mockResolvedValue({
       ...baseQualityResult,
