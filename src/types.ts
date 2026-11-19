@@ -17,6 +17,10 @@ export interface ValidationResult {
   layer: string;              // which layer failed
   error?: string;
   bytesProcessed?: number;    // from dry run
+  /**
+   * Set by dryRunValidation for errors beyond invalidQuery and billingTierLimitExceeded,
+   * including accessDenied, notFound, and quotaExceeded. Only the template harness reads it.
+   */
   warehouseFailure?: true;
 }
 

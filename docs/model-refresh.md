@@ -3,6 +3,8 @@
 Use the frozen set in `benchmarks/template-validation/` to review template defaults when Gemini models appear or disappear. Export `GEMINI_API_KEY` and `GCP_PROJECT_ID` or set them in your local `.env`, and configure BigQuery credentials for that project.
 
 1. Run `npm run model:discover`. Review new and missing models, including missing IDs used by defaults. Add the probed entries to `src/agents/modelConfig.ts`, assign each a tier, and set its rates from [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing). Keep model IDs pinned and exclude `*-latest` aliases.
+
+   Resolve every `TODO(price)` in the model registry before the live refresh. Stage 1 uses those rates to break ties.
 2. Run `npm run tv:setup` on the first run and when using a new machine or project. It creates the `tv_thelook` views over `bigquery-public-data.thelook_ecommerce` and generates the template dbt artifacts.
 
    On the first run from the seed-only checkout, run `npm run tv:label` after setup to build the initial set. Use authenticated local agent CLIs and a BigQuery labeling principal with job creation permission and data access scoped to the template views and the public TheLook dataset. Labels require unanimous agreement. The default is three distinct families. Two produce a reduced quorum, and one requires `npm run tv:label -- --allow-single-family`. Multiple CLIs from the same family count once.

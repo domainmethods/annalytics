@@ -24,8 +24,8 @@
     "sweep:template": "tsx scripts/node-sweep.ts --corpus template",
     "model:discover": "tsx scripts/model-discover.ts",
     "tv:setup": "tsx scripts/template-validation/warehouse.ts",
-    "prepare": "husky",
-    "tv:label": "tsx scripts/template-validation/label-quorum.ts"
+    "tv:label": "tsx scripts/template-validation/label-quorum.ts",
+    "prepare": "husky"
   },
   "lint-staged": {
     "*.ts": "eslint --fix"

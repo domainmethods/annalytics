@@ -54,6 +54,7 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
   // with a day or preceding date preposition required for May. A year-first May
   // prefix leaves a following formatted number intact. Exponents and suffixes
   // scale the displayed precision, including for fractional percentages.
+  // Skip "January 2024" and "2024-01-15T00:00:00Z", and keep 12% in "2024 May 12%".
   let matches = 0;
   let count = 0;
   for (const match of summary.matchAll(SUMMARY_TOKENS)) {
