@@ -12,6 +12,16 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ## [Unreleased]
 
+### Added
+
+- Template update instructions and this release history.
+
+### Changed
+
+- Documentation identifies `NODE_PROFILE_OVERRIDES` and `MODEL_ID_OVERRIDES` as
+  the production Gemini model controls; legacy model-alias settings are not
+  serving controls (#111). Runtime defaults are unchanged.
+
 ### Fixed
 
 - dbt artifact path resolution preserves absolute paths across runtime and tools (#113).
@@ -40,46 +50,22 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
   the execution default project. Migrate knowledge and expectations to
   three-part names and re-run benchmark acceptance.
 - **Action required — dbt status ingestion (#116):** dbt `warn`, no-op, and
-  reused outcomes are stored distinctly instead of as failures; partial success
-  and runtime errors map to error. Records ingested before this change keep
+  reused outcomes are stored distinctly instead of as `skipped`; partial success
+  and runtime errors map to error rather than `skipped`. Records ingested before this change keep
   their old status — re-ingest recent `run_results.json` if dbt status answers
   matter to you.
-- Infrastructure validation fails when neither Terraform nor OpenTofu is
-  installed, and a credential-free CI job validates `infra/` (#115).
-
-### Changed
-
-- Documentation identifies `NODE_PROFILE_OVERRIDES` and `MODEL_ID_OVERRIDES` as
-  the production Gemini model controls; legacy model-alias settings are not
-  serving controls (#111). Runtime defaults are unchanged.
-
-### Added
-
-- Template update instructions and this release history.
+- **Action required — infrastructure validation (#115):** `npm run infra:validate`
+  now fails when neither Terraform nor OpenTofu is installed instead of passing
+  silently; install one of them to validate `infra/` locally. A credential-free
+  CI job runs the same validation on pull requests and main.
 
 ## [0.1.0] - Proposed
 
-### Fixed
+### Added
 
-- **Action required — SELECT-only validation (#106):** L3 rejects any dry run whose
-  `job.metadata.statistics.query.statementType` is missing, unknown, or not `SELECT`.
-  Verify your BigQuery dry runs return that field before deploying; local AST
-  parsing remains advisory.
-- **Action required — dbt webhook (#99, #100):** authenticated JSON now reaches
-  ingestion (5 MiB limit; malformed bodies return 400, oversized bodies 413).
-  Model `success` and test `pass` persist as success rather than skipped. Verify
-  your CI webhook and resulting dbt status records after updating.
-- **Action required — benchmark acceptance (#103, #105):** only expected and
-  observed LOW clarification suspensions with null SQL, no validation attempts,
-  and no crash receive validation/supervisor exemptions. Table selection scores
-  warehouse relations with query scope rather than incidental names; unsupported
-  SQL earns no table credit and may be unscorable. Re-run implementation acceptance
-  with the corrected instruments before relying on prior verdicts.
-
-- BigQuery execution timeout now reaches job configuration (#96); unsafe INT64
-  values retain exact decimal strings, including nested results (#104). Consumers
-  of query results should allow strings for integers outside JavaScript safe range.
-- Terraform Secret Manager automatic-replication syntax now parses (#97).
+- Initial template baseline: Slack question-to-SQL pipeline, layered validation,
+  human escalation, dbt metadata, ReferenceCards and knowledge sync, benchmark
+  tools, and the gated WhatsApp prototype (merged history through #107).
 
 ### Changed
 
@@ -99,10 +85,27 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
   tables; rejected refreshes preserve previous samples, and separate cold
   instances may each attempt a refresh.
 
-### Added
+### Fixed
 
-- Initial template baseline: Slack question-to-SQL pipeline, layered validation,
-  human escalation, dbt metadata, ReferenceCards and knowledge sync, benchmark
-  tools, and the gated WhatsApp prototype (merged history through #107).
+- **Action required — SELECT-only validation (#106):** L3 rejects any dry run whose
+  `job.metadata.statistics.query.statementType` is missing, unknown, or not `SELECT`.
+  Verify your BigQuery dry runs return that field before deploying; local AST
+  parsing remains advisory.
+- **Action required — dbt webhook (#99, #100):** authenticated JSON now reaches
+  ingestion (5 MiB limit; malformed bodies return 400, oversized bodies 413).
+  Model `success` and test `pass` persist as success rather than skipped. Verify
+  your CI webhook and resulting dbt status records after updating.
+- **Action required — benchmark acceptance (#103, #105):** only expected and
+  observed LOW clarification suspensions with null SQL, no validation attempts,
+  and no crash receive validation/supervisor exemptions. Table selection scores
+  warehouse relations with query scope rather than incidental names; unsupported
+  SQL earns no table credit and may be unscorable. Re-run implementation acceptance
+  with the corrected instruments before relying on prior verdicts.
+
+- **Action required — INT64 results (#104):** unsafe INT64 values retain exact
+  decimal strings, including nested results. Consumers of query results should
+  allow strings for integers outside the JavaScript safe range.
+- BigQuery execution timeout now reaches job configuration (#96).
+- Terraform Secret Manager automatic-replication syntax now parses (#97).
 
 PR references: https://github.com/domainmethods/annalytics/pulls?q=is%3Apr+is%3Amerged
