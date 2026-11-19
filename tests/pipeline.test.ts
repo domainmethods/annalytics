@@ -244,6 +244,13 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the posted answer when context persistence fails', async () => {
+    mockSaveCtx.mockRejectedValueOnce(new Error('write failed'));
+    await runPipeline(baseInput);
+    const updates = mockClient.chat.update.mock.calls;
+    expect(updates.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
+  });
+
   it('cost_exceeded: shows actionable message, no execution', async () => {
     mockQualityLoop.mockResolvedValue({
       ...baseQualityResult,

@@ -36,6 +36,7 @@ TEACHINGS REFERENCED:
 ${citations}
 
 AVAILABLE SCHEMA:
+${ctx.schemaDetailsTrimmed ? "Schema details were trimmed for storage. Missing details are unavailable; do not infer them or claim a table lacks a column from this snapshot." : ""}
 ${schema}
 
 In your response:

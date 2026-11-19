@@ -61,6 +61,7 @@ export interface ResponseContext {
   fastPathIneligibleReasons?: string[];
   failureHistory?: FailureRecord[];
   negativeFeedback?: boolean;
+  schemaDetailsTrimmed?: boolean;
   retrievedSchema?: {
     name: string;
     description: string;

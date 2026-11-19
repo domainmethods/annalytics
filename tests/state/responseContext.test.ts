@@ -23,6 +23,7 @@ mockLimit.mockReturnValue({ select: mockSelect });
 mockSelect.mockReturnValue({ get: mockGet });
 
 import {
+  RESPONSE_CONTEXT_BYTE_BUDGET,
   saveResponseContext,
   botHasRepliedInThread,
   getResponseContext,
@@ -54,6 +55,25 @@ describe('saveResponseContext', () => {
     mockWhere.mockReturnValue({ limit: mockLimit });
     mockLimit.mockReturnValue({ select: mockSelect });
     mockSelect.mockReturnValue({ get: mockGet });
+  });
+
+  it('bounds a large schema for both surfaces', async () => {
+    for (const surface of ['slack', 'whatsapp'] as const) {
+      await saveResponseContext({ ...sampleContext(), surface,
+        retrievedSchema: Array.from({ length: 200 }, (_, i) => ({
+          name: `table_${i}`, description: '', columns: Array.from({ length: 40 }, (_, j) => ({
+            name: `column_${j}`, description: 'é'.repeat(140), dataType: 'STRING', // multibyte: budget counts UTF-8 bytes
+          })),
+        })),
+      });
+      const saved = mockSet.mock.calls.at(-1)![0];
+      expect(Buffer.byteLength(JSON.stringify(saved.retrievedSchema))).toBeLessThanOrEqual(RESPONSE_CONTEXT_BYTE_BUDGET);
+      expect(saved.retrievedSchema.some((t: { columns: unknown[] }) => t.columns.length > 0)).toBe(true);
+      expect(saved.retrievedSchema).toHaveLength(200);
+      expect(saved.schemaDetailsTrimmed).toBe(true);
+      expect(saved.generatedSql).toBe('SELECT 1');
+      expect(saved.surface).toBe(surface);
+    }
   });
 
   it('saves with composite key threadTs_statusMsgTs', async () => {

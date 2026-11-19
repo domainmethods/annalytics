@@ -5,6 +5,8 @@ import type { ResponseContext } from '../types.js';
 type FirestoreTimestamp = { toDate: () => Date };
 
 const RETENTION_DAYS = parseResponseContextRetentionDays();
+/** Serialized byte budget for persisted retrievedSchema; well under Firestore's 1 MiB document limit. */
+export const RESPONSE_CONTEXT_BYTE_BUDGET = 512 * 1024;
 
 function toDate(value: unknown): Date | null {
   if (value instanceof Date) {
@@ -34,11 +36,33 @@ function isExpiredResponseContext(data: { expiresAt?: unknown }): boolean {
 
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   const now = new Date();
+  // Leave ample headroom for Firestore field/document overhead beyond JSON bytes.
+  const budget = RESPONSE_CONTEXT_BYTE_BUDGET;
+  let saved = { ...ctx };
+  if (Buffer.byteLength(JSON.stringify(saved), 'utf8') > budget && ctx.retrievedSchema) {
+    saved = { ...ctx, schemaDetailsTrimmed: true,
+      retrievedSchema: ctx.retrievedSchema.map(t => ({ name: t.name, description: '', columns: [] })),
+    };
+    let bytes = Buffer.byteLength(JSON.stringify(saved), 'utf8');
+    for (let i = 0; i < ctx.retrievedSchema.length; i++) {
+      const source = ctx.retrievedSchema[i];
+      const target = saved.retrievedSchema![i];
+      for (const column of source.columns) {
+        const added = Buffer.byteLength(JSON.stringify(column), 'utf8') + 1;
+        if (bytes + added > budget) break;
+        target.columns.push(column);
+        bytes += added;
+      }
+    }
+  }
+  if (Buffer.byteLength(JSON.stringify(saved), 'utf8') > budget) {
+    throw new Error('Response context exceeds persistence byte budget');
+  }
   await getDb()
     .collection('response_context')
     .doc(responseContextDocumentId(ctx))
     .set({
-      ...ctx,
+      ...saved,
       createdAt: now,
       expiresAt: new Date(now.getTime() + RETENTION_DAYS * 86_400_000),
     });

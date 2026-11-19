@@ -5,9 +5,17 @@ import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
+import type { ResponseContext } from '../types.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
 import { generateForNode } from '../agents/modelGateway.js';
 import { rootLogger } from '../logging.js';
+
+export class ResponseContextNotFoundError extends Error {
+  constructor() {
+    super('Response context not found');
+    this.name = 'ResponseContextNotFoundError';
+  }
+}
 export { formatValue };
 
 function extractTraceId(err: unknown): string {
@@ -17,10 +25,40 @@ function extractTraceId(err: unknown): string {
   return 'unknown';
 }
 
-async function reExecuteSql(compoundKey: string, config: OverrideConfig) {
+async function loadContext(compoundKey: string): Promise<ResponseContext> {
   const ctx = await getResponseContext(compoundKey);
-  if (!ctx) throw new Error('Response context not found');
+  if (!ctx) throw new ResponseContextNotFoundError();
+  return ctx;
+}
 
+const CONTEXT_UNAVAILABLE_TEXT = 'Response context is unavailable. Please ask the question again.';
+
+/**
+ * Tell only the clicking user that the answer's context is gone. The delivered
+ * answer is left untouched: a missing context must never overwrite it.
+ */
+export interface OverrideViewer {
+  userId: string;
+  /** Thread root of the answer message, so the notice lands in its thread. */
+  threadTs?: string;
+}
+
+async function notifyContextUnavailable(
+  client: WebClient,
+  channel: string,
+  viewer: OverrideViewer | undefined,
+): Promise<void> {
+  if (!viewer) return;
+  await client.chat.postEphemeral({
+    channel,
+    user: viewer.userId,
+    ...(viewer.threadTs ? { thread_ts: viewer.threadTs } : {}),
+    text: CONTEXT_UNAVAILABLE_TEXT,
+  })
+    .catch(error => rootLogger.warn({ error: (error as Error).message }, 'override.context_unavailable_notice_failed'));
+}
+
+async function reExecuteSql(ctx: ResponseContext, config: OverrideConfig) {
   const validation = await validateSql(ctx.generatedSql, config.maxBytesProcessed);
   if (!validation.valid) {
     throw Object.assign(
@@ -44,9 +82,11 @@ export async function handleTableOverride(
   messageTs: string,
   client: WebClient,
   config: OverrideConfig,
+  viewer?: OverrideViewer,
 ): Promise<void> {
   try {
-    const { ctx, result } = await reExecuteSql(compoundKey, config);
+    const ctx = await loadContext(compoundKey);
+    const { result } = await reExecuteSql(ctx, config);
 
     const MAX_DISPLAY_ROWS = 20;
     const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
@@ -67,6 +107,10 @@ export async function handleTableOverride(
       { error: (err as Error).message, traceId: extractTraceId(err) },
       'override.table.failed',
     );
+    if (err instanceof ResponseContextNotFoundError) {
+      await notifyContextUnavailable(client, channel, viewer);
+      return;
+    }
     await client.chat.update({
       channel,
       ts: messageTs,
@@ -81,11 +125,14 @@ export async function handleSummaryOverride(
   messageTs: string,
   client: WebClient,
   config: OverrideConfig,
+  viewer?: OverrideViewer,
 ): Promise<void> {
   try {
+    // Load context before replacing the answer with a progress message.
+    const ctx = await loadContext(compoundKey);
     await client.chat.update({ channel, ts: messageTs, text: 'Generating summary...' });
 
-    const { ctx, result } = await reExecuteSql(compoundKey, config);
+    const { result } = await reExecuteSql(ctx, config);
 
     let summary: string;
     try {
@@ -131,6 +178,10 @@ export async function handleSummaryOverride(
       { error: (err as Error).message, traceId: extractTraceId(err) },
       'override.summary.failed',
     );
+    if (err instanceof ResponseContextNotFoundError) {
+      await notifyContextUnavailable(client, channel, viewer);
+      return;
+    }
     await client.chat.update({
       channel,
       ts: messageTs,
@@ -150,7 +201,8 @@ export async function handleCsvOverride(
   config: OverrideConfig,
 ): Promise<void> {
   try {
-    const { ctx, result } = await reExecuteSql(compoundKey, config);
+    const ctx = await loadContext(compoundKey);
+    const { result } = await reExecuteSql(ctx, config);
 
     const header = result.columnNames.join(',');
     const rows = result.rows.map(row =>
@@ -204,7 +256,9 @@ export async function handleCsvOverride(
       channel,
       user: userId,
       thread_ts: threadTs,
-      text: `Something went wrong exporting to CSV. (trace: ${extractTraceId(err)})`,
+      text: err instanceof ResponseContextNotFoundError
+        ? CONTEXT_UNAVAILABLE_TEXT
+        : `Something went wrong exporting to CSV. (trace: ${extractTraceId(err)})`,
     });
   }
 }
