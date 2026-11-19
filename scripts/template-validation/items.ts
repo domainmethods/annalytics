@@ -163,13 +163,16 @@ function findStringEnd(text: string, start: number, delimiter: string, multiline
   return { end: -1, sawDoubledBackslash };
 }
 
-function tokenizeReferences(text: string, references: Set<string>, serializedApostrophes: boolean) {
+function tokenizeReferences(
+  text: string, references: Set<string>, serializedApostrophes: boolean, ordinaryQuotes = false,
+) {
   // Line comments stop at physical or JSON-escaped line breaks.
   const tokenPattern = /\s+|\\[nt]|`+|\/\*[\s\S]*?\*\/|(?:--|#)(?:[^\\\r\n]|\\[^n\r\n])*(?:\\(?!n))?|["']|\\"|\\\\|[A-Za-z0-9_]+|./y;
   const publicProjectToken = /bigquery-public-data\b/iy;
   const backtickSpan = /(`{1,2})(?!`)((?:[^`\\\r\n]|\\[^`n\r\n]|\\(?=`)|`(?!`))*?)\1(?!`)/y;
   const tokens: ScanToken[] = [];
   let ambiguousApostrophe = false;
+  let ambiguousTripleQuote = false;
   let spaceBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
@@ -183,13 +186,14 @@ function tokenizeReferences(text: string, references: Set<string>, serializedApo
     if (/^(?:\/\*|--|#)/.test(value)) {
       const body = value.startsWith('/*') ? value.slice(2, -2) :
         value.startsWith('--') ? value.slice(2) : value.slice(1);
-      collectReferences(body, references);
+      collectReferences(body, references, false, ordinaryQuotes);
       spaceBefore = true;
       continue;
     }
     if (value === '"' || value === "'" || value === '\\"') {
       const triple = value.repeat(3);
-      const multiline = text.startsWith(triple, start);
+      const multiline = !ordinaryQuotes && text.startsWith(triple, start);
+      ambiguousTripleQuote ||= multiline;
       const delimiter = multiline ? triple : value;
       const contentsStart = start + delimiter.length;
       const first = findStringEnd(text, contentsStart, delimiter, multiline, value === '\\"');
@@ -203,7 +207,7 @@ function tokenizeReferences(text: string, references: Set<string>, serializedApo
       tokenPattern.lastIndex = contentsStart;
       if (end !== -1) {
         // A JSON string can carry SQL. Scan it with its own table-position state.
-        collectReferences(decodeScanEscapes(text.slice(contentsStart, end)), references);
+        collectReferences(decodeScanEscapes(text.slice(contentsStart, end)), references, false, ordinaryQuotes);
         tokenPattern.lastIndex = end + delimiter.length;
       }
     }
@@ -218,7 +222,7 @@ function tokenizeReferences(text: string, references: Set<string>, serializedApo
         // A double-backtick span may contain SQL. Dots with padding still join identifier segments.
         if (doubleBackticks && nestedIdentifier === undefined &&
             body.split('.').some((part) => /[\s`()]/.test(part.trim()))) {
-          collectReferences(body, references);
+          collectReferences(body, references, false, ordinaryQuotes);
         } else {
           for (const [part] of (nestedIdentifier ?? body).matchAll(quotedPart)) {
             const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
@@ -233,7 +237,7 @@ function tokenizeReferences(text: string, references: Set<string>, serializedApo
     tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore });
     spaceBefore = false;
   }
-  return { tokens, ambiguousApostrophe };
+  return { tokens, ambiguousApostrophe, ambiguousTripleQuote };
 }
 
 function isAllowedChain(segments: string[]): boolean {
@@ -245,8 +249,11 @@ function isAllowedChain(segments: string[]): boolean {
     TV_TABLES.some((table) => table === segments[tableIndex]);
 }
 
-function collectReferences(text: string, references: Set<string>, serializedApostrophes = false): void {
-  const { tokens, ambiguousApostrophe } = tokenizeReferences(text, references, serializedApostrophes);
+function collectReferences(
+  text: string, references: Set<string>, serializedApostrophes = false, ordinaryQuotes = false,
+): void {
+  const { tokens, ambiguousApostrophe, ambiguousTripleQuote } =
+    tokenizeReferences(text, references, serializedApostrophes, ordinaryQuotes);
   const fromLists = [false];
   let tablePosition = false;
 
@@ -321,7 +328,9 @@ function collectReferences(text: string, references: Set<string>, serializedApos
     }
   }
   // JSON leaves apostrophe delimiters unchanged. Keep violations from both readings.
-  if (ambiguousApostrophe) collectReferences(text, references, true);
+  if (ambiguousApostrophe) collectReferences(text, references, true, ordinaryQuotes);
+  // A later opener can masquerade as a close and swallow part of the enclosing FROM list.
+  if (ambiguousTripleQuote) collectReferences(text, references, serializedApostrophes, true);
 }
 
 export function hasSqlFrom(sql: string): boolean {

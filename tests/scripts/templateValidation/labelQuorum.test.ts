@@ -640,3 +640,40 @@ it('leaves an active publisher lock intact and still allows scratch labeling', a
   expect(existsSync(active)).toBe(true);
   expect(existsSync(join(root, 'provenance.json'))).toBe(false);
 });
+
+it('rejects a non-executed fixture with an ambiguous triple-quoted FROM list at publication', async () => {
+  const generatedSql = `SELECT * FROM tv_thelook.orders o
+JOIN tv_thelook.users u ON u.note = """First line
+Second line
+, private_dataset.customers c
+WHERE c.note = """Another
+note"""`;
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft fixtures') ? {
+      fixtures: [{ context: { ...discrepancyContext, generatedSql }, defect: 'missing filter' }],
+    } : prompt.startsWith('Draft') ? {
+      items: [{ category: 'simple', complaint: 'This seems high.', contextFixture: 'discrepancy-context-1' }],
+    } : { labels: [{ defect: 'missing filter', rubric: ['filter orders'] }] },
+  }));
+  await expect(run({
+    ...fullLabelOptions, targetCounts: { ...fullLabelOptions.targetCounts, slackIntake: 0, discrepancy: 1 },
+  })).rejects.toThrow(/Template safety violation.*discrepancy-context-1/);
+  expect(deps.execute).not.toHaveBeenCalled();
+  for (const name of ['items', 'fixtures', 'quarantine', 'provenance.json']) {
+    expect(existsSync(join(root, name))).toBe(false);
+  }
+});
+
+it.each(['reportedModel', 'cliVersion'])('rejects unsafe CLI %s before publishing any artifacts', async field => {
+  const foreign = 'projects/synthetic-unapproved/locations/us/models/example';
+  if (field === 'cliVersion') deps.labelers = labelers.map(cfg => ({ ...cfg, cliVersion: foreign }));
+  else vi.mocked(deps.runLabeler).mockImplementation(async (_cfg, { prompt }) => ({
+    cached: false, reportedModel: foreign,
+    value: prompt.startsWith('Draft') ? { items: [draft] } : { labels: [route] },
+  }));
+  await expect(run(fullLabelOptions)).rejects.toThrow('Template safety violation in provenance.json');
+  for (const name of ['items', 'fixtures', 'quarantine', 'provenance.json']) {
+    expect(existsSync(join(root, name))).toBe(false);
+  }
+});

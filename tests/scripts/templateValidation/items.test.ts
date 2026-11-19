@@ -235,3 +235,15 @@ it.each([
   }
   expect(scanTemplateSafety(readFileSync(join(TV_ROOT, 'items', node + '.jsonl'), 'utf8'))).toEqual([]);
 });
+
+it.each(['"""', "'''"].flatMap(quote => {
+  const sql = `SELECT * FROM tv_thelook.orders o
+JOIN tv_thelook.users u ON u.note = ${quote}First line
+Second line
+, private_dataset.customers c
+WHERE c.note = ${quote}Another
+note${quote}`;
+  return [['raw', quote, sql], ['serialized', quote, JSON.stringify({ sql })]];
+}))('retains FROM-list detections in %s SQL with ambiguous %s', (_format, _quote, input) => {
+  expect(scanTemplateSafety(input)).toContain('Foreign table reference: private_dataset.customers');
+});

@@ -42,7 +42,11 @@ type Fixtures = Record<string, unknown>;
 type DraftedFixtures = { files: Fixtures; defects: Record<string, string> };
 
 function assertSafe(value: unknown, location: string): void {
-  const violations = scanTemplateSafety(JSON.stringify(value));
+  assertSafeText(JSON.stringify(value), location);
+}
+
+function assertSafeText(text: string, location: string): void {
+  const violations = scanTemplateSafety(text);
   if (violations.length) {
     throw new Error(`Template safety violation in ${location} (${violations.length} findings)`);
   }
@@ -468,6 +472,7 @@ export async function runLabelQuorum(
     })),
   };
   outputs.set('provenance.json', JSON.stringify(provenance, null, 2) + '\n');
+  for (const [name, content] of outputs) assertSafeText(content, name);
 
   if (partial) {
     const scratch = join(client.cacheDir, 'partial', [...nodes].sort().join('-'));
