@@ -97,7 +97,7 @@ async function executeScoredSql(
   }
   if (!(result instanceof Error)) return result;
   const known = result instanceof TemplateSqlError ? result : undefined;
-  evidence.failure = {
+  evidence.failure ??= {
     category: reference ? 'reference' : known && !known.warehouseFailure ? 'candidate' : 'warehouse',
     code: known?.code ?? 'sql-execution',
   };
@@ -138,7 +138,7 @@ const templateScorers: Scorers = {
     );
     evidence.exhausted = quality.verdict === 'exhausted';
     if (quality.validationHistory?.some(entry => entry.warehouseFailure)) {
-      evidence.failure = { category: 'warehouse', code: 'sql-validation' };
+      evidence.failure ??= { category: 'warehouse', code: 'sql-validation' };
       return 0;
     }
     const candidate = await executeScoredSql(execute, quality.sqlResult.sql, evidence);

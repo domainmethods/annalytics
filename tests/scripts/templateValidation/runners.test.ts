@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GoogleGenAI } from '@google/genai';
 import { classifyQuestion } from '../../../src/agents/clarificationAgent.js';
+import { generateForNode } from '../../../src/agents/modelGateway.js';
 import { reviewSql } from '../../../src/agents/supervisorAgent.js';
 import { qualityLoop } from '../../../src/qualityLoop.js';
 import { executeQuery } from '../../../src/execution/runner.js';
@@ -155,6 +157,28 @@ describe('template corpus runners', () => {
     const { perEntry } = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
     expect(perEntry[0]).toMatchObject({ overallScore: 0, failure: { category: 'warehouse', code: 'sql-validation' } });
     expect(JSON.stringify(perEntry)).not.toContain('private.invalid');
+  });
+
+  it.each([false, true])('preserves a provider outage after SQL validation fails (warehouse failure: %s)', async warehouseFailure => {
+    const quality = await qualityLoop({ question, tables: [], threadContext: [], apiKey: 'test' }, 'test', question, 1);
+    generateContent.mockRejectedValueOnce(new Error('provider unavailable'));
+    vi.mocked(qualityLoop).mockImplementation(async () => {
+      await generateForNode('sqlGenerator', new GoogleGenAI({ apiKey: 'test' }), { contents: question })
+        .catch(() => undefined);
+      return warehouseFailure ? {
+        ...quality, validationHistory: [{ attempt: 0, layer: 'l3', valid: false, warehouseFailure: true }],
+      } : quality;
+    });
+    vi.mocked(validateSql).mockImplementation(async sql => sql === referenceSql
+      ? { valid: true, layer: 'all', bytesProcessed: 0 } : { valid: false, layer: 'L1', error: 'blocked' });
+
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
+    expect(generateContent).toHaveBeenCalledOnce();
+    expect(validateSql).toHaveBeenCalledTimes(warehouseFailure ? 1 : 2);
+    expect(perEntry[0]).toMatchObject({
+      overallScore: 0, sqlGenMetric: 0, failure: { category: 'provider', code: 'model-request' },
+    });
   });
 
   it('records a judge provider failure even though the rubric scorer handles rejected facts', async () => {
