@@ -30,11 +30,25 @@ function toDate(value: unknown): Date | null {
   return null;
 }
 
-function isExpiredResponseContext(data: { expiresAt?: unknown }): boolean {
-  if (data.expiresAt === undefined) return false;
-  const expiresAt = toDate(data.expiresAt);
+/**
+ * Logical expiry shared by every request-time reader (#69): an answer stops
+ * being usable at `expiresAt`, even though Firestore's TTL may delete it later.
+ * Records saved before `expiresAt` existed expire `RETENTION_DAYS` after
+ * `createdAt`; a record with neither readable timestamp stays usable.
+ */
+function isExpiredResponseContext(data: { expiresAt?: unknown; createdAt?: unknown }): boolean {
+  let expiresAt: Date | null;
+  if (data.expiresAt !== undefined) {
+    expiresAt = toDate(data.expiresAt);
+  } else {
+    const createdAt = toDate(data.createdAt);
+    expiresAt = createdAt && new Date(createdAt.getTime() + RETENTION_DAYS * 86_400_000);
+  }
   return expiresAt !== null && expiresAt.getTime() <= Date.now();
 }
+
+const isLiveResponseContext = (data: { expiresAt?: unknown; createdAt?: unknown }): boolean =>
+  !isExpiredResponseContext(data);
 
 export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
   // An unowned Slack record would land at the shared legacy key (#30).
@@ -81,9 +95,10 @@ export async function botHasRepliedInThread(channel: string, threadTs: string): 
     getDb()
       .collection('response_context')
       .where('threadTs', '==', threadTs)
-      .select('channel'), // ownership check only
+      .select('channel', 'expiresAt', 'createdAt'), // ownership + expiry check only
     'channel',
     channel,
+    isLiveResponseContext,
   );
   return doc !== null;
 }
@@ -188,6 +203,7 @@ export async function getLatestResponseContext(
       .orderBy('createdAt', 'desc'),
     'channel',
     channel,
+    isLiveResponseContext,
   );
   return doc ? doc.data() as ResponseContext : null;
 }
@@ -225,6 +241,7 @@ export async function getLatestNegativeFeedback(
       .orderBy('createdAt', 'desc'),
     'channel',
     channel,
+    isLiveResponseContext,
   );
   if (!doc) return null;
 
