@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 /**
  * node-sweep-smoke — cheap go/no-go pre-check for the per-node sizing sweep.
  *
@@ -26,7 +27,7 @@
  */
 import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join, resolve, isAbsolute } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { initBigQuery } from '../src/validation/dryRun.js';
 import { parseDbtArtifacts } from '../src/dbt/parser.js';
@@ -155,8 +156,8 @@ async function main() {
   const knowledgeSummaries: KnowledgeSummary[] = await loadLocalKnowledgeSummaries(root);
   console.log(`Loaded ${knowledgeSummaries.length} local knowledge summaries`);
 
-  const resolvedManifestPath = join(root, manifestPath);
-  const resolvedCatalogPath = join(root, catalogPath);
+  const resolvedManifestPath = resolveDbtArtifactPath(manifestPath, root);
+  const resolvedCatalogPath = resolveDbtArtifactPath(catalogPath, root);
   let tables: TableContext[] = [];
   if (await fileExists(resolvedManifestPath) && await fileExists(resolvedCatalogPath)) {
     try {

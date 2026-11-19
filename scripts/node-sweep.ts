@@ -1,3 +1,4 @@
+import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
@@ -863,8 +864,8 @@ async function main() {
   console.log(`Loaded ${knowledgeSummaries.length} local knowledge summaries`);
 
   // Load dbt artifacts when available (tolerate missing — empty tables[]).
-  const resolvedManifestPath = join(root, manifestPath);
-  const resolvedCatalogPath = join(root, catalogPath);
+  const resolvedManifestPath = resolveDbtArtifactPath(manifestPath, root);
+  const resolvedCatalogPath = resolveDbtArtifactPath(catalogPath, root);
   let tables: TableContext[] = [];
   if (await fileExists(resolvedManifestPath) && await fileExists(resolvedCatalogPath)) {
     try {
