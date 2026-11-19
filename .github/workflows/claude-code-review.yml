@@ -3,28 +3,30 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    # Only review code/config changes — skip docs-only PRs.
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "benchmarks/**"
+      - "infra/**"
+      - ".github/workflows/**"
+      - "Dockerfile"
+      - "*.json"
+      - "*.ts"
+      - "*.js"
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+    # Skip Dependabot and fork PRs — neither can read repo secrets
+    if: github.event.pull_request.user.login != 'dependabot[bot]' && !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
-      issues: write
-      actions: read
+      pull-requests: write # post the review as a PR comment
+      issues: write # top-line PR comments post via the issues API
       id-token: write
+      actions: read # let Claude read CI results to comment on failures
 
     steps:
       - name: Checkout repository
@@ -32,19 +34,45 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install Claude Code
+        run: npm install --prefix "$RUNNER_TEMP/claude-code" --no-audit --no-fund @anthropic-ai/claude-code@2.1.280
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
-          plugins: 'code-review@claude-code-plugins'
-          prompt: |
-            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+          path_to_claude_code_executable: ${{ runner.temp }}/claude-code/node_modules/.bin/claude
 
-            Always post a top-level PR comment or pull-request review summarizing the review outcome, even when there are no findings. A green workflow without a PR artifact is not an accepted review signal.
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          # Allow Claude to read CI results so it can comment on failing checks.
+          additional_permissions: |
+            actions: read
+
+          claude_args: |
+            --model claude-opus-5-5
+            --mcp-config '{"mcpServers": {"sequential-thinking": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2.1.1"]}}}'
+            --allowedTools "mcp__sequential-thinking__sequentialthinking,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Please review this pull request and provide feedback on:
+            - Code quality and best practices
+            - Adherence to simplicity, avoiding speculative coding, minimizing defensive bloat (YAGNI & KISS)
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+
+            Use the repository's CLAUDE.md for guidance on style and conventions (including the module
+            dependency rules). If the PR touches product scope or a surface named in the Deferred Work
+            table of docs/trajectory-governance.md, check that the governance doc is updated in the same
+            change set. Be constructive and helpful in your feedback.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            Always post a top-level PR comment summarizing the review outcome, even when there are no
+            findings. A green workflow without a PR comment is not an accepted review signal.
 
       - name: Verify Claude review posted feedback
         env:
