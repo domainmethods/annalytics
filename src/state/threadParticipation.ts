@@ -26,5 +26,5 @@ export async function hasThreadParticipation(channel: string, threadTs: string):
   if (!doc.exists) return false;
   const expiresAt = doc.data()?.expiresAt as Date | { toDate: () => Date } | undefined;
   const expiry = expiresAt instanceof Date ? expiresAt : expiresAt?.toDate?.();
-  return !expiry || expiry.getTime() > Date.now();
+  return expiry !== undefined && expiry.getTime() > Date.now();
 }

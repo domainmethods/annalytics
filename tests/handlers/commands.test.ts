@@ -11,6 +11,7 @@ const {
   mockMaybeHandleSlackIntake,
   mockPreflightChecks,
   mockRespond,
+  mockMarkThreadParticipation,
 } = vi.hoisted(() => ({
   mockRunPipeline: vi.fn(),
   mockToPipelineConfig: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockMaybeHandleSlackIntake: vi.fn(),
   mockPreflightChecks: vi.fn(),
   mockRespond: vi.fn(),
+  mockMarkThreadParticipation: vi.fn(),
 }));
 
 vi.mock('../../src/pipeline.js', () => ({
@@ -44,6 +46,10 @@ vi.mock('../../src/handlers/slackIntake.js', () => ({
 }));
 vi.mock('../../src/handlers/preflightChecks.js', () => ({
   preflightChecks: mockPreflightChecks,
+}));
+
+vi.mock('../../src/handlers/threadParticipationMark.js', () => ({
+  markThreadParticipation: mockMarkThreadParticipation,
 }));
 
 import { registerCommands } from '../../src/handlers/commands.js';
@@ -88,6 +94,7 @@ describe('registerCommands /anna seam', () => {
     mockFriendlyErrorMessage.mockReturnValue('friendly error');
     mockCreateTraceId.mockReturnValue('trace-1');
     mockRespond.mockResolvedValue({});
+    mockMarkThreadParticipation.mockResolvedValue(undefined);
   });
 
   it('responds to "/anna help" ephemerally without touching rate limit or intake', async () => {
@@ -213,5 +220,19 @@ describe('registerCommands /anna seam', () => {
     expect(mockReleaseThreadLock).not.toHaveBeenCalled();
     expect(client.chat.update).not.toHaveBeenCalled();
     expect(mockRespond).toHaveBeenCalledWith({ text: 'friendly error' });
+  });
+
+  it('marks the thread its status message roots, before the pipeline runs (#53)', async () => {
+    mockRunPipeline.mockImplementation(async () => {
+      expect(mockMarkThreadParticipation).toHaveBeenCalledWith('C123', 'status-1');
+    });
+    await invokeCommand();
+    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark a thread when intake answers the command', async () => {
+    mockMaybeHandleSlackIntake.mockResolvedValue(true);
+    await invokeCommand({ text: 'hi' });
+    expect(mockMarkThreadParticipation).not.toHaveBeenCalled();
   });
 });
