@@ -133,9 +133,8 @@ export function getSupportedThinkingLevels(tier: ModelTier, version: string): Th
   return [...(REGISTRY[`${tier}/${version}`]?.thinkingLevels ?? [])];
 }
 
-/** Sweep candidates, ordered cheapest tier first and stable within a tier. */
+/** Sweep candidates: cheapest tier first, then cheapest input price within a tier (ties keep registry order). */
 export function listRegisteredModels(): ModelCoordinate[] {
-  // Cheapest first within a tier, so floor-up picks don't depend on insertion order.
   return Object.values(REGISTRY)
     .filter(({ status }) => status !== 'retired')
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.inputPricePerMTok - b.inputPricePerMTok)
