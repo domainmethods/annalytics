@@ -28,7 +28,7 @@ vi.mock('../src/logging.js', () => ({
   logStage: vi.fn(),
 }));
 
-import { runPipeline, buildResponseBlocks } from '../src/pipeline.js';
+import { runPipeline, buildResponseBlocks, mergeAssumptions } from '../src/pipeline.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
@@ -42,7 +42,7 @@ import { saveClarificationState } from '../src/state/clarificationState.js';
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, formatValue } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue } from '../src/slack/blocks.js';
 import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
@@ -201,6 +201,26 @@ describe('runPipeline', () => {
 
     expect(mockQualityLoop).toHaveBeenCalledTimes(1);
     expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows and saves assumptions from both clarification and SQL generation (#45)', async () => {
+    mockClassify.mockResolvedValue({
+      ...highClarification,
+      assumptions: ['Assuming this calendar month', 'Assuming USD'],
+    });
+    mockQualityLoop.mockResolvedValue({
+      ...baseQualityResult,
+      sqlResult: {
+        ...baseQualityResult.sqlResult,
+        assumptions: ['Assuming USD', 'Excluding test accounts'],
+      },
+    });
+
+    await runPipeline(baseInput);
+
+    const merged = ['Assuming this calendar month', 'Assuming USD', 'Excluding test accounts'];
+    expect(mockBuildAssumptions).toHaveBeenCalledWith(merged, expect.any(String));
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ assumptions: merged }));
   });
 
   it('LOW confidence: suspends pipeline, posts clarification', async () => {
@@ -577,6 +597,12 @@ describe('runPipeline', () => {
   });
 });
 
+describe('mergeAssumptions', () => {
+  it('keeps first-seen order and drops blanks and exact duplicates', () => {
+    expect(mergeAssumptions(['a', '', 'b'], ['b', 'c', 'a'])).toEqual(['a', 'b', 'c']);
+  });
+});
+
 describe('buildResponseBlocks', () => {
   // blocks.js is module-mocked for the runPipeline suite above; this unit test
   // verifies the real block ORDER, so route the builders to their actual
@@ -589,6 +615,21 @@ describe('buildResponseBlocks', () => {
     mockBuildAssumptions.mockImplementation(actual.buildAssumptionBlocks);
     mockBuildFeedback.mockImplementation(actual.buildFeedbackActions);
     vi.mocked(formatValue).mockImplementation(actual.formatValue);
+  });
+
+  it('zero_rows: lists generator assumptions once, as the filters applied (#45)', async () => {
+    const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+    vi.mocked(buildZeroRowBlocks).mockImplementation(actual.buildZeroRowBlocks);
+    const blocks = buildResponseBlocks(
+      'zero_rows',
+      { headline: 'h', explanation: 'e', assumptions: ['Excluding test accounts', 'Excluding test accounts'] } as any,
+      { rows: [], columnNames: [], totalRows: 0 } as any,
+      'trace-1', 'T1', 'S1', ['Assuming USD', 'Excluding test accounts'],
+    );
+    const text = JSON.stringify(blocks);
+    expect(text.match(/Excluding test accounts/g)).toHaveLength(1);
+    expect(text).toContain('Filters applied:* Excluding test accounts');
+    expect(text).toContain('Assumptions:* Assuming USD');
   });
 
   it('single_value: answer first, then assumptions, then feedback actions', () => {
