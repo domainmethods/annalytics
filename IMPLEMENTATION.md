@@ -67,33 +67,35 @@ None currently — the template's Operational Trust tranche closed the previousl
 ## Updating from the template
 
 Read [CHANGELOG.md](CHANGELOG.md), especially **Action required** notes, before
-updating or deploying. Before 1.0, minor versions may contain breaking
-configuration changes, always flagged **Action required**. Work in a clean checkout on an update branch and back up
-implementation-owned content. Add the remote once:
+updating or deploying (see its versioning note). Work in a clean checkout on an
+update branch and back up implementation-owned content. Add the remote once,
+with `--no-tags` so later fetches never pull template tags into your own tag
+namespace:
 
 ```bash
-git remote add template https://github.com/domainmethods/annalytics.git
+git remote add --no-tags template https://github.com/domainmethods/annalytics.git
 ```
 
 Then, for each update, fetch template tags into their own namespace (so they
 cannot collide with your implementation's own `vX.Y.Z` tags) and merge:
 
 ```bash
-git fetch template 'refs/tags/*:refs/tags/template/*'
+git fetch --no-tags template 'refs/tags/*:refs/tags/template/*'
 git switch -c update/template-release
 # Replace vX.Y.Z with an actual published template release tag.
-git merge template/vX.Y.Z
+git merge refs/tags/template/vX.Y.Z
 ```
 
 No release tags exist until the first maintainer release. Do not assume the
 proposed changelog version is already available. For a repository created with
 GitHub **Use this template** (or another copy without shared history), use
-`git merge --allow-unrelated-histories template/vX.Y.Z` for the first sync instead.
+`git merge --allow-unrelated-histories refs/tags/template/vX.Y.Z` for the first
+sync instead.
 With unrelated histories there is no merge base: files changed upstream can
 produce add/add conflicts even when you never edited them locally, including
 runtime code, tests, infrastructure, and deploy configuration. Files the
 template deleted after your snapshot are not removed for you and produce no
-conflict; after the merge, compare `git ls-tree -r --name-only template/vX.Y.Z`
+conflict; after the merge, compare `git ls-tree -r --name-only refs/tags/template/vX.Y.Z`
 against your tree and delete obsolete template files deliberately.
 
 In this merge direction (template into your implementation), resolve each file
@@ -115,8 +117,9 @@ git commit
 
 The commit completes the merge; do this before running checks or deploying.
 To abandon a bad merge and return to the pre-merge state, run `git merge --abort`.
-These steps also apply if you merge `template/main` with
-`git merge --allow-unrelated-histories template/main` instead of a release tag.
+These steps also apply if you track `template/main` instead of a release tag
+(release tags are recommended): refresh it with `git fetch template main`, then
+run `git merge --allow-unrelated-histories template/main`.
 
 Subsequent updates use an ordinary merge. Forks/clones with shared history use
 an ordinary merge from the start.
