@@ -39,6 +39,10 @@ export class LabelerOutputError extends Error {
   override name = 'LabelerOutputError';
 }
 
+export class InvalidLabelerResponseError extends LabelerOutputError {
+  override name = 'InvalidLabelerResponseError';
+}
+
 interface LabelerOutput {
   value: unknown;
   reportedModel?: string;
@@ -282,8 +286,13 @@ export async function runLabeler(
     const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
     const { stdout, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });
     if (code !== 0) throw new LabelerOutputError(`${cfg.id} exited with code ${code}`);
-    result = parseLabelerOutput(cfg.outputParser, stdout);
-    validate(result.value);
+    try {
+      result = parseLabelerOutput(cfg.outputParser, stdout);
+      validate(result.value);
+    } catch (error) {
+      if (!(error instanceof LabelerOutputError)) throw error;
+      throw new InvalidLabelerResponseError(error.message);
+    }
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

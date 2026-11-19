@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -534,4 +534,41 @@ it('rejects empty template execution without schema evidence', async () => {
   await expect(executeTemplateSql('SELECT 1 AS a WHERE FALSE', projectId)).resolves.toMatchObject({
     code: 'sql-execution', warehouseFailure: true,
   });
+});
+
+it('quarantines each item in a malformed member batch and keeps other member labels', async () => {
+  const second = { ...draft, text: 'How many orders shipped?' };
+  deps.runLabeler = runLabeler;
+  deps.spawn = async cmd => cmd === 'claude'
+    ? claude({ labels: [route, route] })
+    : { code: 0, stdout: '{"type":"item.completed","unfinished":"synthetic-output' };
+
+  await expect(labelNode('slackIntake', [draft, second], deps)).resolves.toEqual({
+    accepted: [],
+    quarantined: [draft, second].map(item => ({
+      item, labels: { claude: route, codex: { failure: 'invalid-response' } },
+    })),
+  });
+});
+
+it('preserves sanitized quarantine in the ignored cache when a malformed batch prevents freezing', async () => {
+  deps.runLabeler = runLabeler;
+  deps.spawn = async (cmd, args) => cmd === 'claude'
+    ? claude(args.some(arg => arg.startsWith('Draft')) ? { items: [draft] } : { labels: [route] })
+    : { code: 0, stdout: 'Incomplete synthetic output' };
+
+  await expect(run()).rejects.toThrow('No new slackIntake items were accepted');
+  expect(existsSync(join(root, 'provenance.json'))).toBe(false);
+  const [quarantinePath] = readdirSync(deps.cacheDir!, { recursive: true, encoding: 'utf8' })
+    .filter(path => path.endsWith('quarantine/slackIntake.jsonl'));
+  expect(quarantinePath).toBeDefined();
+  expect(JSON.parse(readFileSync(join(deps.cacheDir!, quarantinePath), 'utf8'))).toMatchObject({
+    labels: { claude: route, codex: { failure: 'invalid-response' } },
+  });
+});
+
+it('propagates labeler setup errors before it can record quarantine', async () => {
+  deps.runLabeler = runLabeler;
+  deps.spawn = async () => { throw new Error('Missing CLI executable'); };
+  await expect(labelNode('slackIntake', [draft], deps)).rejects.toThrow('Missing CLI executable');
 });

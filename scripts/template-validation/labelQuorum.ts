@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import { loadLocalKnowledgeSummaries } from '../benchmarkInputs.js';
 import { hashItemInput, ITEM_SCHEMAS, loadFixture, loadItems, scanTemplateSafety, type SqlGeneratorItem } from './items.js';
-import type { LabelerConfig, runLabeler, SpawnFn } from './labelers.js';
+import { InvalidLabelerResponseError, type LabelerConfig, type runLabeler, type SpawnFn } from './labelers.js';
 import {
   CATEGORIES, draftBatchSchema, draftItemSchema, draftPrompt, fixtureSpecs, labelBatchSchema,
   labelPrompt, mutationBatchSchema, mutationPrompt, PROMPT_VERSION, templateRules, type Category, type FixtureNode,
@@ -75,9 +75,11 @@ function createLabelClient(deps: LabelRunDeps, version: string) {
       models.add(response.reportedModel);
       reportedModels.set(cfg.id, models);
     }
-    return schema.parse(response.value);
+    const parsed = schema.safeParse(response.value);
+    if (!parsed.success) throw new InvalidLabelerResponseError('Response did not match the batch schema');
+    return parsed.data;
   }
-  return { request, reportedModels };
+  return { request, reportedModels, cacheDir };
 }
 type LabelClient = ReturnType<typeof createLabelClient>;
 
@@ -152,12 +154,17 @@ async function labelDrafts(
     const schema = labelBatchSchema(node, batch.length);
     const replies = [];
     for (const cfg of deps.labelers) {
-      const reply = await client.request(cfg, node, index, inputs, prompt, schema);
-      replies.push(reply.labels);
+      try {
+        const reply = await client.request(cfg, node, index, inputs, prompt, schema);
+        replies.push(reply.labels);
+      } catch (error) {
+        if (!(error instanceof InvalidLabelerResponseError)) throw error;
+        replies.push(null);
+      }
     }
     for (const [itemIndex, draft] of batch.entries()) {
-      const labels = replies.map(reply => reply[itemIndex]);
-      const fields = await agreedFields(node, draft, labels, deps);
+      const labels = replies.map(reply => reply?.[itemIndex] ?? { failure: 'invalid-response' });
+      const fields = replies.includes(null) ? undefined : await agreedFields(node, draft, labels, deps);
       const inputHash = hashItemInput(draft.input);
       if (!fields || seen.has(inputHash)) {
         quarantined.push({ item: draft.input, labels: Object.fromEntries(memberIds.map((id, i) => [id, labels[i]])) });
@@ -417,7 +424,13 @@ export async function runLabelQuorum(
     }
 
     const { accepted, quarantined } = await labelDrafts(node, drafts, quorumDeps, client, context, fixtures.files, seeds);
+    assertSafe(quarantined, `${node} quarantine`);
     if (count > 0 && accepted.length === 0) {
+      if (quarantined.length) {
+        const quarantinePath = join(client.cacheDir, 'quarantine', `${node}.jsonl`);
+        mkdirSync(dirname(quarantinePath), { recursive: true, mode: 0o700 });
+        writeFileSync(quarantinePath, jsonLines(quarantined), { mode: 0o600 });
+      }
       const cause = node === 'discrepancy' && drafts.length === 0
         ? 'All drafted fixtures rejected.'
         : sqlNode
@@ -426,7 +439,6 @@ export async function runLabelQuorum(
       throw new Error(`No new ${node} items were accepted. ${cause}`);
     }
     const allAccepted = [...seeds, ...accepted];
-    assertSafe(quarantined, `${node} quarantine`);
     if (node === 'sqlGenerator') references = allAccepted.map(item => ITEM_SCHEMAS.sqlGenerator.parse(item));
     for (const [name, fixture] of Object.entries(fixtures.files)) {
       outputs.set(`fixtures/${name}.json`, JSON.stringify(fixture, null, 2) + '\n');
