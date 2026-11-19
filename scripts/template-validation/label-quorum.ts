@@ -7,7 +7,7 @@ import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import { executeQuery, initBigQueryClient } from '../../src/execution/runner.js';
 import { initBigQuery, isBigQueryQueryRejection, type QueryRelationMetadata, type ReferencedTable } from '../../src/validation/dryRun.js';
 import { validateSql } from '../../src/validation/pipeline.js';
-import { warehouseRelations } from '../benchmarkSupport.js';
+import { hasDatasetRoutineCall, warehouseRelations } from '../benchmarkSupport.js';
 import { hasSqlFrom, ITEM_SCHEMAS, scanTemplateSafety } from './items.js';
 import { checkAvailable, loadLabelers, runLabeler, type LabelerConfig, type SpawnFn } from './labelers.js';
 import { runLabelQuorum } from './labelQuorum.js';
@@ -44,6 +44,7 @@ export function templateQueryRelations(sql: string): string[] | TemplateSqlError
   }
   let relations: string[];
   try {
+    if (hasDatasetRoutineCall(sql)) return new TemplateSqlError('Dataset routines are not allowed for template validation', 'sql-lineage');
     relations = warehouseRelations(sql);
   } catch {
     return new TemplateSqlError('Could not resolve SQL relations for template validation', 'sql-lineage');
@@ -61,8 +62,11 @@ export function checkTemplateRelations(sql: string, projectId: string, metadata:
 }
 
 function checkTemplateLineage(
-  sql: string, projectId: string, relations: string[], { referencedTables = [], referencedLogicalViews = [] }: QueryRelationMetadata,
+  sql: string, projectId: string, relations: string[], { referencedTables = [], referencedLogicalViews = [], referencedRoutines = [] }: QueryRelationMetadata,
 ): TemplateSqlError | undefined {
+  if (referencedRoutines.length) {
+    return new TemplateSqlError('Dry run reported a routine outside the template warehouse', 'sql-lineage');
+  }
   if (!referencedTables.length && !referencedLogicalViews.length && hasSqlFrom(sql)) {
     return new TemplateSqlError('Dry run did not report referenced tables or views for SQL with FROM', 'sql-lineage', true);
   }

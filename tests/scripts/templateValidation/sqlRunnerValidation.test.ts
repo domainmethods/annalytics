@@ -80,3 +80,27 @@ it.each([false, true])('retains a backendError when the retry returns malformed 
   expect(JSON.stringify(perEntry)).not.toContain('private.invalid');
   expect(vi.mocked(executeQuery).mock.calls.map(([sql]) => sql)).toEqual([item.referenceSql]);
 });
+
+it('rejects a dataset-qualified routine in a projection before creating any job', async () => {
+  await loadTemplateEnv('test');
+  createQueryJob.mockResolvedValue(job());
+
+  await expect(executeTemplateSql('SELECT example_ds.example_fn(1)', projectId)).resolves.toMatchObject({
+    code: 'sql-lineage',
+  });
+  expect(createQueryJob).not.toHaveBeenCalled();
+  expect(executeQuery).not.toHaveBeenCalled();
+});
+
+it('blocks execution when dry-run metadata reports a routine', async () => {
+  await loadTemplateEnv('test');
+  createQueryJob.mockResolvedValue(job({
+    referencedRoutines: [{ projectId, datasetId: 'tv_thelook', routineId: 'example_fn' }],
+  }));
+
+  await expect(executeTemplateSql('SELECT ABS(-1)', projectId)).resolves.toMatchObject({ code: 'sql-lineage' });
+  expect(createQueryJob).toHaveBeenCalledExactlyOnceWith({
+    query: 'SELECT ABS(-1)', dryRun: true, useLegacySql: false,
+  });
+  expect(executeQuery).not.toHaveBeenCalled();
+});

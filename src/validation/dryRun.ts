@@ -5,6 +5,7 @@ export type ReferencedTable = { projectId?: string; datasetId?: string; tableId?
 export type QueryRelationMetadata = {
   referencedTables?: ReferencedTable[];
   referencedLogicalViews?: ReferencedTable[];
+  referencedRoutines?: { projectId?: string; datasetId?: string; routineId?: string }[];
 };
 export type DryRunValidationResult = ValidationResult & QueryRelationMetadata;
 
@@ -41,11 +42,12 @@ export async function dryRunValidation(sql: string): Promise<DryRunValidationRes
     }
 
     const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
-    const { referencedTables, referencedLogicalViews } = statistics.query;
+    const { referencedTables, referencedLogicalViews, referencedRoutines } = statistics.query;
     return {
       valid: true, layer: 'L3-dryrun', bytesProcessed,
       ...(referencedTables && { referencedTables }),
       ...(referencedLogicalViews && { referencedLogicalViews }),
+      ...(referencedRoutines && { referencedRoutines }),
     };
   } catch (error) {
     return {

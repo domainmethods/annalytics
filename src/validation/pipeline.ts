@@ -17,5 +17,6 @@ export async function validateSql(sql: string, maxBytes: number): Promise<DryRun
     valid: true, layer: 'all', bytesProcessed: bytes,
     ...(core.referencedTables && { referencedTables: core.referencedTables }),
     ...(core.referencedLogicalViews && { referencedLogicalViews: core.referencedLogicalViews }),
+    ...(core.referencedRoutines && { referencedRoutines: core.referencedRoutines }),
   };
 }

@@ -251,6 +251,18 @@ function scrubLiteralsAndComments(sql: string): string {
   });
 }
 
+const qualifiedCall = new RegExp(String.raw`(${namePart}(?:\s*\.\s*${namePart})*)\s*\(`, 'gi');
+const builtinCallNamespaces = new Set(['AI', 'HLL_COUNT', 'KLL_QUANTILES', 'ML', 'NET', 'SAFE']);
+
+export function hasDatasetRoutineCall(sql: string): boolean {
+  for (const [, name] of scrubLiteralsAndComments(sql).matchAll(qualifiedCall)) {
+    const parts = name.split('.').map(part => part.trim().toUpperCase());
+    if (parts.length === 1) continue;
+    if (parts.length !== 2 || !builtinCallNamespaces.has(parts[0]) || !/^\w+$/.test(parts[1])) return true;
+  }
+  return false;
+}
+
 function prepareBenchmarkSql(sql: string): string {
   // Keep quotes and comments opaque while adapting syntax absent from the installed parser.
   const scrubbed = scrubLiteralsAndComments(sql);

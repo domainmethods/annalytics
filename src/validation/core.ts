@@ -93,5 +93,6 @@ export async function runCoreValidation(
     rawBytesProcessed: l3.bytesProcessed,
     ...(l3.referencedTables && { referencedTables: l3.referencedTables }),
     ...(l3.referencedLogicalViews && { referencedLogicalViews: l3.referencedLogicalViews }),
+    ...(l3.referencedRoutines && { referencedRoutines: l3.referencedRoutines }),
   };
 }
