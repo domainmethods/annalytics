@@ -69,6 +69,14 @@ export function buildArgv(
   ));
   const separator = cfg.argv.indexOf('--');
   argv.splice(separator === -1 ? argv.length : separator, 0, ...cfg.effortArgs);
+  for (const [index, arg] of argv.entries()) {
+    const size = Buffer.byteLength(arg, 'utf8');
+    // Linux MAX_ARG_STRLEN includes the terminating NUL byte.
+    if (size >= 131_072) {
+      const name = arg === vars.prompt ? ' (prompt)' : arg === vars.schemaJson ? ' (--json-schema)' : '';
+      throw new LabelerOutputError(`${cfg.id} argv[${index}]${name} is ${size} bytes, exceeding the 131071-byte argument limit`);
+    }
+  }
   return argv;
 }
 

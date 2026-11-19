@@ -76,6 +76,22 @@ it('runs in a fresh directory outside the repo containing only the schema and re
   expect(existsSync(workingDir)).toBe(false);
 });
 
+it('rejects an oversized UTF-8 prompt before spawning', async () => {
+  const spawn = vi.fn(async () => success);
+  const prompt = 'é'.repeat(65_536);
+  await expect(runLabeler(cfg, { ...batch, prompt }, spawn, cacheDir))
+    .rejects.toThrow(/claude.*argv\[1\].*prompt.*131072 bytes/i);
+  expect(spawn).not.toHaveBeenCalled();
+});
+
+it('checks the serialized schema argument and allows a prompt below the limit', () => {
+  const vars = { prompt: 'x'.repeat(131_071), schemaPath: '/example/schema.json', schemaJson: '{}' };
+  expect(buildArgv(cfg, vars)[1]).toBe(vars.prompt);
+  const schemaJson = JSON.stringify({ description: 'é'.repeat(65_536) });
+  expect(() => buildArgv(cfg, { ...vars, schemaJson }))
+    .toThrow(/claude.*argv\[3\].*--json-schema.*131090 bytes/i);
+});
+
 it('reads the cached result without spawning the CLI', async () => {
   const spawn = vi.fn(async () => success);
   await runLabeler(cfg, batch, spawn, cacheDir);
