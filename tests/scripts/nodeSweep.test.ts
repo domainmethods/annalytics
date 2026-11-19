@@ -183,8 +183,10 @@ describe('runSweep — two-stage coordinate isolation', () => {
     for (const p of o.stage1) expect(parseLabel(p.label).level).toBe('high');
     // Every registered model appears.
     const models = o.stage1.map(p => { const x = parseLabel(p.label); return `${x.tier}/${x.version}`; });
-    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
-      'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon']));
+    expect(new Set(models)).toEqual(new Set([
+      'flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
+      'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon',
+    ]));
   });
 
   it('Stage 2 holds the winning model fixed and walks every thinking level incl. `default` (axis isolation)', async () => {
