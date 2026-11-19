@@ -36,7 +36,7 @@
       "expectedSqlContains": ["analytics.fct_orders", "order_status = 'completed'"],
       "sqlShapePassed": true,
       "clarificationPassed": null,
-      "latencyMs": { "clarification": 10, "generation": 50, "validation": 0, "supervisor": 0, "total": 60 },
+      "latencyMs": { "clarification": 10, "generation": 50, "total": 60 },
       "groundingCitations": ["reference_card:revenue-canonical-definition"]
     },
     {
@@ -59,7 +59,7 @@
       "expectedSqlContains": ["analytics.fct_orders", "DATE_TRUNC", "MONTH", "order_status = 'completed'"],
       "sqlShapePassed": true,
       "clarificationPassed": null,
-      "latencyMs": { "clarification": 12, "generation": 55, "validation": 0, "supervisor": 0, "total": 67 },
+      "latencyMs": { "clarification": 12, "generation": 55, "total": 67 },
       "groundingCitations": ["reference_card:revenue-monthly-grain"]
     },
     {
@@ -82,7 +82,7 @@
       "expectedSqlContains": ["analytics.fct_orders", "analytics.dim_customers", "customer_id", "SUM", "order_status = 'completed'"],
       "sqlShapePassed": true,
       "clarificationPassed": null,
-      "latencyMs": { "clarification": 11, "generation": 70, "validation": 0, "supervisor": 0, "total": 81 },
+      "latencyMs": { "clarification": 11, "generation": 70, "total": 81 },
       "groundingCitations": ["reference_card:revenue-customer-lifetime-value"]
     },
     {
@@ -105,7 +105,7 @@
       "expectedSqlContains": ["analytics.fct_orders", "order_status = 'completed'"],
       "sqlShapePassed": true,
       "clarificationPassed": null,
-      "latencyMs": { "clarification": 9, "generation": 45, "validation": 0, "supervisor": 0, "total": 54 },
+      "latencyMs": { "clarification": 9, "generation": 45, "total": 54 },
       "groundingCitations": ["reference_card:revenue-refunds-exclusions"]
     },
     {
@@ -126,7 +126,7 @@
       "sqlShapePassed": null,
       "expectedClarificationConfidence": "low",
       "clarificationPassed": true,
-      "latencyMs": { "clarification": 8, "generation": 0, "validation": 0, "supervisor": 0, "total": 8 },
+      "latencyMs": { "clarification": 8, "generation": 0, "total": 8 },
       "groundingCitations": []
     }
   ],

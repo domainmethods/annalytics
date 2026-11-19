@@ -173,7 +173,7 @@ function buildResult(
     sqlShapePassed: sqlShapePassed(entry.expectedSqlContains, generatedSql),
     expectedClarificationConfidence: entry.expectedClarificationConfidence,
     clarificationPassed: null,
-    latencyMs: { clarification: 0, generation: 0, validation: 0, supervisor: 0, total: 0 },
+    latencyMs: { clarification: 0, generation: 0, total: 0 },
     groundingCitations: [],
   };
 }
