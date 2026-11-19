@@ -149,3 +149,9 @@ it('passes a compatible Codex schema through unchanged', async () => {
   }, cacheDir);
   expect(result).toMatchObject({ value: { answer: 'ok' }, cached: false });
 });
+
+it('loads the isolation note for each shipped labeler', () => {
+  for (const labeler of loadLabelers()) {
+    expect(labeler).toHaveProperty('isolation', expect.stringMatching(/\S/));
+  }
+});

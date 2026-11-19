@@ -9,6 +9,7 @@ const cacheSegment = z.string().regex(/^[\w-][\w.-]*$/);
 export interface LabelerConfig {
   id: string;
   enabled?: boolean;
+  isolation?: string;
   family: 'anthropic' | 'openai' | 'google';
   argv: string[];
   outputParser: 'claude-json' | 'codex-jsonl' | 'agy-json' | 'gemini-json';
@@ -20,6 +21,7 @@ export interface LabelerConfig {
 const labelerConfigSchema = z.object({
   id: cacheSegment,
   enabled: z.boolean().optional(),
+  isolation: z.string().trim().min(1).optional(),
   family: z.enum(['anthropic', 'openai', 'google']),
   argv: z.array(z.string()).min(1),
   outputParser: z.enum(['claude-json', 'codex-jsonl', 'agy-json', 'gemini-json']),
