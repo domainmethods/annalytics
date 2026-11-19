@@ -14,7 +14,8 @@ import { runLabelQuorum } from './labelQuorum.js';
 import { validateQuorum } from './quorum.js';
 import { TV_DATASET, TV_ROOT, TV_SOURCE_DATASET, TV_SOURCE_PROJECT, TV_TABLES } from './warehouse.js';
 
-const limits = { maxRows: 10_000, timeoutMs: 60_000, maxBytes: 1024 ** 3 };
+export const TEMPLATE_MAX_BYTES = 1024 ** 3;
+const limits = { maxRows: 10_000, timeoutMs: 60_000, maxBytes: TEMPLATE_MAX_BYTES };
 
 export async function availableLabelers(labelers: LabelerConfig[], spawn: SpawnFn, report: (line: string) => void) {
   const checks = await Promise.all(labelers.map(async cfg => ({ cfg, ...await checkAvailable(cfg, spawn) })));

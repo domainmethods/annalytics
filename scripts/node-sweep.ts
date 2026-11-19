@@ -32,6 +32,10 @@ import { judgeSingleResult } from './benchmark-judge-core.js';
 import { type SweepProfile, type PointScore } from './node-sweep-types.js';
 import { pickWithinEpsilon } from './node-sweep-decision.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
+import { hashValidationSet, loadItems } from './template-validation/items.js';
+import type { Provenance } from './template-validation/labelQuorum.js';
+import { buildRefreshRows, writeRefreshReport } from './template-validation/refreshReport.js';
+import { TV_ROOT } from './template-validation/warehouse.js';
 
 // NB: env reads + validation live inside main() (not module scope) so importing
 // this module for the orchestration test harness never triggers process.exit.
@@ -74,7 +78,7 @@ interface SweepArgs {
   bypassClarification: boolean;
 }
 
-function parseArgs(argv: string[]): SweepArgs {
+export function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
   let corpus = 'benchmarks/corpus.json';
   let bypassClarification = false;
@@ -99,7 +103,7 @@ function parseArgs(argv: string[]): SweepArgs {
   }
 
   return {
-    nodes: nodes.length > 0 ? nodes : [...DEFAULT_SWEEP_NODES],
+    nodes: nodes.length > 0 ? nodes : [...(corpus === 'template' ? NODE_IDS : DEFAULT_SWEEP_NODES)],
     corpus,
     bypassClarification,
   };
@@ -178,6 +182,7 @@ export interface PerEntry {
   clarificationPassed: boolean;
   sqlGenMetric: number;
   overallScore: number;
+  error?: string;
 }
 
 export interface CorpusRunResult {
@@ -221,6 +226,7 @@ export interface SweepResult {
   baselineE2e: number;
   combinedE2e: number;
   e2eEps: number;
+  epsByNode: Map<NodeId, number>;
   manualReview: boolean;
   /** The fixed thinking level held constant across Stage 1's model comparison. */
   stage1Anchor: ThinkingLevel;
@@ -397,10 +403,11 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   const baselineRunA = await runCorpusOnce();
   const baselineRunB = await runCorpusOnce();
 
-  const metricEpsForNode = (node: NodeId): number => {
+  const epsByNode = new Map(nodes.map(node => {
     const aligned = alignById(baselineRunA.perEntry, baselineRunB.perEntry, e => perEntryNodeMetric(node, e));
-    return computeEpsilon(aligned.a, aligned.b);
-  };
+    return [node, computeEpsilon(aligned.a, aligned.b)] as const;
+  }));
+  const metricEpsForNode = (node: NodeId): number => epsByNode.get(node)!;
   // e2e ε is node-independent (always the overallScore series).
   const e2eAligned = alignById(baselineRunA.perEntry, baselineRunB.perEntry, e => e.overallScore);
   const e2eEps = computeEpsilon(e2eAligned.a, e2eAligned.b);
@@ -626,6 +633,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     baselineE2e,
     combinedE2e,
     e2eEps,
+    epsByNode,
     manualReview,
     stage1Anchor: STAGE1_ANCHOR,
   };
@@ -813,8 +821,91 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
+async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string) {
+  const selected = new Set(nodes);
+  const ordered: NodeId[] = [
+    ...[...selected].filter(node => node !== 'sqlGenerator' && node !== 'supervisor'),
+    ...(['sqlGenerator', 'supervisor'] as const).filter(node => selected.has(node)),
+  ];
+  if ((selected.has('sqlGenerator') || selected.has('discrepancy')) && !process.env.GCP_PROJECT_ID) {
+    throw new Error('GCP_PROJECT_ID is required for template SQL execution');
+  }
+  const corpora = ordered.map(node => {
+    const items = loadItems(node);
+    if (!items.length) throw new Error(`Template corpus for ${node} is empty`);
+    if (new Set(items.map(item => item.id)).size !== items.length) {
+      throw new Error(`Template corpus for ${node} contains duplicate item IDs`);
+    }
+    return { node, items };
+  });
+  const [version, provenanceJson] = await Promise.all([
+    readFile(join(TV_ROOT, 'VERSION'), 'utf8'),
+    readFile(join(TV_ROOT, 'provenance.json'), 'utf8'),
+  ]);
+  const setVersion = version.trim();
+  const provenance = JSON.parse(provenanceJson) as Provenance;
+  if (provenance.version !== setVersion) throw new Error('Template provenance does not match VERSION');
+  const setHash = hashValidationSet();
+  const previous = process.env.NODE_PROFILE_OVERRIDES;
+  // Baselines and the SQL generator's companion supervisor use the template defaults.
+  delete process.env.NODE_PROFILE_OVERRIDES;
+  try {
+    const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
+    const env = await loadTemplateEnv(apiKey);
+    const outcomes: NodeOutcome[] = [];
+    const epsByNode = new Map<NodeId, number>();
+    let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
+    for (const { node, items } of corpora) {
+      const runner = createTemplateRunner(node, items, env);
+      const runCorpusOnce = async () => {
+        const run = await runner();
+        for (const entry of run.perEntry) {
+          if (entry.error) console.warn(`  ${node}/${entry.id}: scored 0 after item failure`);
+        }
+        return run;
+      };
+      if (node === 'sqlGenerator') sqlRunner = runCorpusOnce;
+      const result = await runSweep({
+        nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
+      });
+      outcomes.push(...result.outcomes);
+      epsByNode.set(node, result.epsByNode.get(node)!);
+    }
+
+    const sqlOutcome = outcomes.find(outcome => outcome.nodeId === 'sqlGenerator');
+    const supervisor = outcomes.find(outcome => outcome.nodeId === 'supervisor');
+    if (sqlRunner && sqlOutcome && supervisor) {
+      const applicable = new Set(buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance)
+        .filter(row => row.applicable).map(row => row.node));
+      const cross = await verifyCrossPass(sqlRunner, {
+        sqlGenerator: applicable.has('sqlGenerator') ? sqlOutcome.chosenRung : undefined,
+        supervisor: applicable.has('supervisor') ? supervisor.chosenRung : undefined,
+      }, sqlOutcome.baseline.metric, epsByNode.get('sqlGenerator')!);
+      console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}${cross.revertSupervisor ? ' (supervisor reverted)' : ''}`);
+      if (cross.revertSupervisor) {
+        supervisor.chosen = supervisor.baseline;
+        supervisor.chosenRung = undefined;
+      }
+    }
+
+    const rows = buildRefreshRows(outcomes, epsByNode, provenance);
+    await writeRefreshReport(join('benchmarks', 'results'), rows, { date: runDate, setVersion, setHash, provenance });
+    console.log(`\nReport written to benchmarks/results/${runDate}-model-refresh.md and .json`);
+  } finally {
+    if (previous === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
+    else process.env.NODE_PROFILE_OVERRIDES = previous;
+  }
+}
+
 async function main() {
+  const runDate = formatDate(new Date());
+  const args = parseArgs(process.argv.slice(2));
   const apiKey = process.env.GEMINI_API_KEY;
+  if (args.corpus === 'template') {
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
+    await runTemplateSweep(args.nodes, apiKey, runDate);
+    return;
+  }
   const projectId = process.env.GCP_PROJECT_ID;
   const fileSearchStoreId = process.env.FILE_SEARCH_STORE_ID;
   const manifestPath = process.env.DBT_MANIFEST_PATH || './dbt/manifest.json';
@@ -829,9 +920,6 @@ async function main() {
     console.error(`Error: Missing required environment variable(s): ${missing}`);
     process.exit(1);
   }
-
-  const runDate = formatDate(new Date());
-  const args = parseArgs(process.argv.slice(2));
 
   console.log(`Node sweep run: ${runDate}`);
   console.log(`Sweeping nodes: ${args.nodes.join(', ')}`);

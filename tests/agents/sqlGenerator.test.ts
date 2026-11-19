@@ -37,6 +37,20 @@ describe('generateSql', () => {
     vi.unstubAllEnvs();
   });
 
+  it('includes local knowledge in the prompt without enabling File Search', async () => {
+    mockGenerateContent.mockResolvedValue({
+      text: JSON.stringify({
+        sql: 'SELECT 1', explanation: 'Counts orders', headline: 'settled orders',
+        tables_used: [], confidence: 'high', assumptions: [], reasoning_chain: 'Count settled orders',
+      }),
+    });
+    const summary = { term: 'Settled revenue', definition: 'Exclude returned items', canonical_table: 'analytics.fct_orders' };
+    await generateSql({ question: 'What is settled revenue?', tables: mockTables, threadContext: [], apiKey: 'test', knowledgeSummaries: [summary] });
+    const { config } = mockGenerateContent.mock.calls[0][0];
+    expect(config.systemInstruction).toContain(summary.definition);
+    expect(config.tools).toBeUndefined();
+  });
+
   it('returns structured SQL generation result', async () => {
     mockGenerateContent.mockResolvedValue({
       text: JSON.stringify({

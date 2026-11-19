@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  parseArgs,
   nodeCost,
   runSweep,
   runCombinedVerification,
@@ -8,8 +9,19 @@ import {
   type NodeOutcome,
 } from '../../scripts/node-sweep.js';
 import type { PointScore, SweepProfile } from '../../scripts/node-sweep-types.js';
-import { defaultProfileForNode, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
+import { defaultProfileForNode, NODE_IDS, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
 import type { ModelTier } from '../../src/agents/modelConfig.js';
+
+describe('template sweep arguments', () => {
+  it('defaults to all nodes in template mode and keeps the install defaults', () => {
+    expect(parseArgs(['--corpus', 'template']).nodes).toEqual(NODE_IDS);
+    expect(parseArgs([]).nodes).toEqual(['clarification', 'sqlGenerator', 'supervisor']);
+  });
+
+  it.each(NODE_IDS)('accepts %s with --corpus template', node => {
+    expect(parseArgs(['--corpus', 'template', '--node', node])).toMatchObject({ corpus: 'template', nodes: [node] });
+  });
+});
 
 // ── Synthetic, override-sensitive corpus model ─────────────────────────────────
 // runSweep touches Gemini/BigQuery ONLY through the injected runCorpusOnce. A
