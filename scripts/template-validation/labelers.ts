@@ -203,7 +203,7 @@ const zodResponseFormats = {
 };
 
 function compileResponseSchema(schema: Record<string, unknown>): ValidateFunction {
-  const options = { strict: false, strictSchema: true, ownProperties: true };
+  const options = { strict: false, ownProperties: true };
   const dialect = schema.$schema;
   const ajv = dialect === 'http://json-schema.org/draft-04/schema#' ? new AjvDraft4(options)
     : dialect === 'http://json-schema.org/draft-07/schema#' ? new Ajv(options)

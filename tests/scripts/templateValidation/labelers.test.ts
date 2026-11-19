@@ -267,3 +267,33 @@ it('rejects an unsupported format in an unused schema definition', async () => {
     .rejects.toThrow(/format.*unknown-labeler-format/i);
   expect(spawn).not.toHaveBeenCalled();
 });
+
+it('accepts a schema with overlapping named and pattern properties', async () => {
+  const overlappingSchema = { ...schema, patternProperties: { '^a': { type: 'string' } } };
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, { ...batch, schema: overlappingSchema }, spawn, cacheDir))
+    .resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it('ignores custom schema annotations and their contents', async () => {
+  const annotatedSchema = {
+    ...schema,
+    'x-labeler-note': { format: 'documentation-only' },
+    properties: { answer: { type: 'string', reviewerNote: 'Example answer' } },
+  };
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, { ...batch, schema: annotatedSchema }, spawn, cacheDir))
+    .resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+it('rejects an unknown format before reading the cache or spawning', async () => {
+  const modelCache = join(cacheDir, cfg.id, cfg.model);
+  mkdirSync(modelCache, { recursive: true });
+  writeFileSync(join(modelCache, 'example-key.json'), 'invalid JSON');
+  const spawn = vi.fn(async () => success);
+  await expect(runLabeler(cfg, formattedBatch('unknown-labeler-format'), spawn, cacheDir))
+    .rejects.toThrow(/unsupported response schema format "unknown-labeler-format"/i);
+  expect(spawn).not.toHaveBeenCalled();
+});
