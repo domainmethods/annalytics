@@ -454,7 +454,8 @@ user), `teaching_candidates` and `feedback_notes` (human-drained queues), and
 `config` (singleton metadata docs). Most
 collections (locks, clarification state, caches, Slack event dedupe, dbt run
 history, `response_context`, `thread_participation`, `pending_notifications`
-queue) use `expiresAt`; for `response_context` and `thread_participation` the window
+queue, `refinement_targets`) use `expiresAt`; for `response_context` and
+`thread_participation` the window
 is `RESPONSE_CONTEXT_RETENTION_DAYS` (default 90 days). `escalation_state`
 retention uses `retainUntil` (fixed 90 days) because its `expiresAt` is the
 escalation timeout, not a retention deadline. The manifest

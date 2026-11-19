@@ -13,6 +13,7 @@ import {
 import { buildOtherNoteModal } from '../slack/feedbackModals.js';
 import { saveFeedbackNote, type FeedbackNote } from '../state/feedbackNotes.js';
 import { rootLogger } from '../logging.js';
+import { promptRefinement, REFINE_SAVE_FAILED_TEXT } from './refinePrompt.js';
 
 /** Shown when the "Other" note modal fails to open; the reason buttons are re-rendered for a retry. */
 const OTHER_FORM_FAILED_MESSAGE =
@@ -138,13 +139,20 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
   const [threadTs, statusMsgTs] = parts;
 
   if (reason.route === 'refine') {
-    // Reuse the exact wording of the existing `refine_assumptions` handler in
-    // app.ts so the refine UX is consistent regardless of entry point.
-    await client.chat.postMessage({
-      channel,
-      thread_ts: threadTs,
-      text: "What should I change about my assumptions? Reply with your corrections and I'll re-run the query.",
-    });
+    // Same prompt as the `refine_assumptions` button, and it remembers which
+    // answer this reason was given on (#51).
+    const prompted = await promptRefinement({ channel, threadTs, statusMsgTs, userId, client });
+    if (!prompted) {
+      // Nothing was set up, so never claim it was. Keep the reason buttons
+      // so a fresh click can retry.
+      await respond({
+        replace_original: true,
+        text: REFINE_SAVE_FAILED_TEXT,
+        blocks: buildFeedbackReasonBlocks(compoundKey, REFINE_SAVE_FAILED_TEXT),
+        thread_ts: threadTs,
+      } as any);
+      return;
+    }
     await respond({ replace_original: true, text: 'Got it — let me know what to change in the thread.', thread_ts: threadTs } as any);
     return;
   }

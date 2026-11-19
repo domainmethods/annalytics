@@ -2,7 +2,7 @@ import type { WebClient } from '@slack/web-api';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
 import type { FollowUpIntent } from '../agents/followUpClassifier.js';
-import { getLatestResponseContext } from '../state/responseContext.js';
+import { getLatestResponseContext, getSlackResponseContext } from '../state/responseContext.js';
 import { handleMetaQuestion } from '../agents/metaQuestionHandler.js';
 import { buildRefinementInput } from '../agents/refinementHandler.js';
 import { generateDiagnosticSql } from '../agents/discrepancyHandler.js';
@@ -23,6 +23,7 @@ export async function routeFollowUp(
   client: WebClient,
   config: PipelineConfig,
   tables: TableContext[],
+  options: { refinementTargetKey?: string } = {},
 ): Promise<void> {
   const traceId = createTraceId();
 
@@ -39,9 +40,20 @@ export async function routeFollowUp(
     }
 
     case 'refinement': {
-      const ctx = await getLatestResponseContext(channel, threadTs);
+      // A refine prompt names the answer to change (#51); without one, refine
+      // the newest answer in the thread.
+      const targetKey = options.refinementTargetKey;
+      const ctx = targetKey
+        ? await getSlackResponseContext(channel, targetKey)
+        : await getLatestResponseContext(channel, threadTs);
       if (!ctx) {
-        await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to refine.' });
+        await client.chat.update({
+          channel,
+          ts: statusMsgTs,
+          text: targetKey
+            ? "I can't find the answer you asked to refine anymore. Ask the question again and I'll start fresh."
+            : 'No previous query to refine.',
+        });
         return;
       }
       const { compositeQuestion, originalQuestion, previousSql } = buildRefinementInput(message, ctx);

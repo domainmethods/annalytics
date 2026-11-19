@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../src/state/responseContext.js');
 vi.mock('../../src/state/escalationState.js');
 vi.mock('../../src/state/feedbackNotes.js');
+vi.mock('../../src/state/refinementTarget.js');
 
 import { getSlackResponseContext } from '../../src/state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../../src/state/escalationState.js';
@@ -19,6 +20,7 @@ import {
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ResponseContext } from '../../src/types.js';
 
+import { saveRefinementTarget } from '../../src/state/refinementTarget.js';
 const mockGetResponseContext = vi.mocked(getSlackResponseContext);
 const mockHasPendingEscalation = vi.mocked(hasPendingEscalation);
 const mockSaveEscalationState = vi.mocked(saveEscalationState);
@@ -231,6 +233,26 @@ describe('handleFeedbackReason', () => {
     // Refine prompt posted publicly in-thread.
     expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
     expect(client.chat.postMessage.mock.calls[0][0].thread_ts).toBe('1700000000.000100');
+    // ...and remembers which answer the reason was given on (#51).
+    expect(vi.mocked(saveRefinementTarget)).toHaveBeenCalledWith({
+      channel: 'C1', threadTs: '1700000000.000100', userId: 'U1', responseKey: compoundKey,
+    });
+  });
+
+  it('never acknowledges a refine that could not be set up (#51)', async () => {
+    vi.mocked(saveRefinementTarget).mockRejectedValueOnce(new Error('firestore down'));
+    const client = makeClient();
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handleFeedbackReason({
+      reasonId: 'not_asked', compoundKey, userId: 'U1', channel: 'C1', client, respond, config: makeConfig(),
+    });
+    // No prompt in the thread, and the reason buttons come back for a retry.
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledTimes(1);
+    const reply = respond.mock.calls[0][0];
+    expect(reply.text).toMatch(/couldn't set up that correction/);
+    expect(reply.text).not.toMatch(/let me know what to change/i);
+    expect(reply.blocks).toBeDefined();
   });
 
   it('threads the refine ack with thread_ts', async () => {

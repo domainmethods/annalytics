@@ -5,8 +5,10 @@ import type { ResponseContext } from '../../src/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
 
 const mockGetLatestResponseContext = vi.fn();
+const mockGetSlackResponseContext = vi.fn();
 vi.mock('../../src/state/responseContext.js', () => ({
   getLatestResponseContext: (...args: unknown[]) => mockGetLatestResponseContext(...args),
+  getSlackResponseContext: (...args: unknown[]) => mockGetSlackResponseContext(...args),
 }));
 
 const mockHandleMetaQuestion = vi.fn();
@@ -132,6 +134,48 @@ describe('routeFollowUp', () => {
         refinementHint: { previousSql: 'SELECT SUM(revenue) FROM fct_orders' },
       }),
     );
+  });
+
+  it('refinement of an older answer uses that answer, not the newest (#51)', async () => {
+    const answerA = { ...baseCtx, statusMsgTs: '1234.5679', generatedSql: 'SELECT a FROM t', clarifiedQuestion: 'Question A' };
+    const answerB = { ...baseCtx, statusMsgTs: '1234.9999', generatedSql: 'SELECT b FROM t', clarifiedQuestion: 'Question B' };
+    mockGetLatestResponseContext.mockResolvedValue(answerB);
+    mockGetSlackResponseContext.mockResolvedValue(answerA);
+    mockBuildRefinementInput.mockImplementation((text: string, ctx: ResponseContext) => ({
+      compositeQuestion: `${ctx.clarifiedQuestion} (Refinement: ${text})`,
+      previousSql: ctx.generatedSql,
+    }));
+    mockRunPipeline.mockResolvedValue(undefined);
+
+    await routeFollowUp(
+      'refinement', 'use net revenue',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+      { refinementTargetKey: '1234.5678_1234.5679' },
+    );
+
+    expect(mockGetSlackResponseContext).toHaveBeenCalledWith('C123', '1234.5678_1234.5679');
+    expect(mockGetLatestResponseContext).not.toHaveBeenCalled();
+    expect(mockRunPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      question: 'Question A (Refinement: use net revenue)',
+      refinementHint: { previousSql: 'SELECT a FROM t' },
+    }));
+  });
+
+  it('says so, instead of refining another answer, when the picked answer is gone (#51)', async () => {
+    mockGetLatestResponseContext.mockResolvedValue(baseCtx);
+    mockGetSlackResponseContext.mockResolvedValue(null);
+
+    await routeFollowUp(
+      'refinement', 'use net revenue',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+      { refinementTargetKey: '1234.5678_1234.5679' },
+    );
+
+    expect(mockRunPipeline).not.toHaveBeenCalled();
+    expect(mockClient.chat.update).toHaveBeenCalledWith(expect.objectContaining({
+      ts: 'status-ts',
+      text: expect.stringContaining("can't find the answer you asked to refine"),
+    }));
   });
 
   it('discrepancy — generates diagnostic SQL, validates, executes, posts findings', async () => {

@@ -25,6 +25,7 @@ import { preflightChecks } from './preflightChecks.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
 import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
+import { finishRefinementTarget, lookupRefinementTarget, REFINE_LOOKUP_FAILED_TEXT } from './refinePrompt.js';
 import { buildThreadContext } from '../slack/threadContext.js';
 import { createTraceId, rootLogger } from '../logging.js';
 import { friendlyErrorMessage } from '../errors.js';
@@ -143,7 +144,23 @@ export async function handleMessageEvent({
     if (!passed) return;
     lockHeld = true;
 
-    const handledByIntake = await maybeHandleSlackIntake({
+    // A reply to a refine prompt is that user's correction to the answer they
+    // picked (#51). Take the target before intake so a short correction can't
+    // get a canned intake reply and leave the target to hijack a later message.
+    const refinementLookup = msg.thread_ts
+      ? await lookupRefinementTarget(msg.channel, threadTs, msg.user)
+      : { status: 'none' as const };
+    if (refinementLookup.status === 'failed') {
+      await client.chat.postMessage({ channel: msg.channel, thread_ts: threadTs, text: REFINE_LOOKUP_FAILED_TEXT });
+      visibleResponse = true;
+      await markSlackEventVisible(eventId).catch(() => {});
+      await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+      lockHeld = false;
+      return;
+    }
+    const refinementTargetKey = refinementLookup.status === 'found' ? refinementLookup.key : null;
+
+    const handledByIntake = !refinementTargetKey && await maybeHandleSlackIntake({
       text: msg.text || '',
       channel: msg.channel,
       threadTs,
@@ -165,6 +182,8 @@ export async function handleMessageEvent({
     });
     visibleResponse = true;
     await markSlackEventVisible(eventId).catch(() => {});
+    // Consume the target only now that the reply is visibly underway (#51).
+    if (refinementTargetKey) await finishRefinementTarget(msg.channel, threadTs, msg.user, refinementTargetKey);
 
     // Follow-up intent routing for thread replies
     if (msg.thread_ts) {
@@ -172,28 +191,34 @@ export async function handleMessageEvent({
       // Once a follow-up route is chosen, its failures must not start an
       // unrelated SQL run (#48).
       let intent: FollowUpIntent = 'new_query';
-      try {
-        const threadMessages = await client.conversations.replies({
-          channel: msg.channel,
-          ts: threadTs,
-          oldest: threadTs,
-        });
-        const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
-          summarizeOlder: true,
-          stripQueryResults: true,
-          maxTokens: 1000,
-        });
-        if (threadContext.length > 0) {
-          ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));
+      // A refine-prompt reply skips classification and refines the picked answer.
+      if (refinementTargetKey) {
+        intent = 'refinement';
+      } else {
+        try {
+          const threadMessages = await client.conversations.replies({
+            channel: msg.channel,
+            ts: threadTs,
+            oldest: threadTs,
+          });
+          const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
+            summarizeOlder: true,
+            stripQueryResults: true,
+            maxTokens: 1000,
+          });
+          if (threadContext.length > 0) {
+            ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));
+          }
+        } catch {
+          // Classification failed — fall through to standard pipeline
         }
-      } catch {
-        // Classification failed — fall through to standard pipeline
       }
       if (intent !== 'new_query') {
         try {
           await routeFollowUp(
             intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
             client, toPipelineConfig(config), getTables(),
+            refinementTargetKey ? { refinementTargetKey } : {},
           );
         } catch (error) {
           const traceId = createTraceId();
