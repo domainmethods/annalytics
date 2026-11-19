@@ -167,7 +167,7 @@ it.each([
   expect(spawn).not.toHaveBeenCalled();
 });
 
-it('passes a compatible Codex schema through unchanged', async () => {
+it('passes the Codex schema through without its $schema dialect', async () => {
   const stdout = readFileSync(new URL('../../fixtures/labeler-output/codex.txt', import.meta.url), 'utf8');
   const spawn = vi.fn<SpawnFn>(async (_cmd, args) => {
     expect(JSON.parse(readFileSync(args[1], 'utf8'))).toStrictEqual(cliSchema);

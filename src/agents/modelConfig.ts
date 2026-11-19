@@ -135,10 +135,11 @@ export function getSupportedThinkingLevels(tier: ModelTier, version: string): Th
 
 /** Sweep candidates, ordered cheapest tier first and stable within a tier. */
 export function listRegisteredModels(): ModelCoordinate[] {
+  // Cheapest first within a tier, so floor-up picks don't depend on insertion order.
   return Object.values(REGISTRY)
     .filter(({ status }) => status !== 'retired')
-    .map(({ tier, version }) => ({ tier, version }))
-    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier]);
+    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.inputPricePerMTok - b.inputPricePerMTok)
+    .map(({ tier, version }) => ({ tier, version }));
 }
 
 export function getRegisteredModel(tier: ModelTier, version: string): RegisteredModel | undefined {
