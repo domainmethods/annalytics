@@ -45,7 +45,7 @@ describe('saveFeedbackNote', () => {
     );
   });
 
-  it('uses traceId as the doc id when present', async () => {
+  it('keys the doc on traceId plus reporter when a traceId is present', async () => {
     await saveFeedbackNote({
       note: 'n',
       userId: 'U1',
@@ -53,7 +53,23 @@ describe('saveFeedbackNote', () => {
       channel: 'C1',
       traceId: 'tr1',
     });
-    expect(mockDoc).toHaveBeenCalledWith('tr1');
+    expect(mockDoc).toHaveBeenCalledWith('tr1_U1');
+    expect(mockSet).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'tr1' }));
+  });
+
+  it('keeps two reporters on one answer as separate notes, and a retry as one (#55)', async () => {
+    const base = { userId: 'U1', threadTs: 'T1', channel: 'C1', traceId: 'tr1' };
+    await saveFeedbackNote({ ...base, note: 'wrong table' });
+    await saveFeedbackNote({ ...base, userId: 'U2', note: 'wrong date range' });
+    await saveFeedbackNote({ ...base, note: 'wrong table' }); // retry by U1
+    const ids = mockDoc.mock.calls.map(c => (c as unknown as string[])[0]);
+    expect(ids).toEqual(['tr1_U1', 'tr1_U2', 'tr1_U1']);
+    expect(mockSet.mock.calls.map(c => (c[0] as { userId: string; traceId: string })))
+      .toEqual([
+        expect.objectContaining({ userId: 'U1', traceId: 'tr1', note: 'wrong table' }),
+        expect.objectContaining({ userId: 'U2', traceId: 'tr1', note: 'wrong date range' }),
+        expect.objectContaining({ userId: 'U1', traceId: 'tr1', note: 'wrong table' }),
+      ]);
   });
 
   it('falls back to channel:threadTs_userId when traceId is absent', async () => {
