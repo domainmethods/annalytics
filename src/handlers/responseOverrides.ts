@@ -8,6 +8,7 @@ import type { OverrideConfig } from '../execution/overrideTypes.js';
 import type { ResponseContext } from '../types.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
 import { generateForNode } from '../agents/modelGateway.js';
+import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
 import { rootLogger } from '../logging.js';
 
 export class ResponseContextNotFoundError extends Error {
@@ -29,6 +30,18 @@ async function loadContext(channel: string, compoundKey: string): Promise<Respon
   const ctx = await getSlackResponseContext(channel, compoundKey);
   if (!ctx) throw new ResponseContextNotFoundError();
   return ctx;
+}
+
+/**
+ * The "data team is verifying this" warning for a best-effort answer, so every
+ * re-render keeps the answer's verification status visible (#47). Slack only
+ * saves a ResponseContext for an exhausted supervisor loop when the answer was
+ * delivered best-effort with an async escalation (otherwise the pipeline aborts
+ * before Stage 7), so the stored verdict identifies those answers, including
+ * ones saved before this fix.
+ */
+function verificationCaveatBlocks(ctx: ResponseContext): KnownBlock[] {
+  return ctx.supervisorVerdict === 'exhausted' ? buildBestEffortCaveatBlocks(ctx.supervisorNotes) : [];
 }
 
 const CONTEXT_UNAVAILABLE_TEXT = 'Response context is unavailable. Please ask the question again.';
@@ -95,6 +108,7 @@ export async function handleTableOverride(
     // message consistent with the original answer's layout.
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     const blocks: KnownBlock[] = [
+      ...verificationCaveatBlocks(ctx),
       ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
       ...buildTableBlocks(displayRows, result.columnNames),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
@@ -130,7 +144,15 @@ export async function handleSummaryOverride(
   try {
     // Load context before replacing the answer with a progress message.
     const ctx = await loadContext(channel, compoundKey);
-    await client.chat.update({ channel, ts: messageTs, text: 'Generating summary...' });
+    const caveat = verificationCaveatBlocks(ctx);
+    await client.chat.update({
+      channel,
+      ts: messageTs,
+      text: 'Generating summary...',
+      ...(caveat.length > 0
+        ? { blocks: [...caveat, { type: 'section', text: { type: 'mrkdwn', text: 'Generating summary...' } } as KnownBlock] }
+        : {}),
+    });
 
     const { result } = await reExecuteSql(ctx, config);
 
@@ -154,6 +176,7 @@ export async function handleSummaryOverride(
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
       const blocks: KnownBlock[] = [
+        ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: summary } } as KnownBlock,
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
@@ -165,6 +188,7 @@ export async function handleSummaryOverride(
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       const blocks: KnownBlock[] = [
+        ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames),
