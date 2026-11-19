@@ -473,3 +473,7 @@ Existing benchmark, node sweep, startup, setup-check, and knowledge validation p
 ### 2026-11-18 - WhatsApp allowlist normalization (#110)
 
 Formatted tester IDs now normalize to digits; invalid entries fail startup naming the variable. All three sender checks share the same normalization. Offline regression tests cover formatted IDs and invalid entries. This repairs the shipped surface; the prototype cap and manual acceptance gate remain in place.
+
+### 2026-11-18 - Final execution validation (#90)
+
+The Slack and WhatsApp pipelines now run the shared L1–L4 validator on the final SQL immediately before execution, including Slack best-effort escalation. Failed validation prevents submission; Slack cost failures retain narrowing guidance. Caller review confirmed discrepancy queries and both format overrides already use that validator, while refinements and escalation resumes enter the shared Slack pipeline. This is maintenance of existing trust controls; WhatsApp's manual acceptance gate and deferred scope remain unchanged. Offline regression tests cover rejection at L3 and L4.

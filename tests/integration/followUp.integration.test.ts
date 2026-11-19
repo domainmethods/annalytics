@@ -333,6 +333,7 @@ describe('Follow-Up Flows — Integration', () => {
     // BigQuery: dry run → execution
     mockCreateQueryJob
       .mockResolvedValueOnce(dryRunResult())
+      .mockResolvedValueOnce(dryRunResult())
       .mockResolvedValueOnce(executionResult([
         { region: 'US', revenue: 3000000 },
         { region: 'EMEA', revenue: 2000000 },
@@ -353,7 +354,7 @@ describe('Follow-Up Flows — Integration', () => {
     expect(mockGenerateContent).toHaveBeenCalledTimes(3);
 
     // 2 BigQuery calls (dry run + execution)
-    expect(mockCreateQueryJob).toHaveBeenCalledTimes(2);
+    expect(mockCreateQueryJob).toHaveBeenCalledTimes(3);
 
     // SQL gen call includes previous SQL as refinement hint in system prompt
     const sqlGenCall = mockGenerateContent.mock.calls[1][0];
