@@ -1,3 +1,4 @@
+import { matchesRelation } from '../dbt/relationMatching.js';
 import { readFile } from 'node:fs/promises';
 import { resolveDbtArtifactPath } from '../dbt/artifactPaths.js';
 import type { Teaching } from './types.js';
@@ -36,7 +37,7 @@ export function validateTeachingIntegrity(
 
     if (options.validTableNames) {
       for (const model of teaching.models_referenced) {
-        if (!options.validTableNames.has(model)) {
+        if (!matchesRelation(model, options.validTableNames)) {
           errors.push(`Teaching ${teaching.id} references unknown model/table: ${model}`);
         }
       }

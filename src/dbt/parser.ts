@@ -233,9 +233,10 @@ export function parseDbtArtifacts(
     const columns = withinCap ? [...documented, ...undocumented] : documented;
     const omittedColumnCount = withinCap ? 0 : undocumented.length;
     const relation = stringValue(node.relation_name).replace(/`/g, '').split('.');
-    const schema = stringValue(node.schema) || relation.at(-2) || '';
-    const name = stringValue(node.alias) || relation.at(-1) || stringValue(node.name, nodeId);
-    const database = stringValue(node.database) || (relation.length === 3 ? relation[0] : '');
+    const hasRelation = Boolean(stringValue(node.relation_name));
+    const schema = (hasRelation ? relation.at(-2) : stringValue(node.schema)) || '';
+    const name = (hasRelation ? relation.at(-1) : stringValue(node.alias)) || stringValue(node.name, nodeId);
+    const database = hasRelation ? (relation.length === 3 ? relation[0] : '') : stringValue(node.database);
     const qualifiedSchema = database ? `${database}.${schema}` : schema;
 
     const table: TableContext = {

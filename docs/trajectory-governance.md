@@ -498,3 +498,5 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Correct existing schema and sampling inputs to use dbt database/schema/alias or relation_name. Ephemeral nodes are excluded from queryable schema; dependency node IDs remain intact for lineage.
 - INFORMATION_SCHEMA contexts retain project qualification. ReferenceCard and benchmark inputs inherit physical names from the parser; no new evaluation machinery or product tranche is introduced.
 - Synthetic offline regressions cover aliased cross-project relations and ephemeral exclusion. Deployment and production acceptance remain outside this change.
+
+PR #114 review repair: shared unambiguous relation matching preserves legacy ReferenceCard, teaching, feedback attribution and benchmark expectations. Complete normalized relation_name takes precedence over component metadata. Synthetic offline regressions cover qualification ambiguity and quoted/conflicting relations; no cloud resources or client evidence are involved.

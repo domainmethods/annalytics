@@ -1,3 +1,4 @@
+import { matchesRelation } from '../src/dbt/relationMatching.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -524,7 +525,7 @@ export function tableSelectionPassed(
 ): boolean | null {
   if (!expectedTables || expectedTables.length === 0) return null;
   const observed = new Set(observedTables.map(table => table.toLowerCase()));
-  return expectedTables.every(table => observed.has(table.toLowerCase()));
+  return expectedTables.every(table => matchesRelation(table, observed));
 }
 
 export function sqlShapePassed(

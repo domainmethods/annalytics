@@ -1,3 +1,4 @@
+import { matchesRelation } from '../dbt/relationMatching.js';
 export interface DomainMapEntry {
   /** A canonical table from a ReferenceCard, e.g. 'analytics.fct_orders'. */
   table: string;
@@ -29,7 +30,7 @@ export function resolveDomain(tablesUsed: string[], domainMap: DomainMapEntry[])
   if (tablesUsed.length === 0) return 'unclassified';
   for (const t of tablesUsed) {
     const clean = normalizeTable(t);
-    const hit = domainMap.find((e) => normalizeTable(e.table) === clean);
+    const hit = domainMap.find((e) => matchesRelation(e.table, tablesUsed) && (normalizeTable(e.table) === clean || clean.endsWith(`.${normalizeTable(e.table)}`) || normalizeTable(e.table).endsWith(`.${clean}`)));
     if (hit) return hit.domain;
   }
   return tableFallbackTag(normalizeTable(tablesUsed[0]));

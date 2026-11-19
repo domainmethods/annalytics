@@ -21,3 +21,10 @@ it('uses relation_name when physical components are absent', () => {
   const [table] = parseDbtArtifacts({ nodes: { x: { resource_type: 'model', name: 'logical', relation_name: '`synthetic-project.analytics.physical`' } } }, {});
   expect(table.name).toBe('synthetic-project.analytics.physical');
 });
+
+it.each(['proj.ds.tbl', '`proj`.`ds`.`tbl`', '`proj.ds.tbl`'])('prioritizes complete relation %s', relation_name => {
+  const [table] = parseDbtArtifacts({ nodes: { x: { resource_type: 'model', name: 'logical', database: 'wrong', schema: 'wrong', alias: 'wrong', relation_name } } }, {});
+  expect(table.name).toBe('proj.ds.tbl');
+  expect(table.schema).toBe('ds');
+  expect(table.sampleDDL).toContain('`proj.ds.tbl`');
+});
