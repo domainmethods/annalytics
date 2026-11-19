@@ -120,7 +120,7 @@ const dotTrivia = `(?:[\\s]|(?:${sqlComment.source}))*`;
 const separator = `${dotTrivia}\\.${dotTrivia}`;
 const quotedName = /`[\w.*-]+`/.source;
 const identifier = /[a-z_](?:[\w-]*\w)?/.source;
-const tableSegment = `(?:${quotedName}|[\\w*](?:[\\w*-]*[\\w*])?)`;
+const tableSegment = `(?:${quotedName}|[\\w*]+)`;
 const name = `(?:${quotedName}|${identifier})`;
 const sqlName = `(?:${quotedName}|[a-z_](?:\\w|-(?!-))*)`;
 const sqlTableSegment = `(?:${quotedName}|[\\w*](?:[\\w*]|-(?!-))*)`;
@@ -136,12 +136,14 @@ function normalizeTablePath(path: string, onComment?: (content: string) => void)
   });
 }
 
+function collectCommentTables(comment: string, tables: Set<string>): void {
+  collectTextTables(comment, tables);
+  if (/\b(?:FROM|JOIN)\b/i.test(comment)) collectSqlTables(comment, tables);
+}
+
 function collectTextTables(text: string, tables: Set<string>): void {
   for (const [path] of text.matchAll(textTablePath)) {
-    const reference = normalizeTablePath(path, (comment) => {
-      collectTextTables(comment, tables);
-      if (/\b(?:FROM|JOIN)\b/i.test(comment)) collectSqlTables(comment, tables);
-    });
+    const reference = normalizeTablePath(path, (comment) => collectCommentTables(comment, tables));
     const count = reference.split('.').length;
     if (count >= 3) {
       // A period followed by whitespace also ends an abbreviation or a sentence.
@@ -194,10 +196,10 @@ function collectSqlTables(text: string, tables: Set<string>): void {
     } else if (/^JOIN$/i.test(token) || (token === ',' && fromLists[depth])) {
       expectsTable = true;
       continue;
-    } else if (expectsTable) {
-      if (/^(?:SELECT|WITH)$/i.test(token)) fromLists[depth] = false;
-      const reference = normalizeTablePath(token);
-      if (reference.includes('.')) tables.add(reference);
+    } else if (expectsTable || token.includes('--') || token.includes('/*')) {
+      if (expectsTable && /^(?:SELECT|WITH)$/i.test(token)) fromLists[depth] = false;
+      const reference = normalizeTablePath(token, (comment) => collectCommentTables(comment, tables));
+      if (expectsTable && reference.includes('.')) tables.add(reference);
     }
     expectsTable = false;
   }

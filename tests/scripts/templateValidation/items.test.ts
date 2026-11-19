@@ -58,6 +58,10 @@ it.each([
   ['FROM private_dataset./* note */customers', 'private_dataset.customers'],
   ['Use tv_thelook./* acme.analytics.orders */orders', 'acme.analytics.orders'],
   ['Use tv_thelook./* FROM private_dataset.customers */orders', 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'SELECT * FROM tv_thelook.\n-- FROM private_dataset.customers\norders' }), 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'SELECT * FROM tv_thelook.\n/* FROM private_dataset.customers */\norders' }), 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'SELECT a.\n-- FROM private_dataset.customers\nb' }), 'private_dataset.customers'],
+  [JSON.stringify({ sql: 'SELECT a.\n/* FROM private_dataset.customers */\nb' }), 'private_dataset.customers'],
   ['Use acme.analytics.2020', 'acme.analytics.2020'],
   ['FROM tv_thelook.orders--note: WHERE clause follows later\n, private_dataset.customers', 'private_dataset.customers'],
   ['FROM tv_thelook.orders o, tv_thelook.users u LEFT JOIN private_dataset.customers c ON c.id = u.id', 'private_dataset.customers'],
@@ -87,6 +91,10 @@ it.each([
   'Check orders. `revenue` is up.',
 ])('allows ordinary prose and Markdown in %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
+});
+
+it('allows subtraction between qualified columns', () => {
+  expect(scanTemplateSafety('SELECT o.gross-o.net, o.delivered_at-o.created_at FROM tv_thelook.orders o')).toEqual([]);
 });
 
 it.each(['o', 'AS o'])('flags a three-part path through an alias declared with %s', (alias) => {
