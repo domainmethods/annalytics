@@ -49,6 +49,7 @@ function encodeNested(value: unknown): unknown {
   const scalar = normalizeScalar(value);
   if (typeof scalar === 'number' && !Number.isFinite(scalar)) return ['number', String(scalar)];
   if (scalar !== undefined) return scalar;
+  if (value instanceof Uint8Array) return ['bytes', Buffer.from(value).toString('base64')];
   if (Array.isArray(value)) return ['array', value.map(encodeNested)];
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>;

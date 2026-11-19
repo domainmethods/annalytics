@@ -143,6 +143,21 @@ describe('resultsEquivalent', () => {
     expect(resultsEquivalent(singleValue(date), singleValue({ value: date.value }), unordered)).toBe(false);
   });
 
+  it.each([false, true])('distinguishes BYTES from a numeric-key record (ordered=%s)', ordered => {
+    expect(resultsEquivalent(singleValue(Buffer.from([65])), singleValue({ '0': 65 }), { ordered })).toBe(false);
+  });
+
+  it.each([
+    [Buffer.from([0, 65, 255]), Buffer.from([0, 65, 255]), true],
+    [Buffer.from([0, 65, 255]), Buffer.from([0, 65, 254]), false],
+    [Buffer.from([65]), 'QQ==', false],
+    [Buffer.from([65]), Uint8Array.of(0, 65, 255).subarray(1, 2), true],
+    [[{ bytes: Buffer.from([65]) }], [{ bytes: Uint8Array.of(65) }], true],
+    [[{ bytes: Buffer.from([65]) }], [{ bytes: { '0': 65 } }], false],
+  ])('compares BYTES %o against %o as %s', (ref, cand, equivalent) => {
+    expect(resultsEquivalent(singleValue(ref), singleValue(cand), unordered)).toBe(equivalent);
+  });
+
   it('trims recognized numeric wrapper text for parsing and preserves other text', () => {
     class Big {
       constructor(private readonly text: string) {}
