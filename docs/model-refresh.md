@@ -6,12 +6,14 @@ Use the frozen set in `benchmarks/template-validation/` to review template defau
 
    The sweep measures only models in that registry, so a newly offered model is a candidate only after you add its entry here.
 
-   Resolve every `TODO(price)` in the model registry before the live refresh. Stage 1 uses those rates to break ties.
+   Before the live refresh, check every registry price against the pricing page and resolve any `TODO(price)`. Stage 1 uses those rates to break ties. Some entries use rates that take effect later, as their comments note, so a report's cost columns can differ from current billing.
 2. Run `npm run tv:setup` on the first run and when using a new machine or project. It creates the `tv_thelook` views over `bigquery-public-data.thelook_ecommerce` and generates the template dbt artifacts.
 
    On the first run from the seed-only checkout, run `npm run tv:label` after setup to build the initial set. Use authenticated local agent CLIs and a BigQuery labeling principal with job creation permission and data access scoped to the template views and the public TheLook dataset. Labels require unanimous agreement. The default is three distinct families. Two produce a reduced quorum, and one requires `npm run tv:label -- --allow-single-family`. Multiple CLIs from the same family count once.
 
-   Each labeler runs in a temporary working directory with an allowlist of shell and CLI login variables. It still runs as the operator, with access to its home directory and any tools its CLI permits. The probe notes in `provenance.json` record that access. For example, Antigravity wrote outside the working directory in its probe, and Codex called MCP discovery tools. After each label run, check the paths listed in those notes for stray artifacts and delete them.
+   Before labeling, check that each `model` in `benchmarks/template-validation/labelers.json` is still current for its CLI. The availability check runs only `--version`, so a retired model ID fails on the first batch, not in preflight. Pilot one node first with `npm run tv:label -- --node slackIntake`. Each batch has 20 minutes, and a failed call reports the end of the CLI's stderr. A failed call stops the run. Rerun the same command to resume: finished batches come from the cache.
+
+   Each labeler runs in a temporary working directory with an allowlist of shell and CLI login variables. It still runs as the operator, with access to its home directory and any tools its CLI permits. The probe notes in `provenance.json` record that access. For example, Antigravity wrote outside the working directory in its probe, and Codex called MCP discovery tools. After each label run, check the paths listed in those notes for stray artifacts and delete them. A timed-out labeler is killed with SIGKILL, so also check for CLI subprocesses it left running, such as MCP servers.
 
    A full label run freezes all 12 nodes. A `tv:label -- --node <node>` run saves drafts and provenance under the ignored, version-scoped cache. Sweeps verify the selected item files against the SHA-256 digests in the root provenance for the current `VERSION`. Later refreshes reuse that frozen set. Bump `VERSION` and relabel all nodes if an older frozen set lacks digests.
 

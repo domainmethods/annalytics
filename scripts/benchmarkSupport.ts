@@ -253,6 +253,8 @@ function scrubLiteralsAndComments(sql: string): string {
 }
 
 const qualifiedCall = new RegExp(String.raw`(${namePart}(?:\s*\.\s*${namePart})*)\s*\(`, 'gi');
+// Fails closed: an unlisted builtin namespace (such as AEAD or KEYS) reads as a dataset
+// routine call and rejects otherwise valid SQL. Add a namespace here when that happens.
 const builtinCallNamespaces = new Set(['AI', 'HLL_COUNT', 'KLL_QUANTILES', 'ML', 'NET', 'SAFE']);
 
 export function hasDatasetRoutineCall(sql: string): boolean {

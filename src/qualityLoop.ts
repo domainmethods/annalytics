@@ -29,6 +29,7 @@ export interface QualityResult {
 export interface StatusCallbacks {
   onGenerate?: () => void | Promise<void>;
   onValidate?: () => void | Promise<void>;
+  /** Replaces L1–L3 validation for each attempt. Defaults to `runCoreValidation`. */
   validateAttempt?: typeof runCoreValidation;
   onReview?: () => void | Promise<void>;
   onRetry?: (attempt: number) => void | Promise<void>;

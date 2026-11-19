@@ -1,7 +1,8 @@
 import type { ValidationResult } from '../types.js';
 import { staticAnalysis } from './staticAnalysis.js';
 import { astValidation } from './astValidation.js';
-import { dryRunValidation, type QueryRelationMetadata } from './dryRun.js';
+import { dryRunValidation } from './dryRun.js';
+import { pickRelationMetadata, type QueryRelationMetadata } from './relationMetadata.js';
 
 /**
  * One record per validation layer attempt. Shared by every path that keeps a
@@ -91,8 +92,6 @@ export async function runCoreValidation(
     blocked: null,
     bytesProcessed: l3.bytesProcessed ?? 0,
     rawBytesProcessed: l3.bytesProcessed,
-    ...(l3.referencedTables && { referencedTables: l3.referencedTables }),
-    ...(l3.referencedLogicalViews && { referencedLogicalViews: l3.referencedLogicalViews }),
-    ...(l3.referencedRoutines && { referencedRoutines: l3.referencedRoutines }),
+    ...pickRelationMetadata(l3),
   };
 }

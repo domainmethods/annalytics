@@ -1,6 +1,7 @@
 import type { DryRunValidationResult } from './dryRun.js';
 import { costGate } from './costGate.js';
 import { runCoreValidation } from './core.js';
+import { pickRelationMetadata } from './relationMetadata.js';
 
 export async function validateSql(sql: string, maxBytes: number): Promise<DryRunValidationResult> {
   // L1 static → L2 AST (advisory) → L3 dry run
@@ -13,10 +14,5 @@ export async function validateSql(sql: string, maxBytes: number): Promise<DryRun
   if (!l4.valid) return l4;
 
   // All valid
-  return {
-    valid: true, layer: 'all', bytesProcessed: bytes,
-    ...(core.referencedTables && { referencedTables: core.referencedTables }),
-    ...(core.referencedLogicalViews && { referencedLogicalViews: core.referencedLogicalViews }),
-    ...(core.referencedRoutines && { referencedRoutines: core.referencedRoutines }),
-  };
+  return { valid: true, layer: 'all', bytesProcessed: bytes, ...pickRelationMetadata(core) };
 }

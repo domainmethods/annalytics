@@ -61,7 +61,7 @@ now separates the axes:
   (`pickWithinEpsilon`, `'latency'`, 5% latency band). ~10 evals/node total.
 
 `universal-sweep.ts` (judge-free classifiers) got the same coverage fix: `buildModelLadder()`
-enumerates non-retired models via `listRegisteredModels()` at a fixed `minimal` anchor, then floor-up
+enumerates non-retired models via `listRegisteredModels()` at a fixed `minimal` anchor (or `default` where the model lacks `minimal`), then floor-up
 picks the cheapest that clears exact-match accuracy.
 
 **Residual caveat (documented, accepted):** this is greedy coordinate descent, not a full

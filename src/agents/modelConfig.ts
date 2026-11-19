@@ -26,6 +26,8 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
  *  raw id — the form every sizing sweep and nodeProfiles override speaks. */
 export interface ModelCoordinate { tier: ModelTier; version: string; }
 
+/** Only `retired` is enforced: it leaves sweeps but still resolves. `candidate` and
+ *  `default-eligible` are labels; a sweep can recommend either as a default. */
 export type ModelStatus = 'candidate' | 'default-eligible' | 'retired';
 
 export interface RegisteredModel {
@@ -59,17 +61,48 @@ const REGISTRY: Record<string, RegisteredModel> = {
     outputPricePerMTok: 3.00,
     status: 'default-eligible',
   },
+  // No 2027 rate change is announced for this model, so this rate is also its 2027 rate.
+  'flash-lite/3.5': {
+    tier: 'flash-lite',
+    version: '3.5',
+    id: 'gemini-3.5-flash-lite',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 0.30,
+    outputPricePerMTok: 2.50,
+    status: 'candidate',
+  },
+  // Google routes this ID to gemini-3.6-flash, so it duplicates flash/3.6 and is not
+  // swept separately. Priced as flash/3.6.
+  // https://aistudio.google.com/docs/deprecations#gemini-3-models
   'flash/3.5': {
     tier: 'flash',
     version: '3.5',
     id: 'gemini-3.5-flash',
     thinkingLevels: ['minimal', 'low', 'medium', 'high'],
-    // TODO(price): verify billing for this ID, which Google routes to Gemini 3.6 Flash.
-    // These Gemini 3.6 Flash rates apply through 2026-12-31.
-    // https://aistudio.google.com/docs/deprecations#gemini-3-models
-    inputPricePerMTok: 0.75,
-    outputPricePerMTok: 3.75,
-    status: 'default-eligible',
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'retired',
+  },
+  // Gemini 3.6 and 3.8 Flash are $0.75/$3.75 through 2026-12-31. These are the rates
+  // from 2027-01-01, the ones a default chosen now will be billed at.
+  // gemini-3.7-flash is not registered: Google routes it to gemini-3.8-flash.
+  'flash/3.6': {
+    tier: 'flash',
+    version: '3.6',
+    id: 'gemini-3.6-flash',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'candidate',
+  },
+  'flash/3.8': {
+    tier: 'flash',
+    version: '3.8',
+    id: 'gemini-3.8-flash',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'candidate',
   },
   'pro/3.1': {
     tier: 'pro',
@@ -84,7 +117,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
 
 // Cheapest tier first, so a floor-up sweep that walks this list left-to-right meets
 // the cheapest models before the expensive ones. Tier is the dominant cost lever
-// (flash-lite ≪ flash ≪ pro); version order within a tier follows the map.
+// (flash-lite ≪ flash ≪ pro); within a tier, models sort by input price.
 const TIER_RANK: Record<ModelTier, number> = { 'flash-lite': 0, 'flash': 1, 'pro': 2 };
 
 /**
@@ -100,12 +133,12 @@ export function getSupportedThinkingLevels(tier: ModelTier, version: string): Th
   return [...(REGISTRY[`${tier}/${version}`]?.thinkingLevels ?? [])];
 }
 
-/** Sweep candidates, ordered cheapest tier first and stable within a tier. */
+/** Sweep candidates: cheapest tier first, then cheapest input price within a tier (ties keep registry order). */
 export function listRegisteredModels(): ModelCoordinate[] {
   return Object.values(REGISTRY)
     .filter(({ status }) => status !== 'retired')
-    .map(({ tier, version }) => ({ tier, version }))
-    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier]);
+    .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.inputPricePerMTok - b.inputPricePerMTok)
+    .map(({ tier, version }) => ({ tier, version }));
 }
 
 export function getRegisteredModel(tier: ModelTier, version: string): RegisteredModel | undefined {

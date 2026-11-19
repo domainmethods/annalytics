@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { listRegisteredModels } from '../src/agents/modelConfig.js';
+import { getSupportedThinkingLevels, listRegisteredModels } from '../src/agents/modelConfig.js';
 import type { ThinkingLevel } from '../src/agents/nodeProfiles.js';
 import { classifySlackIntake } from '../src/agents/slackIntakeAgent.js';
 import { classifyFollowUp } from '../src/agents/followUpClassifier.js';
@@ -61,14 +61,16 @@ export const UNIVERSAL_ANCHOR: ThinkingLevel = 'minimal';
  * not a hand-authored subset, so coverage can't silently drop a model) at the fixed
  * thinking anchor. listRegisteredModels() is already ordered cheapest-tier-first, which
  * is exactly the ordering pickFloorUp requires ("cheapest that passes" = "first that
- * passes"). One axis varies — the model — so a pick is attributable to the model alone.
+ * passes"). Only the model varies, except that models without the anchor also change thinking.
+ * A model that lacks the anchor level (pro/3.1, flash/3.8) runs at `default`, the level
+ * the runtime guard would substitute, so the report names the coordinate that ran.
  */
 export function buildModelLadder(): ModelRung[] {
   return listRegisteredModels().map((m) => ({
     rung: `${m.tier}/${m.version}`,
     tier: m.tier,
     version: m.version,
-    thinkingLevel: UNIVERSAL_ANCHOR,
+    thinkingLevel: getSupportedThinkingLevels(m.tier, m.version).includes(UNIVERSAL_ANCHOR) ? UNIVERSAL_ANCHOR : 'default',
   }));
 }
 
@@ -244,7 +246,7 @@ async function main(): Promise<void> {
   const runDate = new Date().toISOString().slice(0, 10);
 
   console.log(`Universal-node sweep: ${runDate}`);
-  console.log(`Models (@thinking=${UNIVERSAL_ANCHOR}): ${ladder.map((r) => r.rung).join(', ')}`);
+  console.log(`Models: ${ladder.map((r) => `${r.rung}@${r.thinkingLevel}`).join(', ')}`);
   console.log(
     `Corpus: slackIntake=${corpus.slackIntake.length}, followUpClassifier=${corpus.followUpClassifier.length}\n`,
   );
