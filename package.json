@@ -21,6 +21,7 @@
     "lint:fix": "eslint --fix src/ tests/ scripts/",
     "promote": "tsx scripts/promote-teachings.ts",
     "node-sweep": "tsx scripts/node-sweep.ts",
+    "model:discover": "tsx --env-file=.env scripts/model-discover.ts",
     "prepare": "husky"
   },
   "lint-staged": {

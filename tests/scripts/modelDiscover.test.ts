@@ -1,0 +1,65 @@
+import { expect, test } from 'vitest';
+import type { RegisteredModel } from '../../src/agents/modelConfig.js';
+import { diffModels, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from '../../scripts/model-discover-core.js';
+
+test('isTextGenerationModel excludes non-text and aliases', () => {
+  const excluded = [
+    'gemini-3-pro-image',
+    'gemini-3.8-flash-tts',
+    'gemini-3.5-transcribe',
+    'gemini-2.5-computer-use-preview-10-2025',
+    'gemini-robotics-er-2-preview',
+    'gemini-nano-banana-2.1',
+    'gemini-omni-1.2-flash',
+    'gemini-3.1-pro-preview-customtools',
+    'gemini-flash-latest',
+  ];
+  for (const id of excluded) expect(isTextGenerationModel(id), id).toBe(false);
+  for (const id of ['gemini-3.8-flash', 'gemini-4-neon', 'gemini-3.5-flash-lite']) {
+    expect(isTextGenerationModel(id), id).toBe(true);
+  }
+});
+
+test('diffModels flags missing models referenced by defaults', () => {
+  const registered: RegisteredModel = {
+    tier: 'flash',
+    version: '3',
+    id: 'gemini-3-flash-preview',
+    thinkingLevels: ['low'],
+    inputPricePerMTok: 0.50,
+    outputPricePerMTok: 3.00,
+    status: 'default-eligible',
+  };
+  const retired = { ...registered, id: 'gemini-2.0-flash', status: 'retired' } as const;
+  expect(diffModels(['gemini-3.8-flash', retired.id], [registered, retired], new Map([
+    ['dbtStatus', registered.id],
+  ]))).toEqual({
+    added: ['gemini-3.8-flash'],
+    missing: [{ id: 'gemini-3-flash-preview', usedByDefaults: ['dbtStatus'] }],
+    unchanged: [retired.id],
+  });
+});
+
+test('probeThinkingLevels records rejected levels', async () => {
+  const id = 'gemini-3.8-flash';
+  const attempts: [string, string][] = [];
+  const levels = await probeThinkingLevels(id, async (model, level) => {
+    attempts.push([model, level]);
+    if (level === 'minimal') throw new Error('unsupported');
+  });
+
+  expect(attempts).toEqual(['minimal', 'low', 'medium', 'high'].map(level => [id, level]));
+  expect(levels).toEqual(['low', 'medium', 'high']);
+});
+
+test('formatRegistryStub emits a candidate entry with TODO placeholders', () => {
+  expect(formatRegistryStub('gemini-4-neon', ['low', 'high'])).toBe(`  'tier/version': { // TODO
+    tier: 'flash', // TODO
+    version: 'version', // TODO
+    id: 'gemini-4-neon',
+    thinkingLevels: ['low', 'high'],
+    inputPricePerMTok: 0, // TODO
+    outputPricePerMTok: 0, // TODO
+    status: 'candidate',
+  },`);
+});
