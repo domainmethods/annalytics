@@ -1,3 +1,5 @@
+import { registerDbtRunIngestion } from '../../src/handlers/dbtRunIngestion.js';
+import type { Router, Request, Response } from 'express';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   saveDbtRunResults,
@@ -206,6 +208,47 @@ describe('dbtRunHistory', () => {
       expect(results.every(r => r.status === 'error')).toBe(true);
       expect(results[0].errorMessage).toBe('Column not found');
     });
+  });
+
+  it.each(['success', 'error', 'skipped', 'warn', 'no-op', 'reused', 'unknown', undefined])(
+    'reads stored status %s safely', async (status) => {
+      mockGet.mockResolvedValue({ empty: false, docs: [{ data: () => ({
+        model: 'orders', status, executionTime: 1, runId: 'synthetic',
+        runStartedAt: new Date(),
+      }) }] });
+      const entries = await getRunHistoryForModel('orders');
+      expect(entries[0].status).toBe(
+        ['success', 'skipped', 'warn', 'no-op', 'reused'].includes(status as string) ? status : 'error',
+      );
+    },
+  );
+
+  it('returns ingested partial-success and runtime-error results in the failure query', async () => {
+    let handler!: (req: Request, res: Response) => Promise<void>;
+    registerDbtRunIngestion({ post: (_path: string, callback: typeof handler) => {
+      handler = callback;
+    } } as unknown as Router, 'synthetic-secret');
+    await handler({
+      headers: { authorization: 'Bearer synthetic-secret' },
+      body: {
+        metadata: { generated_at: new Date().toISOString(), invocation_id: 'synthetic' },
+        results: ['partial success', 'runtime error', 'warn', 'skipped', 'no-op', 'reused'].map((status, i) => ({
+          unique_id: 'model.example.result_' + i, status, execution_time: 1,
+        })),
+      },
+    } as unknown as Request, { status: () => ({ json: vi.fn() }) } as unknown as Response);
+    mockWhere.mockImplementation((field, operator, value) => {
+      if (field === 'status') expect([operator, value]).toEqual(['==', 'error']);
+      return chainable();
+    });
+    mockGet.mockImplementation(async () => ({
+      empty: false,
+      docs: mockBatchSet.mock.calls.map(call => call[1])
+        .filter(entry => entry.status === 'error')
+        .map(entry => ({ data: () => entry })),
+    }));
+    const failures = await getRecentFailures();
+    expect(failures.map(entry => entry.model)).toEqual(['result_0', 'result_1']);
   });
 
   describe('empty results', () => {
