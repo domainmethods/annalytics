@@ -84,7 +84,29 @@ function loadResponseContext(name: string): ResponseContext {
   return { ...fixture, createdAt: new Date(fixture.createdAt), groundingCitations: [] };
 }
 
-type ItemEvidence = Pick<PerEntry, 'failure' | 'exhausted'>;
+class TemplateProviderAbort extends Error {
+  constructor(readonly status: number | string) {
+    super(`Template sweep stopped after a transient model provider failure (${status})`);
+  }
+}
+
+const transientHttpStatus = new Set([408, 429, 500, 502, 503, 504]);
+const transientTransport = new Set([
+  'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'TimeoutError', 'AbortError',
+]);
+
+function transientProviderFailure(error: unknown): TemplateProviderAbort | undefined {
+  if (!error || typeof error !== 'object') return;
+  const { status, code, name, cause } = error as { status?: unknown; code?: unknown; name?: unknown; cause?: { code?: unknown } };
+  for (const value of [status, code, name, cause?.code]) {
+    if (typeof value !== 'number' && typeof value !== 'string') continue;
+    if (transientHttpStatus.has(Number(value))) return new TemplateProviderAbort(Number(value));
+    if (typeof value === 'string' && transientTransport.has(value)) return new TemplateProviderAbort(value);
+  }
+}
+
+type ItemEvidence = Pick<PerEntry, 'failure' | 'exhausted'> & { providerAbort?: TemplateProviderAbort };
 type Scorers = { [N in NodeId]: (item: Item<N>, env: TemplateEnv, evidence: ItemEvidence) => Promise<number> };
 
 async function executeScoredSql(
@@ -107,6 +129,7 @@ async function executeScoredSql(
 const templateScorers: Scorers = {
   async slackIntake(item, { apiKey }, evidence) {
     const result = await classifySlackIntake(item.text, apiKey, { onFallback: ({ reason }) => {
+      if (reason === 'timeout') evidence.providerAbort ??= new TemplateProviderAbort(408);
       evidence.failure ??= reason === 'timeout' || reason === 'model_error'
         ? { category: 'provider', code: 'model-request' }
         : { category: 'candidate', code: 'classifier-fallback' };
@@ -210,21 +233,25 @@ export function createTemplateRunner<N extends NodeId>(
     for (const item of parsed) {
       const evidence: ItemEvidence = {};
       const itemEnv: TemplateEnv = { ...env, async judge(text, fact) {
+        if (evidence.providerAbort) return false;
         try {
           return await env.judge(text, fact);
-        } catch {
+        } catch (error) {
+          evidence.providerAbort ??= transientProviderFailure(error);
           evidence.failure ??= { category: 'provider', code: 'judge-request' };
           return false;
         }
       } };
       let score = 0;
       try {
-        score = await withUsageSink(recordUsage, () => templateScorers[node](item, itemEnv, evidence), () => {
+        score = await withUsageSink(recordUsage, () => templateScorers[node](item, itemEnv, evidence), error => {
+          evidence.providerAbort ??= transientProviderFailure(error);
           evidence.failure ??= { category: 'provider', code: 'model-request' };
         });
       } catch {
         evidence.failure ??= { category: 'candidate', code: 'agent-output' };
       }
+      if (evidence.providerAbort) throw evidence.providerAbort;
       if (evidence.failure) score = 0;
       perEntry.push({
         id: item.id, clarificationPassed: node === 'clarification' && score === 1,

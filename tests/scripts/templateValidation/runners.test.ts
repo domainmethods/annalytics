@@ -271,3 +271,13 @@ it('reverts the supervisor when the paired SQL metric drops more than epsilon an
   expect(await verifyCrossPass(run, picks, 0.85, 0.05)).toMatchObject({ revertSupervisor: false, metric: 0.8 });
   expect(process.env.NODE_PROFILE_OVERRIDES).toBe(original);
 });
+
+it('aborts on a terminal judge error without making requests for the next item', async () => {
+  generateContent.mockResolvedValueOnce({ text: 'There was 1 order.' })
+    .mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 504 }));
+  const env = await loadTemplateEnv('test');
+  const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
+  await expect(createTemplateRunner('summaryOverride', [item, { ...item, id: 'next' }], env)())
+    .rejects.toMatchObject({ status: 504 });
+  expect(generateContent).toHaveBeenCalledTimes(2);
+});

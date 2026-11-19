@@ -11,7 +11,7 @@ export interface UsageRecord {
 }
 type UsageSink = (r: UsageRecord) => void;
 
-const sinkStore = new AsyncLocalStorage<{ usage: UsageSink; onModelError?: () => void }>();
+const sinkStore = new AsyncLocalStorage<{ usage: UsageSink; onModelError?: (error: unknown) => void }>();
 
 let defaultSink: UsageSink | undefined;
 
@@ -23,7 +23,7 @@ export function setDefaultUsageSink(sink: UsageSink | undefined): void {
   defaultSink = sink;
 }
 
-export async function withUsageSink<T>(sink: UsageSink, fn: () => Promise<T>, onModelError?: () => void): Promise<T> {
+export async function withUsageSink<T>(sink: UsageSink, fn: () => Promise<T>, onModelError?: (error: unknown) => void): Promise<T> {
   return sinkStore.run({ usage: sink, onModelError }, fn);
 }
 
@@ -76,7 +76,7 @@ export async function generateForNode(
     res = await ai.models.generateContent({ ...request, model, config } as GenReq);
   } catch (error) {
     try {
-      sinkStore.getStore()?.onModelError?.();
+      sinkStore.getStore()?.onModelError?.(error);
     } catch {
       // A telemetry failure must preserve the original model error.
     }

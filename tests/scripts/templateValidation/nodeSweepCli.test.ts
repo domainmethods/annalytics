@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -7,6 +7,8 @@ import { hashItemInput, loadItems } from '../../../scripts/template-validation/i
 import { createTemplateRunner, loadTemplateEnv } from '../../../scripts/template-validation/runners.js';
 import { defaultProfileForNode } from '../../../src/agents/nodeProfiles.js';
 
+const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
+vi.mock('@google/genai', () => ({ GoogleGenAI: class { models = { generateContent }; } }));
 vi.mock('node:fs/promises', { spy: true });
 vi.mock('../../../scripts/template-validation/items.js', async importOriginal => ({
   ...await importOriginal<typeof import('../../../scripts/template-validation/items.js')>(),
@@ -177,3 +179,53 @@ it.each(['seed only', 'no node provenance', 'stale node digest'] as const)(
     }
   },
 );
+
+it.each([
+  { status: 429, failedCall: 1, phase: 'calibration', previous: undefined },
+  { status: 429, failedCall: 5, phase: 'stage 1', previous: '' },
+  { status: 503, failedCall: 5, phase: 'stage 1', previous: '' },
+])('aborts an SDK $status in $phase before another request or report write', async ({ status, failedCall, previous }) => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-key');
+  vi.stubEnv('NODE_PROFILE_OVERRIDES', previous);
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const node = 'slackIntake';
+  const items = ['Count the orders.', 'Count the users.'].map((text, i) => ({
+    id: String(i), category: 'simple', inputHash: hashItemInput(text), agreement: { members: ['test'] },
+    text, expectedRoute: 'analytics_pipeline',
+  }));
+  vi.mocked(readFile).mockImplementation(async path => String(path).endsWith('/VERSION') ? 'test' : JSON.stringify({
+    version: 'test', members: [], perNode: { slackIntake: { itemsSha256: 'a'.repeat(64) } },
+  }));
+  vi.mocked(loadItems).mockReturnValue(items as ReturnType<typeof loadItems>);
+  vi.mocked(loadTemplateEnv).mockResolvedValue({
+    apiKey: 'test-key', tables: [], knowledge: [], execute: vi.fn(), judge: vi.fn(),
+  });
+  const real = await vi.importActual<typeof import('../../../scripts/template-validation/runners.js')>(
+    '../../../scripts/template-validation/runners.js',
+  );
+  vi.mocked(createTemplateRunner).mockImplementation(real.createTemplateRunner);
+  const profiles: (string | undefined)[] = [];
+  generateContent.mockReset().mockImplementation(async () => {
+    profiles.push(process.env.NODE_PROFILE_OVERRIDES);
+    if (profiles.length === failedCall) throw Object.assign(new Error('sensitive provider response'), { status });
+    return { text: '{"route":"analytics_pipeline","responseText":null,"reasoning":"Data request."}' };
+  });
+  const dir = await mkdtemp(join(tmpdir(), 'template-provider-abort-'));
+  const date = new Date().toISOString().slice(0, 10);
+  const fullReport = [`${date}-model-refresh.md`, `${date}-model-refresh.json`];
+  try {
+    for (const name of fullReport) await writeFile(join(dir, name), 'previous report');
+    await expect(main(['--corpus', 'template', '--node', node], dir)).rejects.toMatchObject({
+      status, message: expect.not.stringContaining('sensitive provider response'),
+    });
+    expect(generateContent).toHaveBeenCalledTimes(failedCall);
+    if (failedCall > 1) expect(profiles.at(-1)).toContain('"slackIntake"');
+    expect(process.env.NODE_PROFILE_OVERRIDES).toBe(previous);
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    expect((await readdir(dir)).sort()).toEqual([...fullReport].sort());
+    for (const name of fullReport) expect(await realFs.readFile(join(dir, name), 'utf8')).toBe('previous report');
+  } finally {
+    vi.mocked(readFile).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
