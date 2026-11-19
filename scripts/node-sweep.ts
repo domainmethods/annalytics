@@ -1,5 +1,5 @@
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { initBigQuery } from '../src/validation/dryRun.js';
@@ -943,8 +943,10 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
 export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
   const runDate = formatDate(new Date());
   const args = parseArgs(argv);
+  const template = args.corpus === 'template';
+  if (template && existsSync('.env') && typeof process.loadEnvFile === 'function') process.loadEnvFile('.env');
   const apiKey = process.env.GEMINI_API_KEY;
-  if (args.corpus === 'template') {
+  if (template) {
     for (const name of ['MODEL_ID_OVERRIDES', 'NODE_PROFILE_OVERRIDES']) {
       if (process.env[name]) throw new Error(`Unset ${name} in the shell and .env before running a template sweep`);
     }

@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { main, type PerEntry } from '../../../scripts/node-sweep.js';
 import { hashItemInput, loadItems } from '../../../scripts/template-validation/items.js';
 import { createTemplateRunner, loadTemplateEnv } from '../../../scripts/template-validation/runners.js';
@@ -21,6 +21,10 @@ vi.mock('../../../scripts/template-validation/runners.js', async importOriginal 
   createTemplateRunner: vi.fn(),
   loadTemplateEnv: vi.fn(),
 }));
+
+beforeEach(() => {
+  if (typeof process.loadEnvFile === 'function') vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {});
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -292,6 +296,21 @@ it('withholds an unpaired supervisor pick and preserves the existing full report
     expect(createTemplateRunner).toHaveBeenCalledExactlyOnceWith('supervisor', expect.any(Array), expect.any(Object));
   } finally {
     vi.mocked(readFile).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('starts the template launcher with exported credentials and no dotenv file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'template-no-dotenv-'));
+  try {
+    const validationDir = join(dir, 'benchmarks', 'template-validation');
+    await mkdir(validationDir, { recursive: true });
+    await writeFile(join(validationDir, 'VERSION'), 'tv-v1\n');
+    const { status, stderr } = await templateLauncher(dir, {});
+    expect(status).toBe(1);
+    expect(stderr).toContain('Template validation set is not frozen');
+    expect(stderr).not.toContain('.env: not found');
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
