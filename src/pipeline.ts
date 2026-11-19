@@ -89,6 +89,12 @@ export interface PipelineInput {
   tables: TableContext[];
   config: PipelineConfig;
   refinementHint?: { previousSql: string };
+  /**
+   * The user's own wording for the SQL supervisor, when `question` is a
+   * rewritten composite (e.g. an escalation resume built from the clarified
+   * question). Defaults to `question`.
+   */
+  originalQuestion?: string;
 }
 
 export function toPipelineConfig(config: AppConfig): PipelineConfig {
@@ -178,6 +184,7 @@ function extractFallbackTableRefs(
 
 export async function runPipeline(input: PipelineInput): Promise<void> {
   const { question, channel, threadTs, statusMsgTs, client, tables, config } = input;
+  const supervisorQuestion = input.originalQuestion ?? question;
   const traceId = createTraceId();
   const logger = createLogger(traceId);
   const startTime = Date.now();
@@ -367,7 +374,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         executionDefaultProject: config.gcpProjectId,
         enabled: config.fastPath.enabled,
         requireSupervisor: config.fastPath.requireSupervisor,
-        question,
+        question: supervisorQuestion,
         clarifiedQuestion: resolvedQuestion,
         clarificationConfidence: clarification.confidence,
         route: clarification.route,
@@ -460,7 +467,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           onReview: () => updateStatus('Reviewing for accuracy...'),
           onRetry: () => updateStatus('Refining the approach...'),
         },
-        question,
+        supervisorQuestion,
       );
     }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });

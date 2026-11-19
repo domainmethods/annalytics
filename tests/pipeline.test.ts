@@ -199,6 +199,12 @@ describe('runPipeline', () => {
     expect(call[5]).toBe('What is total revenue?');
   });
 
+  it('reviews against input.originalQuestion when a resume supplies one (#44)', async () => {
+    await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Data team guidance: x)' });
+
+    expect(mockQualityLoop.mock.calls[0][5]).toBe('What is paid revenue? (Data team guidance: x)');
+  });
+
   it('MEDIUM confidence: includes assumptions in response', async () => {
     mockClassify.mockResolvedValue({
       ...highClarification,
