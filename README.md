@@ -593,6 +593,10 @@ All configuration is via environment variables. See `.env.example` for the local
 | `ESCALATION_TIMEOUT_HOURS` | No | `4` | Hours before escalation times out |
 | `ESCALATION_ON_NEGATIVE_FEEDBACK` | No | `true` | Route 👎 "wrong number"/"wrong data" flags to the analyst (needs a resolved target) |
 
+### Per-node model sizing
+
+See the [per-node sizing rules](src/agents/CLAUDE.md) for template defaults and installation overrides, and the [model refresh runbook](docs/model-refresh.md) for evaluating new Gemini models against the template validation set.
+
 ## Project Structure
 
 ```text

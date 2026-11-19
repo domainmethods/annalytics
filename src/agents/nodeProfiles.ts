@@ -47,6 +47,9 @@ const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel:
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
 
+// DEFAULTS tag vocabulary: MEASURED | TEMPLATE-MEASURED | PROVISIONAL.
+// Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
+// for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
   // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
   slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
