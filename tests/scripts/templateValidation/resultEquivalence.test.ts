@@ -25,7 +25,7 @@ describe('resultsEquivalent', () => {
     })).toBe(false);
   });
 
-  it('backtracks to a global column swap when both columns have the same multiset', () => {
+  it('finds a global column swap when both columns have the same multiset', () => {
     const ref = { columnNames: ['a', 'b'], rows: [{ a: 1, b: 2 }, { a: 2, b: 1 }] };
     const cand = { columnNames: ['x', 'y'], rows: [{ x: 2, y: 1 }, { x: 1, y: 2 }] };
     expect(resultsEquivalent(ref, cand, { ordered: true })).toBe(true);
@@ -43,6 +43,24 @@ describe('resultsEquivalent', () => {
     expect(resultsEquivalent(ref, cand, unordered)).toBe(true);
   });
 
+  it.each([false, true])('matches seven identical columns alongside a global swap (ordered=%s)', ordered => {
+    const duplicateNames = Array.from({ length: 7 }, (_, i) => `duplicate${i}`);
+    const duplicates = Object.fromEntries(duplicateNames.map(name => [name, 0]));
+    const ref = {
+      columnNames: ['a', 'b', 'anchor', ...duplicateNames],
+      rows: [{ a: 1, b: 2, anchor: 'first', ...duplicates }, { a: 2, b: 1, anchor: 'second', ...duplicates }],
+    };
+    const cand = { ...ref, columnNames: ['b', 'a', 'anchor', ...duplicateNames] };
+    expect(resultsEquivalent(ref, cand, { ordered })).toBe(true);
+  });
+
+  it.each([false, true])('lets duplicate column slots match distinct columns within tolerance (ordered=%s)', ordered => {
+    const ref = { columnNames: ['a', 'b'], rows: [{ a: 1000000, b: 1000000 }] };
+    const cand = { columnNames: ['x', 'y'], rows: [{ x: 1000000.5, y: 999999.5 }] };
+    expect(resultsEquivalent(ref, cand, { ordered })).toBe(true);
+    expect(resultsEquivalent(cand, ref, { ordered })).toBe(true);
+  });
+
   it('rejects columns that have compatible partners but no complete mapping', () => {
     const columnNames = Array.from({ length: 12 }, (_, i) => `c${i}`);
     const result = (ones: number) => ({
@@ -52,12 +70,17 @@ describe('resultsEquivalent', () => {
     expect(resultsEquivalent(result(11), result(10), unordered)).toBe(false);
   });
 
-  it('returns false when the matching column permutation is beyond the search cap', () => {
+  it('caps distinct unordered mappings but matches the same columns directly when ordered', () => {
     const columnNames = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
-    const rows = columnNames.map(name => Object.fromEntries(columnNames.map(column => [column, Number(column === name)])));
-    const ref = { columnNames, rows };
-    const cand = { columnNames: [...columnNames].reverse(), rows };
-    expect(resultsEquivalent(ref, cand, { ordered: true })).toBe(false);
+    // The anchor fixes row correspondence even when rows can be reordered.
+    const rows = columnNames.map(name => ({
+      ...Object.fromEntries(columnNames.map(column => [column, Number(column === name)])),
+      anchor: name,
+    }));
+    const ref = { columnNames: [...columnNames, 'anchor'], rows };
+    const cand = { columnNames: [...columnNames].reverse().concat('anchor'), rows };
+    expect(resultsEquivalent(ref, cand, unordered)).toBe(false);
+    expect(resultsEquivalent(ref, cand, { ordered: true })).toBe(true);
   });
 
   it('compares NULL safely', () => {

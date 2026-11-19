@@ -96,6 +96,21 @@ function matchMultiset<T>(ref: T[], cand: T[], equal: (a: T, b: T) => boolean): 
   return ref.every(value => assign(value, new Set()));
 }
 
+function groupColumns({ columnNames, rows }: QueryResult) {
+  const groups: { values: Value[]; count: number }[] = [];
+  for (const name of columnNames) {
+    const values = rows.map(row => normalize(row[name]));
+    const identical = groups.find(group => values.every((value, i) => equalValues(value, group.values[i], 0)));
+    if (identical) identical.count++;
+    else groups.push({ values, count: 1 });
+  }
+  return groups;
+}
+
+function columnSlots(counts: number[]): number[] {
+  return counts.flatMap((count, i) => Array<number>(count).fill(i));
+}
+
 export function resultsEquivalent(
   ref: QueryResult,
   cand: QueryResult,
@@ -104,45 +119,52 @@ export function resultsEquivalent(
   if (ref.columnNames.length !== cand.columnNames.length || ref.rows.length !== cand.rows.length) return false;
   if (ref.rows.length === 0) return true;
 
-  const normalizeRows = ({ columnNames, rows }: QueryResult) =>
-    rows.map(row => columnNames.map(name => normalize(row[name])));
-  const refRows = normalizeRows(ref);
-  const candRows = normalizeRows(cand);
   const relTol = opts.relTol ?? 1e-6;
   const equal = (a: Value, b: Value) => equalValues(a, b, relTol);
-  const refColumns = ref.columnNames.map((_, i) => refRows.map(row => row[i]));
-  const candColumns = cand.columnNames.map((_, i) => candRows.map(row => row[i]));
-  const columnIndices = refColumns.map((_, i) => i);
-  const compatible = refColumns.map(column => new Set(
-    columnIndices.filter(i => matchMultiset(column, candColumns[i], equal))));
+  const equalSequence = (a: Value[], b: Value[]) => a.every((value, i) => equal(value, b[i]));
+  const refGroups = groupColumns(ref);
+  const candGroups = groupColumns(cand);
+  const refSlots = columnSlots(refGroups.map(group => group.count));
+  const remainingCounts = candGroups.map(group => group.count);
+  const compatible = refGroups.map(({ values }) => new Set(candGroups.flatMap((candidate, i) => {
+    const matches = opts.ordered
+      ? equalSequence(values, candidate.values)
+      : matchMultiset(values, candidate.values, equal);
+    return matches ? [i] : [];
+  })));
+  const canPair = (a: number, b: number) => compatible[a].has(b);
+
+  // With row positions fixed, each column pair can be checked independently.
+  // Group only exact duplicates and match individual slots, since tolerance is non-transitive.
+  if (opts.ordered) return matchMultiset(refSlots, columnSlots(remainingCounts), canPair);
 
   const mapping: number[] = [];
-  const used = new Set<number>();
   let mappingsTried = 0;
-  const equalRows = (a: Value[], b: Value[]) => a.every((value, i) => equal(value, b[i]));
+  const refRows = ref.rows.map((_, i) => refSlots.map(group => refGroups[group].values[i]));
 
   function search(): boolean {
-    if (mapping.length === refColumns.length) {
+    const depth = mapping.length;
+    if (depth === refSlots.length) {
       mappingsTried++;
-      const projected = candRows.map(row => mapping.map(i => row[i]));
-      return opts.ordered
-        ? refRows.every((row, i) => equalRows(row, projected[i]))
-        : matchMultiset(refRows, projected, equalRows);
+      const projected = cand.rows.map((_, i) => mapping.map(group => candGroups[group].values[i]));
+      return matchMultiset(refRows, projected, equalSequence);
     }
-    const remaining = columnIndices.slice(mapping.length);
-    const available = columnIndices.filter(i => !used.has(i));
-    // Skip prefixes that cannot extend to a full mapping, even if every column has an edge.
-    if (!matchMultiset(remaining, available, (a, b) => compatible[a].has(b))) return false;
 
-    for (const i of compatible[mapping.length]) {
+    const refGroup = refSlots[depth];
+    // Assign duplicate reference columns in candidate-group order to visit each allocation once.
+    const first = refGroup === refSlots[depth - 1] ? mapping[depth - 1] : 0;
+    if (!matchMultiset(refSlots.slice(depth), columnSlots(remainingCounts),
+      (a, b) => canPair(a, b) && (a !== refGroup || b >= first))) return false;
+
+    for (const i of compatible[refGroup]) {
       // Treat a result as inequivalent when the search exhausts its mapping budget.
       if (mappingsTried >= MAX_COLUMN_MAPPINGS) return false;
-      if (used.has(i)) continue;
+      if (i < first || remainingCounts[i] === 0) continue;
       mapping.push(i);
-      used.add(i);
+      remainingCounts[i]--;
       if (search()) return true;
       mapping.pop();
-      used.delete(i);
+      remainingCounts[i]++;
     }
     return false;
   }
