@@ -502,6 +502,12 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - SQL authorization in the routine fast path is separate from identity matching: two-part SQL references resolve only in the BigQuery execution default project and are rejected when that project is not configured, so inventory uniqueness can never authorize a cross-project table.
 - Defect repair of existing trust instruments only; no tranche change. Synthetic offline regressions only; no cloud resources or client evidence. Deployment and production acceptance remain outside this change.
 
+### 2026-11-18 - v0.1.0 template release
+
+- Finalized the 0.1.0 baseline (merged history through #119) as the first
+  tagged template release, `v0.1.0`; Unreleased is empty. Release hygiene only;
+  no tranche change.
+
 ### 2026-11-18 - Template release and update process
 
 - Added a proposed 0.1.0 baseline aligned with package.json, based on merged PR

@@ -86,8 +86,7 @@ git switch -c update/template-release
 git merge refs/template-tags/vX.Y.Z
 ```
 
-No release tags exist until the first maintainer release. Do not assume the
-proposed changelog version is already available. For a repository created with
+Release tags start at `v0.1.0`; use the newest tag listed in the changelog. For a repository created with
 GitHub **Use this template** (or another copy without shared history), use
 `git merge --allow-unrelated-histories refs/template-tags/vX.Y.Z` for the first
 sync instead.
