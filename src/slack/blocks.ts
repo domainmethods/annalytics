@@ -1,6 +1,9 @@
 import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
+/** Display for an empty single-value answer. */
+export const EMPTY_VALUE = '—';
+
 /** Safely format a BigQuery cell value. Order matters: real JS Date before the
  *  `{value}` unwrap, because a Date is an object whose `.value` is undefined and
  *  would otherwise fall through to JSON.stringify and render a quoted ISO string. */

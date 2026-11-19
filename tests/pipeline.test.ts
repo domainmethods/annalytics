@@ -42,7 +42,8 @@ import { saveClarificationState } from '../src/state/clarificationState.js';
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, formatValue } from '../src/slack/blocks.js';
+import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
 import { saveEscalationState } from '../src/state/escalationState.js';
@@ -587,6 +588,7 @@ describe('buildResponseBlocks', () => {
     mockBuildSingleValue.mockImplementation(actual.buildSingleValueBlocks);
     mockBuildAssumptions.mockImplementation(actual.buildAssumptionBlocks);
     mockBuildFeedback.mockImplementation(actual.buildFeedbackActions);
+    vi.mocked(formatValue).mockImplementation(actual.formatValue);
   });
 
   it('single_value: answer first, then assumptions, then feedback actions', () => {
@@ -603,5 +605,25 @@ describe('buildResponseBlocks', () => {
     expect(assumptionIdx).toBeGreaterThan(0); // assumptions after the answer
     expect(feedbackIdx).toBeGreaterThan(assumptionIdx); // feedback is last
     expect((blocks[0] as any).text.text).toBe('*90*\nunique visitors this month');
+  });
+
+  it('single_value: formats a BigQuery DATE wrapper like table cells (#34)', () => {
+    const blocks = buildResponseBlocks(
+      'single_value',
+      { headline: 'first order date', explanation: '', assumptions: [] } as any,
+      { rows: [{ d: BigQuery.date('2026-11-01') }], columnNames: ['d'], totalRows: 1 } as any,
+      'trace-1', 'T1', 'S1', [],
+    );
+    expect((blocks[0] as any).text.text).toBe('*2026-11-01*\nfirst order date');
+  });
+
+  it('single_value: shows a dash for an empty cell (#34)', () => {
+    const blocks = buildResponseBlocks(
+      'single_value',
+      { headline: 'latest refund', explanation: '', assumptions: [] } as any,
+      { rows: [{ d: null }], columnNames: ['d'], totalRows: 1 } as any,
+      'trace-1', 'T1', 'S1', [],
+    );
+    expect((blocks[0] as any).text.text).toBe('*—*\nlatest refund');
   });
 });

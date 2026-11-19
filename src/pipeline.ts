@@ -22,6 +22,8 @@ import {
   buildFeedbackActions,
   overrideButtonsForResultShape,
   buildAssumptionBlocks,
+  formatValue,
+  EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
 import { saveClarificationState } from './state/clarificationState.js';
@@ -775,7 +777,9 @@ export function buildResponseBlocks(
 
   switch (format) {
     case 'single_value': {
-      const value = String(Object.values(result.rows[0])[0]);
+      // BigQuery returns DATE/TIME/DATETIME/TIMESTAMP cells as `{ value }`
+      // wrappers; share the table formatter, and show a dash for an empty cell.
+      const value = formatValue(Object.values(result.rows[0])[0]) || EMPTY_VALUE;
       return [
         ...buildSingleValueBlocks(value, gen.headline),
         ...assumptionBlocks,

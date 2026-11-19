@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { BigQuery } from '@google-cloud/bigquery';
 import { routeFollowUp } from '../../src/handlers/followUpRouter.js';
 import type { ResponseContext } from '../../src/types.js';
 import type { PipelineConfig } from '../../src/pipeline.js';
@@ -166,6 +167,31 @@ describe('routeFollowUp', () => {
         text: expect.stringContaining('Breaking down by region to check APAC'),
       }),
     );
+  });
+
+  it('discrepancy — formats BigQuery DATE wrappers in the row summary (#34)', async () => {
+    mockGenerateDiagnosticSql.mockResolvedValue({
+      diagnosticSql: 'SELECT MAX(order_date) AS last_order FROM fct_orders',
+      explanation: 'Checking the latest order date',
+    });
+    mockValidateSql.mockResolvedValue({ valid: true, layer: 'L4', bytesProcessed: 500 });
+    mockReviewSql.mockResolvedValue({ verdict: 'PASS', confidence: 'high', issues: [], suggestions: [], teaching_compliance: 'no_relevant_teaching' });
+    mockExecuteQuery.mockResolvedValue({
+      rows: [{ last_order: BigQuery.date('2026-11-01') }],
+      columnNames: ['last_order'],
+      totalRows: 1,
+      bytesProcessed: 500,
+      truncated: false,
+    });
+
+    await routeFollowUp(
+      'discrepancy', 'Why is the last order so old?',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+    );
+
+    const text = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0]);
+    expect(text).toContain('last_order: 2026-11-01');
+    expect(text).not.toContain('[object Object]');
   });
 
   it('new_query — runs standard pipeline', async () => {
