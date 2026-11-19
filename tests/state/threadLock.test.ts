@@ -1,75 +1,39 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const mockCreate = vi.fn();
-const mockGet = vi.fn();
-const mockDelete = vi.fn();
-const mockDoc = vi.fn().mockReturnValue({
-  create: mockCreate,
-  get: mockGet,
-  delete: mockDelete,
-});
-const mockCollection = vi.fn().mockReturnValue({ doc: mockDoc });
-
+import { beforeEach, expect, it, vi } from 'vitest';
+let data: any;
+let queue = Promise.resolve();
 vi.mock('../../src/state/firestore.js', () => ({
-  getDb: () => ({ collection: mockCollection }),
-  FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
+  FieldValue: { serverTimestamp: () => 'timestamp' },
+  getDb: () => ({ collection: () => ({ doc: () => ({ create: async (value: any) => { if (data) throw { code: 6 }; data = value; }, get: async () => { const snapshot = data; return { exists: !!snapshot, data: () => snapshot }; }, delete: async () => { data = undefined; } }) }), runTransaction: (fn: any) => {
+    const result = queue.then(() => fn({
+      get: async () => { const snapshot = data; return { exists: !!snapshot, data: () => snapshot }; },
+      set: (_: any, value: any) => { data = { ...value, expiresAt: { toDate: () => value.expiresAt } }; },
+      delete: () => { data = undefined; },
+    }));
+    queue = result.then(() => undefined, () => undefined);
+    return result;
+  } }),
 }));
-
 import { acquireThreadLock, releaseThreadLock } from '../../src/state/threadLock.js';
-
-describe('acquireThreadLock', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('returns true when lock is acquired (doc created)', async () => {
-    mockCreate.mockResolvedValue(undefined);
-    const result = await acquireThreadLock('thread-123');
-    expect(result).toBe(true);
-    expect(mockCollection).toHaveBeenCalledWith('processing_threads');
-    expect(mockDoc).toHaveBeenCalledWith('thread-123');
-  });
-
-  it('returns false when lock already exists and not expired', async () => {
-    const futureDate = new Date(Date.now() + 300_000);
-    mockCreate.mockRejectedValue(Object.assign(new Error('exists'), { code: 6 }));
-    mockGet.mockResolvedValue({
-      exists: true,
-      data: () => ({ expiresAt: { toDate: () => futureDate } }),
-    });
-
-    const result = await acquireThreadLock('thread-123');
-    expect(result).toBe(false);
-  });
-
-  it('reclaims expired lock', async () => {
-    const pastDate = new Date(Date.now() - 1000);
-    let callCount = 0;
-    mockCreate.mockImplementation(async () => {
-      callCount++;
-      if (callCount === 1) throw Object.assign(new Error('exists'), { code: 6 });
-    });
-    mockGet.mockResolvedValue({
-      exists: true,
-      data: () => ({ expiresAt: { toDate: () => pastDate } }),
-    });
-    mockDelete.mockResolvedValue(undefined);
-
-    const result = await acquireThreadLock('thread-123');
-    expect(mockDelete).toHaveBeenCalled();
-    expect(result).toBe(true);
-  });
+beforeEach(() => { data = { ownerToken: 'old', expiresAt: { toDate: () => new Date(0) } }; });
+it('allows exactly one expired-lease contender', async () => {
+  const results = await Promise.all([acquireThreadLock('thread', 'a'), acquireThreadLock('thread', 'b')]);
+  expect(results.filter(Boolean)).toHaveLength(1);
+});
+it('ignores late and repeated releases', async () => {
+  await acquireThreadLock('thread', 'new');
+  await releaseThreadLock('thread', 'old');
+  expect(data.ownerToken).toBe('new');
+  await releaseThreadLock('thread', 'new');
+  await releaseThreadLock('thread', 'new');
+  expect(data).toBeUndefined();
 });
 
-describe('releaseThreadLock', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('deletes the lock document', async () => {
-    mockDelete.mockResolvedValue(undefined);
-    await releaseThreadLock('thread-123');
-    expect(mockDoc).toHaveBeenCalledWith('thread-123');
-    expect(mockDelete).toHaveBeenCalled();
-  });
+it('keeps an active lease and rejects a contender', async () => {
+  expect(await acquireThreadLock('thread', 'first')).toBe(true);
+  expect(await acquireThreadLock('thread', 'second')).toBe(false);
+  expect(data.ownerToken).toBe('first');
+});
+it('release without ownership does nothing', async () => {
+  await releaseThreadLock('thread');
+  expect(data.ownerToken).toBe('old');
 });

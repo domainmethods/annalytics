@@ -52,6 +52,7 @@ const {
         get: (ref: any) => ref.get(),
         set: (ref: any, data: any) => ref.set(data),
         update: (ref: any, data: any) => ref.update(data),
+        delete: (ref: any) => ref.delete(),
       }));
       transactionQueue = result.then(() => undefined, () => undefined);
       return result;

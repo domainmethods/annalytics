@@ -76,6 +76,7 @@ const IDENTIFIER_START_RE = /[A-Za-z_]/;
 const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
 
 export interface PipelineInput {
+  ownerToken?: string;
   question: string;
   channel: string;
   threadTs: string;
@@ -695,7 +696,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       text: friendlyErrorMessage(error as Error, traceId),
     });
   } finally {
-    await releaseThreadLock(threadTs).catch(() => {});
+    await releaseThreadLock(threadTs, input.ownerToken).catch(() => {});
   }
 }
 

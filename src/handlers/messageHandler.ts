@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { App } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import type { MessageEvent } from '@slack/types';
@@ -66,6 +67,7 @@ export async function handleMessageEvent({
 
   const eventId = extractSlackEventId(body);
   let visibleResponse = false;
+  const ownerToken = randomUUID();
   let lockHeld = false;
   const shouldProcess = await claimSlackEvent(eventId);
   if (!shouldProcess) return;
@@ -135,7 +137,7 @@ export async function handleMessageEvent({
     }
 
     // Preflight: lock + clarification + escalation guards
-    const passed = await preflightChecks(msg.channel, threadTs, client);
+    const passed = await preflightChecks(msg.channel, threadTs, client, ownerToken);
     if (!passed) return;
     lockHeld = true;
 
@@ -146,7 +148,7 @@ export async function handleMessageEvent({
       apiKey: config.gemini.apiKey,
       client,
       markVisible: () => markSlackEventVisible(eventId),
-      releaseLock: () => releaseThreadLock(threadTs),
+      releaseLock: () => releaseThreadLock(threadTs, ownerToken),
     });
     if (handledByIntake) {
       visibleResponse = true;
@@ -182,7 +184,7 @@ export async function handleMessageEvent({
               intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
               client, toPipelineConfig(config), getTables(),
             );
-            await releaseThreadLock(threadTs).catch(() => {});
+            await releaseThreadLock(threadTs, ownerToken).catch(() => {});
             lockHeld = false;
             return;
           }
@@ -194,6 +196,7 @@ export async function handleMessageEvent({
 
     lockHeld = false;
     await runPipeline({
+      ownerToken,
       question: msg.text || '',
       channel: msg.channel,
       threadTs,
@@ -204,7 +207,7 @@ export async function handleMessageEvent({
     });
   } catch (error) {
     if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-    if (lockHeld) await releaseThreadLock(msg.thread_ts || msg.ts).catch(() => {});
+    if (lockHeld) await releaseThreadLock(msg.thread_ts || msg.ts, ownerToken).catch(() => {});
     throw error;
   }
 }

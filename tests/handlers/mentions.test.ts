@@ -140,6 +140,6 @@ describe('registerMentions app_mention seam', () => {
     await intakeArg.markVisible();
     expect(mockMarkSlackEventVisible).toHaveBeenCalledWith('evt-1');
     await intakeArg.releaseLock();
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('T1');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('T1', expect.any(String));
   });
 });
