@@ -35,6 +35,12 @@ export interface ResponseContext {
   statusMsgTs: string;
   surface?: 'slack' | 'whatsapp';
   clarifiedQuestion: string;
+  /**
+   * The user's own wording as given to the SQL supervisor, which clarification
+   * may have narrowed. Refinements review against it (#44). Absent on legacy
+   * records; readers fall back to `clarifiedQuestion`.
+   */
+  userQuestion?: string;
   assumptions: string[];
   reasoningChain: string;
   generatedSql: string;

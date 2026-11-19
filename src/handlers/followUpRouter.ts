@@ -44,9 +44,10 @@ export async function routeFollowUp(
         await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to refine.' });
         return;
       }
-      const { compositeQuestion, previousSql } = buildRefinementInput(message, ctx);
+      const { compositeQuestion, originalQuestion, previousSql } = buildRefinementInput(message, ctx);
       await runPipeline({
         question: compositeQuestion,
+        originalQuestion,
         channel,
         threadTs,
         statusMsgTs,

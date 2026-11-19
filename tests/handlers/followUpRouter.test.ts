@@ -114,6 +114,7 @@ describe('routeFollowUp', () => {
   it('refinement — builds composite question and runs pipeline with refinement hint', async () => {
     mockBuildRefinementInput.mockReturnValue({
       compositeQuestion: 'What is total revenue? (Refinement: break down by region)',
+      originalQuestion: 'What is total paid revenue? (Refinement: break down by region)',
       previousSql: 'SELECT SUM(revenue) FROM fct_orders',
     });
     mockRunPipeline.mockResolvedValue(undefined);
@@ -127,6 +128,7 @@ describe('routeFollowUp', () => {
     expect(mockRunPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         question: 'What is total revenue? (Refinement: break down by region)',
+        originalQuestion: 'What is total paid revenue? (Refinement: break down by region)',
         refinementHint: { previousSql: 'SELECT SUM(revenue) FROM fct_orders' },
       }),
     );

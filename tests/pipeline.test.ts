@@ -203,6 +203,10 @@ describe('runPipeline', () => {
     await runPipeline({ ...baseInput, originalQuestion: 'What is paid revenue? (Data team guidance: x)' });
 
     expect(mockQualityLoop.mock.calls[0][5]).toBe('What is paid revenue? (Data team guidance: x)');
+    // Persisted so a later refinement reviews against the same wording.
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
+      userQuestion: 'What is paid revenue? (Data team guidance: x)',
+    }));
   });
 
   it('MEDIUM confidence: includes assumptions in response', async () => {
