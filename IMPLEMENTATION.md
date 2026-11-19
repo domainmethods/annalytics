@@ -67,7 +67,8 @@ None currently — the template's Operational Trust tranche closed the previousl
 ## Updating from the template
 
 Read [CHANGELOG.md](CHANGELOG.md), especially **Action required** notes, before
-updating or deploying. Work in a clean checkout on an update branch and back up
+updating or deploying. Before 1.0, minor versions may contain breaking
+configuration changes, always flagged **Action required**. Work in a clean checkout on an update branch and back up
 implementation-owned content. Add the remote once:
 
 ```bash
@@ -82,6 +83,32 @@ No release tags exist until the first maintainer release. Do not assume the
 proposed changelog version is already available. For a repository created with
 GitHub **Use this template** (or another copy without shared history), use
 `git merge --allow-unrelated-histories vX.Y.Z` for the first sync instead.
+With unrelated histories there is no merge base: files changed upstream can
+produce add/add conflicts even when you never edited them locally, including
+runtime code, tests, infrastructure, and deploy configuration.
+
+In this merge direction (template into your implementation), resolve each file
+you never customized with the template version:
+
+```bash
+git checkout --theirs <path>
+git add <path>
+```
+
+For customized files, compare both versions against your original template
+snapshot and reconcile your customizations with upstream changes. Do not take
+`--theirs` wholesale for those files. After resolving all conflicts:
+
+```bash
+git add <resolved-paths>
+git commit
+```
+
+The commit completes the merge; do this before running checks or deploying.
+To abandon a bad merge and return to the pre-merge state, run `git merge --abort`.
+These steps also apply if you merge `template/main` with
+`git merge --allow-unrelated-histories template/main` instead of a release tag.
+
 Subsequent updates use an ordinary merge. Forks/clones with shared history use
 an ordinary merge from the start.
 

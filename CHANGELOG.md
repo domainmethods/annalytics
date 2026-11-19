@@ -1,8 +1,9 @@
 # Changelog
 
 Notable template changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versions follow Semantic Versioning. This first baseline summarizes merged history;
-1.0.0 matches package.json and is proposed, not yet tagged or released.
+Versions follow Semantic Versioning. Before 1.0, minor versions may contain
+breaking configuration changes, always flagged **Action required**. This first baseline summarizes merged history;
+0.1.0 matches package.json and is proposed, not yet tagged or released.
 
 Maintainers: at release time, move Unreleased entries into a dated version section
 (or finalize the proposed baseline), leave an empty Unreleased section, and align
@@ -11,11 +12,22 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ## [Unreleased]
 
+### Fixed
+
+- dbt artifact path resolution preserves absolute paths across runtime and tools (#113).
+- **Action required — WhatsApp allowlist (#117):** formatted tester IDs are
+  normalized; invalid entries now fail startup. Check `WHATSAPP_ALLOWED_WA_IDS`
+  before updating.
+- **Action required — final SQL validation (#119):** final SQL passes shared
+  L1–L4 validation before every execution, including best-effort answers.
+  Expect rejected SQL to stop before execution; successful queries incur an
+  additional dry run. Verify warehouse validation and cost limits before deploying.
+
 ### Added
 
 - Template update instructions and this release history.
 
-## [1.0.0] - Proposed
+## [0.1.0] - Proposed
 
 ### Fixed
 
