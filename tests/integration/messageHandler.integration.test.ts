@@ -130,6 +130,8 @@ vi.mock('../../src/handlers/followUpRouter.js', () => ({
 
 // ─── Real imports (system under test + real collaborators) ───────
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
+import { registerMentions } from '../../src/handlers/mentions.js';
+import { registerCommands } from '../../src/handlers/commands.js';
 import type { AppConfig } from '../../src/config.js';
 import type { TableContext } from '../../src/dbt/types.js';
 
@@ -550,6 +552,98 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
       expect(mockRouteFollowUp).not.toHaveBeenCalled();
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('mention greeting then an unmentioned question (#53)', () => {
+    it('treats the greeted thread as one the bot is in, so the question enters intake', async () => {
+      let mentionHandler: any;
+      const app = { event: vi.fn((_name: string, h: any) => { mentionHandler = h; }) } as any;
+      registerMentions(app, () => config, getTables);
+
+      await mentionHandler({
+        event: { type: 'app_mention', text: '<@UBOT> hi', user: 'U1', channel: 'C-CHAN', ts: '1700000000.000100' },
+        body: bodyWithEventId('EvMentionHi'),
+        client: mockClient,
+      });
+      expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // The greeting saved no answer, only the participation mark.
+      expect([...firestoreStore.keys()].some(k => k.startsWith('response_context/'))).toBe(false);
+      expect(firestoreStore.has('thread_participation/C-CHAN:1700000000.000100')).toBe(true);
+
+      // The fake store's rate-limit doc holds a plain Date; clear it between users' messages.
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+
+      await handleMessageEvent({
+        event: {
+          type: 'message',
+          channel_type: 'channel',
+          channel: 'C-CHAN',
+          user: 'U1',
+          text: 'show leads last month by channel',
+          ts: '1700000000.000300',
+          thread_ts: '1700000000.000100',
+        } as any,
+        body: bodyWithEventId('EvUnmentioned'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockGenerateContent).toHaveBeenCalled(); // intake classified it
+      expect(statusPosts()).toContain(STATUS_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a /anna greeting as rooting a thread the bot is in (#53)', async () => {
+      let commandHandler: any;
+      const app = { command: vi.fn((_name: string, h: any) => { commandHandler = h; }) } as any;
+      registerCommands(app, () => config, getTables);
+      // Not a canned greeting, so the model's immediate reply is what posts.
+      mockGenerateContent.mockResolvedValue(intakeResponse('immediate_response', 'Happy to help — ask me about a metric.'));
+
+      await commandHandler({
+        command: { channel_id: 'C-CHAN', user_id: 'U1', text: 'hey anna, what can you do' },
+        ack: vi.fn(), respond: vi.fn(), client: mockClient,
+      });
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // The greeting posted top-level as 1700000000.000200, rooting a new thread.
+      expect(firestoreStore.has('thread_participation/C-CHAN:1700000000.000200')).toBe(true);
+
+      for (const key of [...firestoreStore.keys()]) if (key.startsWith('rate_limits/')) firestoreStore.delete(key);
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      await handleMessageEvent({
+        event: {
+          type: 'message', channel_type: 'channel', channel: 'C-CHAN', user: 'U1',
+          text: 'show leads last month by channel', ts: '1700000000.000300', thread_ts: '1700000000.000200',
+        } as any,
+        body: bodyWithEventId('EvCommandFollowUp'), client: mockClient, config, getTables,
+      });
+      expect(statusPosts()).toContain(STATUS_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('still ignores an unmentioned reply in a thread the bot never answered', async () => {
+      await handleMessageEvent({
+        event: {
+          type: 'message',
+          channel_type: 'channel',
+          channel: 'C-CHAN',
+          user: 'U1',
+          text: 'show leads last month by channel',
+          ts: '1700000000.000300',
+          thread_ts: '1700000000.000100',
+        } as any,
+        body: bodyWithEventId('EvStranger'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+      expect(mockRunPipeline).not.toHaveBeenCalled();
     });
   });
 });

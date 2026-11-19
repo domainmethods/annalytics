@@ -13,6 +13,7 @@ import {
 } from '../state/slackEventDedupe.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
+import { markThreadParticipation } from './threadParticipationMark.js';
 
 export function registerMentions(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
   app.event('app_mention', async ({ event, body, client }) => {
@@ -56,6 +57,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
         releaseLock: () => releaseThreadLock(event.channel, threadTs, ownerToken),
       });
       if (handledByIntake) {
+        // Intake marked the thread itself when it posted (#53).
         visibleResponse = true;
         lockHeld = false;
         return;
@@ -68,7 +70,10 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       });
       const statusMsgTs = statusMsg.ts!;
       visibleResponse = true;
-      await markSlackEventVisible(eventId).catch(() => {});
+      await Promise.all([
+        markThreadParticipation(event.channel, threadTs),
+        markSlackEventVisible(eventId).catch(() => {}),
+      ]);
       lockHeld = false;
 
       await runPipeline({

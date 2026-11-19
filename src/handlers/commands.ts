@@ -10,6 +10,7 @@ import { createTraceId } from '../logging.js';
 import { buildHelpBlocks } from '../slack/helpBlocks.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
+import { markThreadParticipation } from './threadParticipationMark.js';
 
 // chat.postMessage into a conversation the bot is not a member of fails with one
 // of these platform errors. respond() (the command's response_url) still works
@@ -69,6 +70,9 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
 
       const threadTs = statusMsg.ts!;
       statusMsgTs = statusMsg.ts!;
+      // The status message roots a thread; replies there are for the bot even
+      // if the run ends without a saved answer (#53).
+      await markThreadParticipation(command.channel_id, threadTs);
 
       // Preflight: lock + clarification + escalation guards. preflightChecks
       // posts its own threaded note explaining the block; update the placeholder

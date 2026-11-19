@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockClassifySlackIntake = vi.hoisted(() => vi.fn());
+const mockMarkThreadParticipation = vi.hoisted(() => vi.fn());
+
+vi.mock('../../src/handlers/threadParticipationMark.js', () => ({
+  markThreadParticipation: mockMarkThreadParticipation,
+}));
 
 vi.mock('../../src/agents/slackIntakeAgent.js', () => ({
   classifySlackIntake: mockClassifySlackIntake,
@@ -41,6 +46,17 @@ describe('maybeHandleSlackIntake', () => {
     });
     expect(markVisible).toHaveBeenCalledTimes(1);
     expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(mockMarkThreadParticipation).toHaveBeenCalledWith('C1', 'T1');
+  });
+
+  it('marks the thread a top-level reply roots, e.g. /anna hi (#53)', async () => {
+    mockClassifySlackIntake.mockResolvedValue({ route: 'immediate_response', responseText: 'Hi.', reasoning: 'Greeting.' });
+    const client = { chat: { postMessage: vi.fn().mockResolvedValue({ ts: 'reply-1' }) } } as any;
+
+    await maybeHandleSlackIntake({ text: 'hi', channel: 'C1', apiKey: 'api-key', client });
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith({ channel: 'C1', text: 'Hi.' });
+    expect(mockMarkThreadParticipation).toHaveBeenCalledWith('C1', 'reply-1');
   });
 
   it('returns false without posting when the agent chooses the analytics pipeline', async () => {
