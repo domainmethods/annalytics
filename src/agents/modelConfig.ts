@@ -113,6 +113,48 @@ const REGISTRY: Record<string, RegisteredModel> = {
     outputPricePerMTok: 12.00,
     status: 'default-eligible',
   },
+  // Gemini 4 models have codenames, not tiers. Each is filed by price and positioning:
+  // Hydrogen (everyday speed) with flash, Neon/Argon/Carbon (frontier reasoning) with pro.
+  // Hydrogen and Neon also support `xhigh` thinking, which the sweep does not use.
+  // https://aistudio.google.com/docs/pricing
+  'flash/4-hydrogen': {
+    tier: 'flash',
+    version: '4-hydrogen',
+    id: 'gemini-4-hydrogen',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'candidate',
+  },
+  'pro/4-neon': {
+    tier: 'pro',
+    version: '4-neon',
+    id: 'gemini-4-neon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 3.00,
+    outputPricePerMTok: 15.00,
+    status: 'candidate',
+  },
+  // Argon and Carbon are $2.00/$10.00 through 2026-11-30. These are the rates from
+  // 2026-12-01, the ones a default chosen now will be billed at.
+  'pro/4-argon': {
+    tier: 'pro',
+    version: '4-argon',
+    id: 'gemini-4-argon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 4.00,
+    outputPricePerMTok: 20.00,
+    status: 'candidate',
+  },
+  'pro/4-carbon': {
+    tier: 'pro',
+    version: '4-carbon',
+    id: 'gemini-4-carbon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 4.00,
+    outputPricePerMTok: 20.00,
+    status: 'candidate',
+  },
 };
 
 // Cheapest tier first, so a floor-up sweep that walks this list left-to-right meets

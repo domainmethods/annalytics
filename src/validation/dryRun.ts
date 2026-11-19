@@ -45,6 +45,16 @@ export async function dryRunValidation(sql: string): Promise<DryRunValidationRes
     }
 
     const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
+    // Without a byte count the cost gate cannot judge the query. NaN would fail
+    // the gate anyway, but with a "NaN GB" message blaming the user's question.
+    if (!Number.isFinite(bytesProcessed)) {
+      return {
+        valid: false,
+        layer: 'L3-dryrun',
+        error: 'Dry run did not report how many bytes the query would scan.',
+        warehouseFailure: true,
+      };
+    }
     return { valid: true, layer: 'L3-dryrun', bytesProcessed, ...pickRelationMetadata(statistics.query) };
   } catch (error) {
     return {
