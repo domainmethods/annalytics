@@ -18,7 +18,7 @@ export type ModelTier = 'flash-lite' | 'flash' | 'pro';
 // The Gemini 3.x `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
 // not a real API value: it means "omit thinkingConfig and let the model manage its
 // own budget" (see modelGateway). Lives here — next to the model registry it pairs
-// with — so the per-model capability map below and every sweep/profile can speak one
+// with — so the registry below and every sweep/profile can speak one
 // type without importing nodeProfiles (which would invert the dependency direction).
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
 
@@ -26,34 +26,66 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
  *  raw id — the form every sizing sweep and nodeProfiles override speaks. */
 export interface ModelCoordinate { tier: ModelTier; version: string; }
 
-// Sparse, real Gemini 3.x lineup. Keys are `${tier}/${version}`.
-// Verify exact ids against the live model list before first deploy.
-const GEMINI_3X_MODELS: Record<string, string> = {
-  'flash-lite/3.1': 'gemini-3.1-flash-lite',
-  'flash/3': 'gemini-3-flash-preview',
-  'flash/3.5': 'gemini-3.5-flash',
-  'pro/3.1': 'gemini-3.1-pro-preview',
+export type ModelStatus = 'candidate' | 'default-eligible' | 'retired';
+
+export interface RegisteredModel {
+  tier: ModelTier;
+  version: string;
+  id: string;
+  thinkingLevels: Exclude<ThinkingLevel, 'default'>[];
+  inputPricePerMTok: number;
+  outputPricePerMTok: number; // USD per million tokens, including thoughts
+  status: ModelStatus;
+}
+
+// Standard USD rates for text prompts up to 200K tokens.
+// https://ai.google.dev/gemini-api/docs/pricing
+const REGISTRY: Record<string, RegisteredModel> = {
+  'flash-lite/3.1': {
+    tier: 'flash-lite',
+    version: '3.1',
+    id: 'gemini-3.1-flash-lite',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 0.25,
+    outputPricePerMTok: 1.50,
+    status: 'default-eligible',
+  },
+  'flash/3': {
+    tier: 'flash',
+    version: '3',
+    id: 'gemini-3-flash-preview',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 0.50,
+    outputPricePerMTok: 3.00,
+    status: 'default-eligible',
+  },
+  'flash/3.5': {
+    tier: 'flash',
+    version: '3.5',
+    id: 'gemini-3.5-flash',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    // TODO(price): verify billing for this ID, which Google routes to Gemini 3.6 Flash.
+    // These Gemini 3.6 Flash rates apply through 2026-12-31.
+    // https://aistudio.google.com/docs/deprecations#gemini-3-models
+    inputPricePerMTok: 0.75,
+    outputPricePerMTok: 3.75,
+    status: 'default-eligible',
+  },
+  'pro/3.1': {
+    tier: 'pro',
+    version: '3.1',
+    id: 'gemini-3.1-pro-preview',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 2.00,
+    outputPricePerMTok: 12.00,
+    status: 'default-eligible',
+  },
 };
 
 // Cheapest tier first, so a floor-up sweep that walks this list left-to-right meets
 // the cheapest models before the expensive ones. Tier is the dominant cost lever
 // (flash-lite ≪ flash ≪ pro); version order within a tier follows the map.
 const TIER_RANK: Record<ModelTier, number> = { 'flash-lite': 0, 'flash': 1, 'pro': 2 };
-
-// Per-model DISCRETE thinking_level support, transcribed verbatim from the Gemini
-// 3.x thinking docs (ai.google.dev/gemini-api/docs/thinking). `'default'` (omit
-// thinkingConfig) is universally accepted and is NOT a discrete API value, so it is
-// deliberately ABSENT here — callers treat it as always-safe separately. The only
-// asymmetry in today's lineup: gemini-3.1-pro-preview rejects `minimal` (every Flash
-// model accepts all four). Keys MUST stay in lock-step with GEMINI_3X_MODELS — the
-// modelConfig test asserts every registry coordinate is annotated here, so a new
-// model can't silently ship without declaring what it supports.
-const MODEL_THINKING_LEVELS: Record<string, ThinkingLevel[]> = {
-  'flash-lite/3.1': ['minimal', 'low', 'medium', 'high'],
-  'flash/3': ['minimal', 'low', 'medium', 'high'],
-  'flash/3.5': ['minimal', 'low', 'medium', 'high'],
-  'pro/3.1': ['low', 'medium', 'high'],   // minimal "Not supported" for Gemini 3.1 Pro
-};
 
 /**
  * The discrete thinking levels a (tier, version) actually serves. Excludes the
@@ -65,24 +97,24 @@ const MODEL_THINKING_LEVELS: Record<string, ThinkingLevel[]> = {
  * hardcoding the pro-rejects-minimal special case in three places.
  */
 export function getSupportedThinkingLevels(tier: ModelTier, version: string): ThinkingLevel[] {
-  return [...(MODEL_THINKING_LEVELS[`${tier}/${version}`] ?? [])];
+  return [...(REGISTRY[`${tier}/${version}`]?.thinkingLevels ?? [])];
 }
 
-/**
- * Every Gemini 3.x (tier, version) the template knows about — the SINGLE SOURCE OF
- * TRUTH for "all the models". Sizing sweeps MUST enumerate this rather than a
- * hand-authored list: that way adding a model to GEMINI_3X_MODELS automatically
- * enrolls it in every sweep, and a partial-coverage sweep (e.g. 3 of 4 models)
- * becomes structurally impossible. Returns fresh objects so callers can't mutate
- * the registry. Ordered cheapest tier first (stable within a tier).
- */
-export function listGemini3xModels(): ModelCoordinate[] {
-  return Object.keys(GEMINI_3X_MODELS)
-    .map((key) => {
-      const slash = key.indexOf('/');
-      return { tier: key.slice(0, slash) as ModelTier, version: key.slice(slash + 1) };
-    })
+/** Sweep candidates, ordered cheapest tier first and stable within a tier. */
+export function listRegisteredModels(): ModelCoordinate[] {
+  return Object.values(REGISTRY)
+    .filter(({ status }) => status !== 'retired')
+    .map(({ tier, version }) => ({ tier, version }))
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier]);
+}
+
+export function getRegisteredModel(tier: ModelTier, version: string): RegisteredModel | undefined {
+  return structuredClone(REGISTRY[`${tier}/${version}`]);
+}
+
+/** Full registry for discovery, including retired models. */
+export function listAllRegisteredModels(): RegisteredModel[] {
+  return structuredClone(Object.values(REGISTRY));
 }
 
 // resolveModelId runs on every gateway call, so cache the parsed overrides keyed
@@ -113,7 +145,7 @@ export function resolveModelId(tier: ModelTier, version: string): string {
   const key = `${tier}/${version}`;
   const override = modelIdOverrides()[key];
   if (override) return override;
-  const id = GEMINI_3X_MODELS[key];
-  if (!id) throw new Error(`no Gemini 3.x model for tier=${tier} version=${version}`);
+  const id = REGISTRY[key]?.id;
+  if (!id) throw new Error(`no registered Gemini model for tier=${tier} version=${version}`);
   return id;
 }

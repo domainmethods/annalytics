@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  parseArgs,
+  nodeCost,
   runSweep,
   runCombinedVerification,
   type CorpusRunResult,
@@ -7,8 +9,19 @@ import {
   type NodeOutcome,
 } from '../../scripts/node-sweep.js';
 import type { PointScore, SweepProfile } from '../../scripts/node-sweep-types.js';
-import { defaultProfileForNode, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
+import { defaultProfileForNode, NODE_IDS, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
 import type { ModelTier } from '../../src/agents/modelConfig.js';
+
+describe('template sweep arguments', () => {
+  it('defaults to all nodes in template mode and keeps the install defaults', () => {
+    expect(parseArgs(['--corpus', 'template']).nodes).toEqual(NODE_IDS);
+    expect(parseArgs([]).nodes).toEqual(['clarification', 'sqlGenerator', 'supervisor']);
+  });
+
+  it.each(NODE_IDS)('accepts %s with --corpus template', node => {
+    expect(parseArgs(['--corpus', 'template', '--node', node])).toMatchObject({ corpus: 'template', nodes: [node] });
+  });
+});
 
 // ── Synthetic, override-sensitive corpus model ─────────────────────────────────
 // runSweep touches Gemini/BigQuery ONLY through the injected runCorpusOnce. A
@@ -74,14 +87,16 @@ function makeRunCorpusOnce(nodes: NodeId[], corpusSize = 12): () => Promise<Corp
     const sqlMetricDelta = sqlTier === 'pro' ? 0 : -OFF_PRO_METRIC;
 
     const perEntry: PerEntry[] = [];
-    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
+    const nodeUsage: CorpusRunResult['nodeUsage'] = new Map();
     const bump = (node: NodeId, prof: EffProfile): void => {
-      const tokens = 500 + THINK_TOKENS[prof.level];
-      const latency = 200 + tokens * 0.5 + TIER_LAT[prof.tier];
+      const inputTokens = 500;
+      const outputTokens = THINK_TOKENS[prof.level];
+      const latency = 200 + (inputTokens + outputTokens) * 0.5 + TIER_LAT[prof.tier];
       let b = nodeUsage.get(node);
-      if (!b) { b = { latencies: [], tokens: 0 }; nodeUsage.set(node, b); }
+      if (!b) { b = { latencies: [], inputTokens: 0, outputTokens: 0 }; nodeUsage.set(node, b); }
       b.latencies.push(latency);
-      b.tokens += tokens;
+      b.inputTokens += inputTokens;
+      b.outputTokens += outputTokens;
     };
 
     for (let i = 0; i < corpusSize; i++) {
@@ -115,7 +130,46 @@ const parseLabel = (label: string): { tier: string; version: string; level: stri
 
 afterEach(() => { delete process.env.NODE_PROFILE_OVERRIDES; });
 
+it('nodeCost uses per-model input/output prices', () => {
+  const usage: CorpusRunResult['nodeUsage'] = new Map([
+    ['sqlGenerator', { latencies: [], inputTokens: 2_000_000, outputTokens: 1_000_000 }],
+  ]);
+  expect(nodeCost('sqlGenerator', { tier: 'pro', version: '3.1' }, usage)).toBe(2 * 2 + 12);
+});
+
+it('nodeCost rejects an unregistered profile even without recorded usage', () => {
+  expect(() => nodeCost('sqlGenerator', { tier: 'pro', version: 'unknown' }, new Map()))
+    .toThrow('pro/unknown');
+});
+
 describe('runSweep — two-stage coordinate isolation', () => {
+  it('prices baseline usage at the overridden model version', async () => {
+    const overrides = JSON.stringify({ clarification: { version: '3.5' } });
+    process.env.NODE_PROFILE_OVERRIDES = overrides;
+    const runCorpusOnce = makeRunCorpusOnce(['clarification']);
+    const seenOverrides: Array<string | undefined> = [];
+    const result = await runSweep({
+      nodes: ['clarification'],
+      corpusCount: 12,
+      corpusLabel: 'synthetic',
+      runDate: '2026-06-08',
+      runCorpusOnce: async () => {
+        seenOverrides.push(process.env.NODE_PROFILE_OVERRIDES);
+        const run = await runCorpusOnce();
+        run.nodeUsage.set('clarification', {
+          latencies: [],
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+        });
+        return run;
+      },
+      log: () => {},
+    });
+
+    expect(seenOverrides.slice(0, 2)).toEqual([overrides, overrides]);
+    expect(result.outcomes[0].baseline.cost).toBe(4.50);
+  });
+
   it('reports the Stage-1 thinking anchor it held fixed', async () => {
     const r = await sweep(['clarification']);
     expect(r.stage1Anchor).toBe('high');

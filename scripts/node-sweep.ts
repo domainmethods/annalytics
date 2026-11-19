@@ -1,6 +1,6 @@
 import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 import { access, readFile, mkdir, writeFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { GoogleGenAI } from '@google/genai';
 import { initBigQuery } from '../src/validation/dryRun.js';
@@ -10,11 +10,11 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
-import { getJudgeModel, resolveModelId, listGemini3xModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, getRegisteredModel, resolveModelId, listRegisteredModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
 import {
   resolveNodeModel,
-  defaultTierForNode,
   defaultProfileForNode,
+  getNodeProfile,
   isNodeId,
   NODE_IDS,
   type NodeId,
@@ -30,23 +30,18 @@ import {
   type TableSelectionScore,
 } from './benchmarkSupport.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
-import { type SweepProfile, type PointScore } from './node-sweep-types.js';
+import { exhaustionRate, formatSweepProfile, type SweepProfile, type PointScore, type SweepFailure } from './node-sweep-types.js';
 import { pickWithinEpsilon } from './node-sweep-decision.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
+import { hashValidationSet, loadItems } from './template-validation/items.js';
+import type { Provenance } from './template-validation/labelQuorum.js';
+import { buildRefreshRows, writeRefreshReport, type ProfileFailureCount } from './template-validation/refreshReport.js';
+import { TV_ROOT } from './template-validation/warehouse.js';
 
 // NB: env reads + validation live inside main() (not module scope) so importing
 // this module for the orchestration test harness never triggers process.exit.
 
 const MAX_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB cost gate, mirrors benchmark.ts
-
-// Relative per-token cost weights — UPDATE from live billing before trusting
-// absolute cost. Only the RATIO across tiers matters for the decision rule's
-// cost tie-break.
-const TIER_PRICES: Record<ModelTier, number> = {
-  'flash-lite': 0.0000001,
-  'flash': 0.0000003,
-  'pro': 0.000002,
-};
 
 const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervisor'];
 
@@ -58,7 +53,7 @@ const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervi
 // separates the two axes:
 //
 //   Stage 1 (MODEL axis): hold thinking at a fixed anchor, evaluate ALL models
-//     (listGemini3xModels — the registry, not a hand list), pick the cheapest
+//     (listRegisteredModels — the registry, not a hand list), pick the cheapest
 //     within ε of the best.
 //   Stage 2 (THINKING axis): hold the winning model fixed, walk every thinking
 //     level (incl. `default`), pick the fastest within ε of the best.
@@ -84,7 +79,7 @@ interface SweepArgs {
   bypassClarification: boolean;
 }
 
-function parseArgs(argv: string[]): SweepArgs {
+export function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
   let corpus = 'benchmarks/corpus.json';
   let bypassClarification = false;
@@ -97,7 +92,7 @@ function parseArgs(argv: string[]): SweepArgs {
       const value = argv[++i];
       if (value) {
         // Validate at the CLI boundary: an unknown node otherwise crashes deep in
-        // the search with a cryptic "no Gemini 3.x model for tier=undefined".
+        // the search with a cryptic "no registered Gemini model for tier=undefined".
         if (!isNodeId(value)) {
           throw new Error(`Unknown --node "${value}". Valid nodes: ${NODE_IDS.join(', ')}`);
         }
@@ -109,7 +104,7 @@ function parseArgs(argv: string[]): SweepArgs {
   }
 
   return {
-    nodes: nodes.length > 0 ? nodes : [...DEFAULT_SWEEP_NODES],
+    nodes: nodes.length > 0 ? nodes : [...(corpus === 'template' ? NODE_IDS : DEFAULT_SWEEP_NODES)],
     corpus,
     bypassClarification,
   };
@@ -188,11 +183,13 @@ export interface PerEntry {
   clarificationPassed: boolean;
   sqlGenMetric: number;
   overallScore: number;
+  exhausted?: boolean;
+  failure?: SweepFailure;
 }
 
 export interface CorpusRunResult {
   perEntry: PerEntry[];
-  nodeUsage: Map<NodeId, { latencies: number[]; tokens: number }>;
+  nodeUsage: Map<NodeId, { latencies: number[]; inputTokens: number; outputTokens: number }>;
 }
 
 // ── Orchestration (IO-free; injectable runCorpusOnce) ──────────────────────────
@@ -231,6 +228,7 @@ export interface SweepResult {
   baselineE2e: number;
   combinedE2e: number;
   e2eEps: number;
+  epsByNode: Map<NodeId, number>;
   manualReview: boolean;
   /** The fixed thinking level held constant across Stage 1's model comparison. */
   stage1Anchor: ThinkingLevel;
@@ -263,9 +261,18 @@ function nodeP95(nodeId: NodeId, nodeUsage: CorpusRunResult['nodeUsage']): numbe
   return p95(nodeUsage.get(nodeId)?.latencies ?? []);
 }
 
-function nodeCost(nodeId: NodeId, tier: ModelTier, nodeUsage: CorpusRunResult['nodeUsage']): number {
-  const tokens = nodeUsage.get(nodeId)?.tokens ?? 0;
-  return tokens * TIER_PRICES[tier];
+export function nodeCost(
+  node: NodeId,
+  profile: { tier: ModelTier; version: string },
+  usage: CorpusRunResult['nodeUsage'],
+): number {
+  const { tier, version } = profile;
+  const model = getRegisteredModel(tier, version);
+  if (!model) throw new Error(`No model pricing registered for ${tier}/${version}`);
+
+  const { inputTokens = 0, outputTokens = 0 } = usage.get(node) ?? {};
+  return (inputTokens / 1e6) * model.inputPricePerMTok
+    + (outputTokens / 1e6) * model.outputPricePerMTok;
 }
 
 // Align two runs by sorted intersection of ids, reading values in that order.
@@ -398,10 +405,11 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   const baselineRunA = await runCorpusOnce();
   const baselineRunB = await runCorpusOnce();
 
-  const metricEpsForNode = (node: NodeId): number => {
+  const epsByNode = new Map(nodes.map(node => {
     const aligned = alignById(baselineRunA.perEntry, baselineRunB.perEntry, e => perEntryNodeMetric(node, e));
-    return computeEpsilon(aligned.a, aligned.b);
-  };
+    return [node, computeEpsilon(aligned.a, aligned.b)] as const;
+  }));
+  const metricEpsForNode = (node: NodeId): number => epsByNode.get(node)!;
   // e2e ε is node-independent (always the overallScore series).
   const e2eAligned = alignById(baselineRunA.perEntry, baselineRunB.perEntry, e => e.overallScore);
   const e2eEps = computeEpsilon(e2eAligned.a, e2eAligned.b);
@@ -423,7 +431,8 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
         metric: nodeMetric(node, run.perEntry),
         e2e: e2eOf(run.perEntry),
         p95LatencyMs: nodeP95(node, run.nodeUsage),
-        cost: nodeCost(node, profile.tier, run.nodeUsage),
+        cost: nodeCost(node, profile, run.nodeUsage),
+        ...(node === 'sqlGenerator' && { exhaustionRate: exhaustionRate(run.perEntry) }),
       };
     } catch (err) {
       log(`  [ERROR] ${label} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
@@ -433,8 +442,6 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       else process.env.NODE_PROFILE_OVERRIDES = prev;
     }
   };
-
-  const labelOf = (p: SweepProfile): string => `${p.tier}/${p.version}@${p.thinkingLevel}`;
 
   // ── Per-node two-stage search ─────────────────────────────────────────────────
   for (const node of nodes) {
@@ -447,21 +454,22 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       metric: nodeMetric(node, baselineRunA.perEntry),
       e2e: e2eOf(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
-      cost: nodeCost(node, defaultTierForNode(node), baselineRunA.nodeUsage),
+      cost: nodeCost(node, getNodeProfile(node), baselineRunA.nodeUsage),
+      ...(node === 'sqlGenerator' && { exhaustionRate: exhaustionRate(baselineRunA.perEntry) }),
     };
 
     // Map every label we score back to its concrete profile so the winners can be
     // reconstructed without re-parsing the label string.
     const profileByLabel = new Map<string, SweepProfile>();
 
-    // Stage 1 — MODEL axis. Every Gemini 3.x model at the fixed anchor thinking
-    // level (so only the model varies). listGemini3xModels() is the registry, so
+    // Stage 1 — MODEL axis. Every non-retired model at the fixed anchor thinking
+    // level (so only the model varies). listRegisteredModels() is the registry, so
     // coverage is always complete — no hand-authored subset.
     log(`  Stage 1 (model axis @ thinking=${STAGE1_ANCHOR}):`);
     const stage1: PointScore[] = [];
-    for (const model of listGemini3xModels()) {
+    for (const model of listRegisteredModels()) {
       const profile: SweepProfile = { tier: model.tier, version: model.version, thinkingLevel: STAGE1_ANCHOR };
-      const label = labelOf(profile);
+      const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       const score = await scorePoint(node, profile, label);
       stage1.push(score);
@@ -487,7 +495,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     const stage2: PointScore[] = [];
     for (const level of stage2Levels) {
       const profile: SweepProfile = { tier: stage1Winner.tier, version: stage1Winner.version, thinkingLevel: level };
-      const label = labelOf(profile);
+      const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       if (level === STAGE1_ANCHOR) {
         stage2.push({ ...modelWinnerScore, label });
@@ -514,7 +522,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       thinkingWinnerScore.metric < baseline.metric - metricEps ||
       thinkingWinnerScore.e2e < baseline.e2e - e2eEps;
     const keepDefault = sameAsDefault || regressed;
-    log(`  → chosen: ${keepDefault ? 'DEFAULT (no change)' : labelOf(chosenProfile)}`);
+    log(`  → chosen: ${keepDefault ? 'DEFAULT (no change)' : formatSweepProfile(chosenProfile)}`);
 
     outcomes.push({
       nodeId: node,
@@ -582,7 +590,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
 
   const pointTable = (points: PointScore[], chosenLabel: string): string[] => {
     const lines: string[] = [];
-    lines.push('| point | metric | e2e | p95ms | cost | chosen |');
+    lines.push('| point | metric | e2e | p95ms | cost (USD) | chosen |');
     lines.push('|-------|--------|-----|-------|------|--------|');
     for (const c of points) {
       const rec = c.label === chosenLabel ? '✓' : '';
@@ -594,9 +602,9 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   };
 
   for (const o of outcomes) {
-    const chosenLabel = o.chosenRung ? `${o.chosenRung.tier}/${o.chosenRung.version}@${o.chosenRung.thinkingLevel}` : 'DEFAULT';
+    const chosenLabel = o.chosenRung ? formatSweepProfile(o.chosenRung) : 'DEFAULT';
     reportLines.push(`## ${o.nodeId}`);
-    reportLines.push(`- Default model: ${resolveNodeModel(o.nodeId)}`);
+    reportLines.push(`- Baseline model: ${resolveNodeModel(o.nodeId)}`);
     reportLines.push(`- ε(metric): ${metricEpsForNode(o.nodeId).toFixed(4)}`);
     reportLines.push(`- Final: ${o.chosenRung ? chosenLabel : 'DEFAULT (no change)'}`);
     reportLines.push('');
@@ -627,6 +635,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     baselineE2e,
     combinedE2e,
     e2eEps,
+    epsByNode,
     manualReview,
     stage1Anchor: STAGE1_ANCHOR,
   };
@@ -683,16 +692,17 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
   // The real corpus pass: classify → quality loop → judge, with per-node telemetry.
   return async function runCorpusOnce(): Promise<CorpusRunResult> {
     const perEntry: PerEntry[] = [];
-    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
+    const nodeUsage: CorpusRunResult['nodeUsage'] = new Map();
 
     const sink = (r: UsageRecord) => {
       let bucket = nodeUsage.get(r.nodeId);
       if (!bucket) {
-        bucket = { latencies: [], tokens: 0 };
+        bucket = { latencies: [], inputTokens: 0, outputTokens: 0 };
         nodeUsage.set(r.nodeId, bucket);
       }
       bucket.latencies.push(r.latencyMs);
-      bucket.tokens += r.promptTokens + r.candidatesTokens + r.thoughtsTokens;
+      bucket.inputTokens += r.promptTokens;
+      bucket.outputTokens += r.candidatesTokens + r.thoughtsTokens;
     };
 
     await withUsageSink(sink, async () => {
@@ -815,8 +825,130 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
-async function main() {
+async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string) {
+  const selected = new Set(nodes);
+  const ordered: NodeId[] = [
+    ...[...selected].filter(node => node !== 'sqlGenerator' && node !== 'supervisor'),
+    ...(['sqlGenerator', 'supervisor'] as const).filter(node => selected.has(node)),
+  ];
+  if ((selected.has('sqlGenerator') || selected.has('discrepancy')) && !process.env.GCP_PROJECT_ID) {
+    throw new Error('GCP_PROJECT_ID is required for template SQL execution');
+  }
+  const [version, provenanceJson] = await Promise.all([
+    readFile(join(TV_ROOT, 'VERSION'), 'utf8'),
+    readFile(join(TV_ROOT, 'provenance.json'), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      throw new Error('Template validation set is not frozen. Run npm run tv:label for all nodes.');
+    }),
+  ]);
+  const setVersion = version.trim();
+  const provenance = JSON.parse(provenanceJson) as Provenance;
+  if (provenance.version !== setVersion) throw new Error('Template provenance does not match VERSION');
+  const corpora = ordered.map(node => {
+    const frozen = provenance.perNode?.[node];
+    const digest = frozen?.itemsSha256;
+    if (!frozen || typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error(`Template corpus for ${node} is missing its frozen item digest`);
+    }
+    const items = loadItems(node, TV_ROOT, digest);
+    if (!items.length) throw new Error(`Template corpus for ${node} is empty`);
+    if (items.length !== frozen.accepted) {
+      throw new Error(`Template corpus for ${node} does not match its frozen accepted count`);
+    }
+    if (new Set(items.map(item => item.id)).size !== items.length) {
+      throw new Error(`Template corpus for ${node} contains duplicate item IDs`);
+    }
+    return { node, items };
+  });
+  const setHash = hashValidationSet();
+  const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
+  const env = await loadTemplateEnv(apiKey);
+  const outcomes: NodeOutcome[] = [];
+  const epsByNode = new Map<NodeId, number>();
+  const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
+  const blocked = new Set<NodeId>();
+  const profileOf = (node: NodeId) => formatSweepProfile(getNodeProfile(node));
+  const recordFailures = (node: NodeId, profile: string, { perEntry }: CorpusRunResult) => {
+    for (const { failure } of perEntry) {
+      if (!failure) continue;
+      const counts = failuresByNode.get(node) ?? [];
+      const current = counts.find(entry => entry.profile === profile && entry.category === failure.category && entry.code === failure.code);
+      if (current) current.count++;
+      else counts.push({ ...failure, profile, count: 1 });
+      failuresByNode.set(node, counts);
+    }
+  };
+  let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
+  for (const { node, items } of corpora) {
+    const runner = createTemplateRunner(node, items, env);
+    const runCorpusOnce = async () => {
+      const run = await runner();
+      recordFailures(node, profileOf(node), run);
+      return run;
+    };
+    if (node === 'sqlGenerator') sqlRunner = runner;
+    const result = await runSweep({
+      nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
+    });
+    outcomes.push(...result.outcomes);
+    epsByNode.set(node, result.epsByNode.get(node)!);
+  }
+
+  const sqlOutcome = outcomes.find(outcome => outcome.nodeId === 'sqlGenerator');
+  const supervisor = outcomes.find(outcome => outcome.nodeId === 'supervisor');
+  if (sqlRunner && sqlOutcome && supervisor) {
+    const [sqlRow, supervisorRow] = buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance, failuresByNode);
+    if (supervisorRow.applicable) {
+      const sqlPick = sqlRow.applicable ? sqlOutcome.chosenRung : undefined;
+      const comparator = sqlPick ? sqlOutcome.chosen : sqlOutcome.baseline;
+      const comparatorProfile = sqlPick ? sqlRow.recommended : sqlRow.current;
+      if (sqlRow.failureCounts.some(failure => failure.profile === comparatorProfile && failure.category !== 'candidate')) {
+        blocked.add('supervisor');
+      } else {
+        const runPaired = async () => {
+          const run = await sqlRunner();
+          recordFailures('supervisor', `${profileOf('sqlGenerator')} + ${profileOf('supervisor')}`, run);
+          return run;
+        };
+        const cross = await verifyCrossPass(runPaired, { sqlGenerator: sqlPick, supervisor: supervisor.chosenRung },
+          comparator.metric, sqlRow.eps, comparator.exhaustionRate);
+        const pairedInfrastructureFailure = failuresByNode.get('supervisor')?.some(failure => failure.category !== 'candidate');
+        if (cross.revertSupervisor && !pairedInfrastructureFailure) {
+          supervisor.chosen = supervisor.baseline;
+          supervisor.chosenRung = undefined;
+        }
+        console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}, exhaustion: ${cross.exhaustionRate.toFixed(3)}`);
+      }
+    }
+  }
+
+  const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
+  const unverifiedSupervisor = !sqlOutcome && rows.find(row => row.node === 'supervisor');
+  if (unverifiedSupervisor && unverifiedSupervisor.applicationReason !== 'underfilled corpus') {
+    unverifiedSupervisor.applicable = false;
+    unverifiedSupervisor.applicationReason = 'pending SQL comparator verification';
+  }
+  const base = await writeRefreshReport(resultsDir, rows, {
+    date: runDate, setVersion, setHash, provenance,
+    ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
+  });
+  console.log(`\nReport written to ${base}.md and .json`);
+}
+
+export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
+  const runDate = formatDate(new Date());
+  const args = parseArgs(argv);
+  const template = args.corpus === 'template';
+  if (template && existsSync('.env') && typeof process.loadEnvFile === 'function') process.loadEnvFile('.env');
   const apiKey = process.env.GEMINI_API_KEY;
+  if (template) {
+    for (const name of ['MODEL_ID_OVERRIDES', 'NODE_PROFILE_OVERRIDES']) {
+      if (process.env[name]) throw new Error(`Unset ${name} in the shell and .env before running a template sweep`);
+    }
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
+    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir);
+    return;
+  }
   const projectId = process.env.GCP_PROJECT_ID;
   const fileSearchStoreId = process.env.FILE_SEARCH_STORE_ID;
   const manifestPath = process.env.DBT_MANIFEST_PATH || './dbt/manifest.json';
@@ -832,20 +964,17 @@ async function main() {
     process.exit(1);
   }
 
-  const runDate = formatDate(new Date());
-  const args = parseArgs(process.argv.slice(2));
-
   console.log(`Node sweep run: ${runDate}`);
   console.log(`Sweeping nodes: ${args.nodes.join(', ')}`);
 
   const ai = new GoogleGenAI({ apiKey });
   const root = join(process.cwd());
 
-  const allModels = listGemini3xModels();
+  const allModels = listRegisteredModels();
   console.log(`Stage 1 models (${allModels.length}): ${allModels.map(m => `${m.tier}/${m.version}`).join(', ')}`);
   console.log(`Stage 1 thinking anchor: ${STAGE1_ANCHOR}; Stage 2 thinking levels: ${THINKING_LEVELS.join(', ')}`);
 
-  // Preflight: resolve every Gemini 3.x model id (Stage 1 touches them all) plus
+  // Preflight: resolve every non-retired model id (Stage 1 touches them all) plus
   // each node's baseline model.
   const allModelIds = allModels.map(m => resolveModelId(m.tier, m.version));
   const baselineModelIds = args.nodes.map(node => resolveNodeModel(node));

@@ -501,6 +501,37 @@ describe('handleWhatsAppActions', () => {
     );
   });
 
+  it.each([[], ['a', 'b']].map(columnNames => ({ columnNames })))(
+    'offers only reasoning and SQL for zero rows with columns $columnNames',
+    async ({ columnNames }) => {
+      mockGetWhatsAppActionContext.mockResolvedValue(storedAction('actions'));
+      mockGetResponseContext.mockResolvedValue(ctx({
+        queryResults: { rowCount: 0, columnNames, bytesProcessed: 0 },
+      }));
+      mockCreateWhatsAppActionContext
+        .mockResolvedValueOnce('ctx_reasoning')
+        .mockResolvedValueOnce('ctx_sql')
+        .mockResolvedValueOnce('ctx_table')
+        .mockResolvedValueOnce('ctx_summary');
+      const testClient = client();
+
+      await handleWhatsAppActions([action('wa:v1:actions:ctx_actions')], deps(testClient));
+
+      expect(testClient.sendInteractive).toHaveBeenCalledExactlyOnceWith(conversation, {
+        kind: 'list',
+        body: 'What would you like to see?',
+        buttonText: 'Open actions',
+        sections: [{
+          title: 'Answer actions',
+          rows: [
+            { id: 'wa:v1:show_reasoning:ctx_reasoning', title: 'Show reasoning' },
+            { id: 'wa:v1:show_sql:ctx_sql', title: 'Show SQL' },
+          ],
+        }],
+      });
+    },
+  );
+
   it('sends expired-action copy and does not create child actions when actions context is missing', async () => {
     mockGetWhatsAppActionContext.mockResolvedValue(storedAction('actions'));
     mockGetResponseContext.mockResolvedValue(null);

@@ -29,6 +29,7 @@ export interface QualityResult {
 export interface StatusCallbacks {
   onGenerate?: () => void | Promise<void>;
   onValidate?: () => void | Promise<void>;
+  validateAttempt?: typeof runCoreValidation;
   onReview?: () => void | Promise<void>;
   onRetry?: (attempt: number) => void | Promise<void>;
 }
@@ -75,7 +76,7 @@ export async function qualityLoop(
 
     // 2-4. L1 static → L2 AST (advisory) → L3 dry run
     await callbacks?.onValidate?.();
-    const core = await runCoreValidation(sqlResult.sql, attempt);
+    const core = await (callbacks?.validateAttempt ?? runCoreValidation)(sqlResult.sql, attempt);
     validationHistory.push(...core.records);
 
     if (core.blockedLayer === 'l1') {

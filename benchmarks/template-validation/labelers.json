@@ -1,0 +1,116 @@
+[
+  {
+    "id": "claude",
+    "isolation": "Starts in a fresh temporary cwd containing only schema.json. With --tools \"\" the file-listing probe used only the StructuredOutput tool and returned no listing. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+    "family": "anthropic",
+    "argv": [
+      "claude",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--json-schema",
+      "{schemaJson}",
+      "--model",
+      "{model}",
+      "--tools",
+      "",
+      "--safe-mode",
+      "--no-session-persistence"
+    ],
+    "outputParser": "claude-json",
+    "model": "claude-fable-5-2",
+    "effortArgs": [
+      "--effort",
+      "max"
+    ],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "codex",
+    "isolation": "Starts in a fresh temporary cwd containing only schema.json, with -s read-only and the shell_tool and unified_exec features disabled. The file-listing probe did not run a command or list files, but it called two MCP discovery tools. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+    "family": "openai",
+    "argv": [
+      "codex",
+      "exec",
+      "--json",
+      "--output-schema",
+      "{schemaPath}",
+      "-s",
+      "read-only",
+      "-m",
+      "{model}",
+      "--skip-git-repo-check",
+      "--ignore-user-config",
+      "--disable",
+      "hooks",
+      "--disable",
+      "shell_tool",
+      "--disable",
+      "unified_exec",
+      "--ephemeral",
+      "--",
+      "{prompt}"
+    ],
+    "outputParser": "codex-jsonl",
+    "model": "gpt-6.2-astra",
+    "effortArgs": [
+      "-c",
+      "model_reasoning_effort=\"ultra\""
+    ],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "agy",
+    "isolation": "Starts in a fresh temporary cwd containing only schema.json, with --mode plan. The file-listing probe ran ls, read schema.json, and wrote two planning artifacts outside the temporary cwd. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+    "family": "google",
+    "argv": [
+      "agy",
+      "-p",
+      "{prompt}",
+      "--output-format",
+      "json",
+      "--json-schema",
+      "{schemaPath}",
+      "--mode",
+      "plan",
+      "--model",
+      "{model}"
+    ],
+    "outputParser": "agy-json",
+    "model": "gemini-4-neon-xhigh",
+    "effortArgs": [],
+    "versionArgv": [
+      "--version"
+    ]
+  },
+  {
+    "id": "gemini",
+    "enabled": false,
+    "isolation": "Disabled. The CLI dropped plan mode in a fresh temporary cwd containing only schema.json and then failed authentication. Before use, verify the intended plan restriction. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+    "family": "google",
+    "argv": [
+      "gemini",
+      "-p",
+      "{prompt}",
+      "-o",
+      "json",
+      "--approval-mode",
+      "plan",
+      "-m",
+      "{model}",
+      "-e",
+      "none"
+    ],
+    "outputParser": "gemini-json",
+    "model": "gemini-3.1-pro-preview",
+    "effortArgs": [],
+    "versionArgv": [
+      "--version"
+    ]
+  }
+]

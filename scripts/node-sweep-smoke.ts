@@ -4,7 +4,7 @@ import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 /**
  * node-sweep-smoke — cheap go/no-go pre-check for the per-node sizing sweep.
  *
- * Runs the corpus N times at the DEFAULT profile (no NODE_PROFILE_OVERRIDES) and
+ * Runs the corpus N times with the current node profiles and
  * reports, per swept node, the run-to-run noise band ε computed EXACTLY as
  * runSweep's calibration does (id-aligned per-entry diff via computeEpsilon).
  * It builds its corpus pass through the SAME createRunCorpusOnce seam the real
@@ -36,24 +36,16 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry } from './benchmark-types.js';
-import { getJudgeModel, listGemini3xModels, type ModelTier } from '../src/agents/modelConfig.js';
-import { resolveNodeModel, defaultTierForNode, type NodeId } from '../src/agents/nodeProfiles.js';
+import { getJudgeModel, listRegisteredModels } from '../src/agents/modelConfig.js';
+import { resolveNodeModel, getNodeProfile, type NodeId } from '../src/agents/nodeProfiles.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
-import { createRunCorpusOnce, type CorpusRunResult, type PerEntry } from './node-sweep.js';
+import { createRunCorpusOnce, nodeCost, type CorpusRunResult, type PerEntry } from './node-sweep.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
 
 // Nodes the smoke pre-check reports ε for — the SQL-path reasoning nodes the full
 // sweep aims to size, plus clarification as the known-clean (ε≈0.01) control.
 const SMOKE_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervisor'];
-
-// Relative per-token cost weights — mirror node-sweep.ts TIER_PRICES. Only the
-// ratio across tiers is meaningful; absolute cost is a rough extrapolation aid.
-const TIER_PRICES: Record<ModelTier, number> = {
-  'flash-lite': 0.0000001,
-  'flash': 0.0000003,
-  'pro': 0.000002,
-};
 
 const MAX_BYTES = 1 * 1024 * 1024 * 1024; // mirror node-sweep.ts cost gate
 
@@ -136,7 +128,7 @@ async function main() {
   const root = process.cwd();
   const ai = new GoogleGenAI({ apiKey });
 
-  // Preflight: only the baseline (DEFAULT-profile) models the smoke actually calls.
+  // Preflight: only the baseline models the smoke actually calls.
   const requiredModels = [...new Set([judgeModel, ...SMOKE_NODES.map(n => resolveNodeModel(n))])];
   await assertGenerateContentModelsAvailable(apiKey, requiredModels);
 
@@ -251,25 +243,25 @@ async function main() {
   let totalCost = 0;
   for (const node of SMOKE_NODES) {
     const usage = runA.nodeUsage.get(node);
-    const tokens = usage?.tokens ?? 0;
-    const tier = defaultTierForNode(node);
-    const cost = tokens * TIER_PRICES[tier];
+    const tokens = usage ? usage.inputTokens + usage.outputTokens : 0;
+    const profile = getNodeProfile(node);
+    const cost = nodeCost(node, profile, runA.nodeUsage);
     totalCost += cost;
-    console.log(`${node.padEnd(14)} tier=${tier.padEnd(10)} tokens=${String(tokens).padStart(8)}  p95=${p95(usage?.latencies ?? []).toFixed(0)}ms  cost≈${cost.toExponential(2)}`);
+    console.log(`${node.padEnd(14)} tier=${profile.tier.padEnd(10)} tokens=${String(tokens).padStart(8)}  p95=${p95(usage?.latencies ?? []).toFixed(0)}ms  cost≈$${cost.toExponential(2)}`);
   }
   // Include any non-swept nodes' tokens (e.g. internal flash calls) in the pass total.
   let allTokens = 0;
-  for (const [, u] of runA.nodeUsage) allTokens += u.tokens;
+  for (const u of runA.nodeUsage.values()) allTokens += u.inputTokens + u.outputTokens;
   const meanWall = mean(wallMs);
-  console.log(`\nAll-node tokens/pass: ${allTokens}   swept-node cost/pass≈${totalCost.toExponential(2)}`);
+  console.log(`\nAll-node tokens/pass: ${allTokens}   swept-node cost/pass≈$${totalCost.toExponential(2)}`);
   console.log(`Wall-clock/pass: ${(meanWall / 1000).toFixed(1)}s (mean of ${wallMs.length})`);
 
   // Full sweep size (two-stage coordinate isolation): 2 calibration + per node
-  // [Stage 1: one pass per Gemini 3.x model] + [Stage 2: one pass per thinking
+  // [Stage 1: one pass per non-retired model] + [Stage 2: one pass per thinking
   // level, minus the anchor level reused from Stage 1] + 1 combined verification.
   // THINKING_LEVELS has 5 entries (minimal/low/medium/high/default); the anchor is
   // reused → 4 new Stage-2 passes. Model count tracks the registry automatically.
-  const modelCount = listGemini3xModels().length;
+  const modelCount = listRegisteredModels().length;
   const perNodePasses = modelCount + (5 - 1);
   const estPasses = 2 + perNodePasses * SMOKE_NODES.length + 1;
   console.log(`\nFull sweep ≈ ${estPasses} passes → ~${((meanWall * estPasses) / 60000).toFixed(0)} min wall, ~${(allTokens * estPasses / 1e6).toFixed(1)}M tokens (order-of-magnitude).`);

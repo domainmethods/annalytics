@@ -21,6 +21,10 @@
     "lint:fix": "eslint --fix src/ tests/ scripts/",
     "promote": "tsx scripts/promote-teachings.ts",
     "node-sweep": "tsx scripts/node-sweep.ts",
+    "sweep:template": "tsx scripts/node-sweep.ts --corpus template",
+    "model:discover": "tsx scripts/model-discover.ts",
+    "tv:setup": "tsx scripts/template-validation/warehouse.ts",
+    "tv:label": "tsx scripts/template-validation/label-quorum.ts",
     "prepare": "husky"
   },
   "lint-staged": {

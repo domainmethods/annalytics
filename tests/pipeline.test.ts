@@ -42,7 +42,7 @@ import { saveClarificationState } from '../src/state/clarificationState.js';
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue, overrideButtonsForResultShape } from '../src/slack/blocks.js';
 import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
@@ -710,19 +710,32 @@ describe('buildResponseBlocks', () => {
     vi.mocked(formatValue).mockImplementation(actual.formatValue);
   });
 
-  it('zero_rows: lists generator assumptions once, as the filters applied (#45)', async () => {
+  it('renders the same zero-row Slack answer and controls with or without schema columns', async () => {
     const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+    const formatter = await vi.importActual<typeof import('../src/execution/formatter.js')>('../src/execution/formatter.js');
     vi.mocked(buildZeroRowBlocks).mockImplementation(actual.buildZeroRowBlocks);
-    const blocks = buildResponseBlocks(
-      'zero_rows',
-      { headline: 'h', explanation: 'e', assumptions: ['Excluding test accounts', 'Excluding test accounts'] } as any,
-      { rows: [], columnNames: [], totalRows: 0 } as any,
-      'trace-1', 'T1', 'S1', ['Assuming USD', 'Excluding test accounts'],
-    );
+    vi.mocked(overrideButtonsForResultShape).mockImplementation(actual.overrideButtonsForResultShape);
+    const render = (columnNames: string[]) => {
+      const result = { rows: [], columnNames, totalRows: 0, bytesProcessed: 0, truncated: false, durationMs: 0 };
+      const format = formatter.chooseFormat(result);
+      expect(format).toBe('zero_rows');
+      return buildResponseBlocks(
+        format,
+        { ...baseQualityResult.sqlResult, assumptions: ['Excluding test accounts', 'Excluding test accounts'] },
+        result,
+        'trace-1', 'T1', 'S1', ['Assuming USD', 'Excluding test accounts'],
+      );
+    };
+    const blocks = render([]);
+    expect(render(['a', 'b'])).toEqual(blocks);
     const text = JSON.stringify(blocks);
     expect(text.match(/Excluding test accounts/g)).toHaveLength(1);
     expect(text).toContain('Filters applied:* Excluding test accounts');
     expect(text).toContain('Assumptions:* Assuming USD');
+    const controls = blocks.flatMap(block => block.type === 'actions' ? block.elements : []);
+    expect(controls.map(control => control.action_id)).toEqual([
+      'refine_assumptions', 'thumbs_up_trace-1', 'thumbs_down_trace-1', 'show_reasoning_trace-1', 'show_sql_trace-1',
+    ]);
   });
 
   it('single_value: answer first, then assumptions, then feedback actions', () => {

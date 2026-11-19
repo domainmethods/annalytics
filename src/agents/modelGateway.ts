@@ -11,7 +11,7 @@ export interface UsageRecord {
 }
 type UsageSink = (r: UsageRecord) => void;
 
-const sinkStore = new AsyncLocalStorage<UsageSink>();
+const sinkStore = new AsyncLocalStorage<{ usage: UsageSink; onModelError?: (error: unknown) => void }>();
 
 let defaultSink: UsageSink | undefined;
 
@@ -23,8 +23,8 @@ export function setDefaultUsageSink(sink: UsageSink | undefined): void {
   defaultSink = sink;
 }
 
-export async function withUsageSink<T>(sink: UsageSink, fn: () => Promise<T>): Promise<T> {
-  return sinkStore.run(sink, fn);
+export async function withUsageSink<T>(sink: UsageSink, fn: () => Promise<T>, onModelError?: (error: unknown) => void): Promise<T> {
+  return sinkStore.run({ usage: sink, onModelError }, fn);
 }
 
 function num(v: unknown): number {
@@ -32,7 +32,7 @@ function num(v: unknown): number {
 }
 
 function recordUsage(nodeId: NodeId, usage: unknown, latencyMs: number): void {
-  const sink = sinkStore.getStore() ?? defaultSink;
+  const sink = sinkStore.getStore()?.usage ?? defaultSink;
   if (!sink) return;
   const u = (usage ?? {}) as Record<string, unknown>;
   // Telemetry is best-effort: a throwing sink (logger serialization edge,
@@ -71,7 +71,17 @@ export async function generateForNode(
     }),
   };
   const t0 = Date.now();
-  const res = await ai.models.generateContent({ ...request, model, config } as GenReq);
+  let res;
+  try {
+    res = await ai.models.generateContent({ ...request, model, config } as GenReq);
+  } catch (error) {
+    try {
+      sinkStore.getStore()?.onModelError?.(error);
+    } catch {
+      // A telemetry failure must preserve the original model error.
+    }
+    throw error;
+  }
   recordUsage(nodeId, (res as { usageMetadata?: unknown }).usageMetadata, Date.now() - t0);
   return res;
 }

@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { listGemini3xModels } from '../src/agents/modelConfig.js';
+import { listRegisteredModels } from '../src/agents/modelConfig.js';
 import type { ThinkingLevel } from '../src/agents/nodeProfiles.js';
 import { classifySlackIntake } from '../src/agents/slackIntakeAgent.js';
 import { classifyFollowUp } from '../src/agents/followUpClassifier.js';
@@ -57,14 +57,14 @@ export const DEFAULT_THRESHOLD = 1.0;
 export const UNIVERSAL_ANCHOR: ThinkingLevel = 'minimal';
 
 /**
- * The candidate ladder: EVERY Gemini 3.x model (listGemini3xModels — the registry,
+ * The candidate ladder: Every non-retired model (listRegisteredModels — the registry,
  * not a hand-authored subset, so coverage can't silently drop a model) at the fixed
- * thinking anchor. listGemini3xModels() is already ordered cheapest-tier-first, which
+ * thinking anchor. listRegisteredModels() is already ordered cheapest-tier-first, which
  * is exactly the ordering pickFloorUp requires ("cheapest that passes" = "first that
  * passes"). One axis varies — the model — so a pick is attributable to the model alone.
  */
 export function buildModelLadder(): ModelRung[] {
-  return listGemini3xModels().map((m) => ({
+  return listRegisteredModels().map((m) => ({
     rung: `${m.tier}/${m.version}`,
     tier: m.tier,
     version: m.version,

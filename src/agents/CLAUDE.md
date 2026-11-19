@@ -8,28 +8,25 @@ Full execution record + measured numbers: `docs/superpowers/plans/2026-06-07-nod
 
 ## Template default vs NODE_PROFILE_OVERRIDES — the load-bearing rule
 
-A `DEFAULTS` entry in `nodeProfiles.ts` ships to **every** install of this template.
-A measured pick may become a template default **only if both** hold:
+A `DEFAULTS` entry in `nodeProfiles.ts` ships to **every** install. Apply an
+eligible template-set result only after checking the traps below.
 
-1. **Install-invariant** — the node's prompt/inputs contain **zero install-specific
-   content**. Test it by reading what the agent feeds the model:
-   - ✅ eligible: routes/formats on the **conversation or generic structure** alone —
-     `slackIntake` (message text), `followUpClassifier` (thread + message),
-     `chart`/`summaryOverride` (generic rendering). Difficulty is fixed by language,
-     identical everywhere.
-   - ❌ override-only: prompt is **parameterized by per-install data** — `clarification`
-     injects `teachingSummaries` (ReferenceCards + Teachings) as "AVAILABLE CONTEXT";
-     `sqlGenerator`/`supervisor`/`discrepancy` consume the retrieved dbt schema;
-     `dbtStatus` consumes run history. Their task difficulty (and therefore the right
-     model size) scales with the installed knowledge/schema, which this template does
-     **not** contain. Size these per-install via `NODE_PROFILE_OVERRIDES`, never a default.
-2. **Clean signal** — see the interpretation traps below.
+- **Install-invariant → `MEASURED`.** The prompt and inputs use generic content,
+  such as conversation text for routing or generic structure for rendering.
+- **Install-coupled → `TEMPLATE-MEASURED (starting point)`.** This applies to
+  `clarification`, `sqlGenerator`, `supervisor`, `discrepancy`, `dbtStatus`, and
+  `teachingCandidate`. The template set has a real schema and non-empty fixtures.
+  Difficulty still depends on the installed knowledge, schema, or run history.
+  Installs are expected to size these nodes on their own data and set
+  `NODE_PROFILE_OVERRIDES`.
+  Production SQL generation gets organization knowledge through File Search, and the
+  supervisor gets it through the generator's citations. The template set cannot replicate
+  File Search and measures both nodes on schema-only questions and queries.
+- **`PROVISIONAL`.** The default is based on the node's role and awaits sizing.
 
-The trap to refuse: a node can have a pristine measurement and still fail test #1.
-`clarification` had the cleanest signal in the whole SQL sweep (ε=0.01) and is **still**
-an override, because its difficulty is set by the install's knowledge layer — which this
-template deliberately ships empty (client ReferenceCards are forbidden here), so the sweep
-measured it at minimum difficulty. Don't generalize an empty-corpus pick to every install.
+Once measured, each `DEFAULTS` entry comment must cite the set version and
+measurement date. The [model refresh runbook](../../docs/model-refresh.md) covers
+reviewing and applying the template results.
 
 ## Reading a sweep result — two traps
 
@@ -37,14 +34,14 @@ measured it at minimum difficulty. Don't generalize an empty-corpus pick to ever
   Classifiers flat at **1.000** = cheapest model already wins → downsize is safe.
   `clarification` flat at **0.083** = every model (incl. pro/3.1/high) scores the same
   *low* value → no evidence the cheap model is *adequate*, only that it's no worse on a
-  corpus that barely tests it. Never downsize on a flat-at-floor result.
+  corpus that barely tests it. A flat-at-floor result blocks a default change.
 - **Large ε makes `node-sweep`'s auto-verdict vacuous.** When ε(metric/e2e) is a large
   fraction of scale (`sqlGenerator` ε=0.33, `supervisor` ε=2.85 on the 12-question
   corpus), the quality gate passes everything "within ε" and the cost tie-break hands
   back the cheapest point as a fake downsize. An earlier run printed "ACCEPTED — downsize
-  all three"; only `clarification` (ε=0.01) was real. **Do not trust the auto-verdict
-  when ε ≳ a meaningful quality delta.** Root cause is corpus size, not the judge — grow
-  `benchmarks/corpus.json` before trying to size the reasoning nodes.
+  all three"; only `clarification` (ε=0.01) was real. **For template results,
+  ε > 0.05 on the 0–1 metric blocks a change.** For install-corpus sizing, grow
+  the corpus if ε exceeds a meaningful quality delta.
 
 ## Two-stage coordinate isolation (the sweep search shape)
 
@@ -55,7 +52,7 @@ one axis (`thinkingLevel` was confounded with tier — never sized in isolation)
 now separates the axes:
 
 - **Stage 1 — MODEL axis.** Hold thinking at a fixed anchor (`STAGE1_ANCHOR = 'high'`),
-  evaluate **all** models (`listGemini3xModels()` — the registry, so coverage can't
+  evaluate all non-retired models (`listRegisteredModels()` — the registry, so coverage can't
   silently drop a model), pick the cheapest within ε of the best (`pickWithinEpsilon`,
   `'cost'`). Anchor is `high` on purpose — **capability-first**: give every model ample
   reasoning so the comparison reflects best-case capability, then trim.
@@ -64,7 +61,7 @@ now separates the axes:
   (`pickWithinEpsilon`, `'latency'`, 5% latency band). ~10 evals/node total.
 
 `universal-sweep.ts` (judge-free classifiers) got the same coverage fix: `buildModelLadder()`
-enumerates all 4 models via `listGemini3xModels()` at a fixed `minimal` anchor, then floor-up
+enumerates non-retired models via `listRegisteredModels()` at a fixed `minimal` anchor, then floor-up
 picks the cheapest that clears exact-match accuracy.
 
 **Residual caveat (documented, accepted):** this is greedy coordinate descent, not a full
@@ -72,10 +69,9 @@ model×thinking grid, so it can miss an interaction where a pricier model would 
 only at a level the anchor didn't use. `anchor=high` is what blunts that risk; the ~10-vs-25
 evals/node saving is the deliberate trade.
 
-**Status:** engine + unit tests landed; the **live re-run is deferred** until
-`benchmarks/corpus.json` grows (a bigger corpus shrinks ε so the auto-verdict stops being
-vacuous on the reasoning nodes). The current `nodeProfiles.ts` thinking defaults outside the
-two measured classifiers remain role-based HEURISTICS until that re-run.
+Template refresh uses the same two-stage engine for all 12 nodes. The first live
+template refresh is pending. Install-corpus sizing for the reasoning nodes still
+requires enough cases to bound ε.
 
 ## Judge-free sizing for install-invariant classifiers
 

@@ -10,14 +10,14 @@ export type NodeId =
   | 'metaQuestion' | 'chart' | 'sqlGenerator' | 'supervisor'
   | 'discrepancy' | 'teachingCandidate' | 'summaryOverride';
 
-// ThinkingLevel now lives in modelConfig (next to the per-model capability map it
+// ThinkingLevel now lives in modelConfig (next to the model registry it
 // pairs with). Re-export so the existing importers — node-sweep-types, universal-sweep,
 // the sweep tests — keep their `from './nodeProfiles.js'` import unchanged.
 export type { ThinkingLevel };
 
 export interface NodeProfile {
   tier: ModelTier;
-  version: string;            // resolved via the explicit Gemini 3.x map
+  version: string;            // resolved via the model registry
   thinkingLevel: ThinkingLevel;
 }
 
@@ -47,6 +47,9 @@ const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel:
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
 
+// DEFAULTS tag vocabulary: MEASURED | TEMPLATE-MEASURED | PROVISIONAL.
+// Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
+// for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
   // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
   slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
@@ -134,7 +137,7 @@ export function getNodeProfile(id: NodeId): NodeProfile {
   } catch {
     warnProfileOnce(
       `${id}:${merged.tier}/${merged.version}`,
-      `NODE_PROFILE_OVERRIDES[${id}] resolves to no Gemini 3.x model (${merged.tier}/${merged.version}); using default`,
+      `NODE_PROFILE_OVERRIDES[${id}] resolves to no registered Gemini model (${merged.tier}/${merged.version}); using default`,
     );
     return { ...DEFAULTS[id] };   // fresh copy — never a shared DEFAULTS reference
   }

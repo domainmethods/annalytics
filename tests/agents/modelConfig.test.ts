@@ -36,8 +36,8 @@ describe('Gemini 3.x model resolution', () => {
 
   it('throws on a (tier,version) pair that is not a real model', async () => {
     const { resolveModelId } = await import('../../src/agents/modelConfig.js');
-    expect(() => resolveModelId('pro', '3.5')).toThrow(/no Gemini 3\.x model/i);
-    expect(() => resolveModelId('flash-lite', '3')).toThrow(/no Gemini 3\.x model/i);
+    expect(() => resolveModelId('pro', '3.5')).toThrow(/no registered Gemini model/i);
+    expect(() => resolveModelId('flash-lite', '3')).toThrow(/no registered Gemini model/i);
   });
 
   it('honors MODEL_ID_OVERRIDES for a (tier,version) pair', async () => {
@@ -45,14 +45,48 @@ describe('Gemini 3.x model resolution', () => {
     const { resolveModelId } = await import('../../src/agents/modelConfig.js');
     expect(resolveModelId('pro', '3.1')).toBe('gemini-3.1-pro-001');
   });
+
+  it('legacy override formats still resolve', async () => {
+    vi.stubEnv('MODEL_ID_OVERRIDES', '{"flash/3":"x-model"}');
+    const { resolveModelId } = await import('../../src/agents/modelConfig.js');
+    expect(resolveModelId('flash', '3')).toBe('x-model');
+  });
 });
 
-describe('listGemini3xModels — the sweep enumeration source of truth', () => {
+describe('registry metadata', () => {
+  it('every registered model has positive input and output prices', async () => {
+    const { listAllRegisteredModels } = await import('../../src/agents/modelConfig.js');
+    for (const model of listAllRegisteredModels()) {
+      expect(model.inputPricePerMTok).toBeGreaterThan(0);
+      expect(model.outputPricePerMTok).toBeGreaterThan(0);
+    }
+  });
+
+  it('listRegisteredModels excludes retired', async () => {
+    const { listAllRegisteredModels, listRegisteredModels, getRegisteredModel } =
+      await import('../../src/agents/modelConfig.js');
+    const all = listAllRegisteredModels();
+    const active = listRegisteredModels();
+    for (const { tier, version } of active) {
+      expect(getRegisteredModel(tier, version)!.status).not.toBe('retired');
+    }
+    expect(all.length).toBeGreaterThanOrEqual(active.length);
+  });
+
+  it('no registered id ends with -latest', async () => {
+    const { listAllRegisteredModels } = await import('../../src/agents/modelConfig.js');
+    for (const { id } of listAllRegisteredModels()) {
+      expect(id).not.toMatch(/-latest$/);
+    }
+  });
+});
+
+describe('listRegisteredModels — the sweep enumeration source of truth', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
   it('enumerates EVERY published 3.x model (no silent subset)', async () => {
-    const { listGemini3xModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
-    const models = listGemini3xModels();
+    const { listRegisteredModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
+    const models = listRegisteredModels();
     // The whole point of this helper: a sweep that walks it can never cover a
     // subset. There are exactly four real 3.x coordinates today — assert all four,
     // and that each one actually resolves to a model id.
@@ -66,8 +100,8 @@ describe('listGemini3xModels — the sweep enumeration source of truth', () => {
   });
 
   it('orders cheapest tier first (flash-lite → flash → pro) so floor-up reads left to right', async () => {
-    const { listGemini3xModels } = await import('../../src/agents/modelConfig.js');
-    const tiers = listGemini3xModels().map((m) => m.tier);
+    const { listRegisteredModels } = await import('../../src/agents/modelConfig.js');
+    const tiers = listRegisteredModels().map((m) => m.tier);
     const rank: Record<string, number> = { 'flash-lite': 0, flash: 1, pro: 2 };
     for (let i = 1; i < tiers.length; i++) {
       expect(rank[tiers[i]]).toBeGreaterThanOrEqual(rank[tiers[i - 1]]);
@@ -75,12 +109,12 @@ describe('listGemini3xModels — the sweep enumeration source of truth', () => {
   });
 
   it('returns fresh arrays/objects so a caller cannot mutate the registry', async () => {
-    const { listGemini3xModels } = await import('../../src/agents/modelConfig.js');
-    const a = listGemini3xModels();
+    const { listRegisteredModels } = await import('../../src/agents/modelConfig.js');
+    const a = listRegisteredModels();
     a.pop();
     (a[0] as { tier: string }).tier = 'mutated';
-    expect(listGemini3xModels()).toHaveLength(4);
-    expect(listGemini3xModels()[0].tier).not.toBe('mutated');
+    expect(listRegisteredModels()).toHaveLength(4);
+    expect(listRegisteredModels()[0].tier).not.toBe('mutated');
   });
 });
 
@@ -108,15 +142,20 @@ describe('getSupportedThinkingLevels — per-model thinking_level capability', (
     }
   });
 
-  it('every registry model is annotated (capability map can never silently drift from GEMINI_3X_MODELS)', async () => {
-    // Anti-drift guard: if someone adds a model to GEMINI_3X_MODELS but forgets its
-    // thinking-level support, this fails LOUDLY here rather than corrupting a sweep
-    // (Stage-1 anchor `high` falling back to default) or an override at runtime.
-    const { listGemini3xModels, getSupportedThinkingLevels } = await import('../../src/agents/modelConfig.js');
-    for (const m of listGemini3xModels()) {
-      const levels = getSupportedThinkingLevels(m.tier, m.version);
-      expect(levels.length, `${m.tier}/${m.version} has no thinking-level annotation`).toBeGreaterThan(0);
-      expect(levels, `${m.tier}/${m.version} must support the Stage-1 anchor 'high'`).toContain('high');
+  it('every registered model declares its thinking levels', async () => {
+    const { listAllRegisteredModels, getSupportedThinkingLevels } =
+      await import('../../src/agents/modelConfig.js');
+    for (const { thinkingLevels } of listAllRegisteredModels()) {
+      expect(thinkingLevels.length).toBeGreaterThan(0);
+    }
+    expect(getSupportedThinkingLevels('pro', '3.1')).not.toContain('minimal');
+  });
+
+  it('every non-retired model supports the Stage 1 high-thinking anchor', async () => {
+    const { listRegisteredModels, getSupportedThinkingLevels } =
+      await import('../../src/agents/modelConfig.js');
+    for (const { tier, version } of listRegisteredModels()) {
+      expect(getSupportedThinkingLevels(tier, version), `${tier}/${version}`).toContain('high');
     }
   });
 

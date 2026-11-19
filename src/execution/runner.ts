@@ -39,6 +39,7 @@ export async function executeQuery(
   const rows: Record<string, unknown>[] = [];
   let reportedTotal: number | undefined;
   let hasMore = false;
+  let lastSchemaFields: Array<{ name?: string }> | undefined;
   const wrapIntegers = {
     integerTypeCastFunction: (value: string) => {
       const integer = Number(value);
@@ -52,6 +53,7 @@ export async function executeQuery(
     rows.push(...(page as Record<string, unknown>[]));
     const total = parseCount(response?.totalRows);
     if (total !== undefined) reportedTotal = total;
+    if (response?.schema?.fields) lastSchemaFields = response.schema.fields as Array<{ name?: string }>;
     const remaining = options.maxRows - rows.length;
     if (response?.jobComplete === false) {
       // Still running: the API long-polls (~10s) per call, so retry the same
@@ -74,7 +76,12 @@ export async function executeQuery(
   // The materialized rows are a floor: the SDK has been seen to omit a total for
   // some completed aggregate jobs, and a 1-row COUNT(...) must not look empty.
   const totalRows = Math.max(rows.length, reportedTotal ?? 0);
-  const columnNames = rows.length > 0 ? Object.keys(rows[0]) : [];
+
+  // An empty result still has a schema; keep its column names so empty results
+  // compare by arity instead of collapsing to zero columns.
+  const fields = lastSchemaFields ?? stats.query?.schema?.fields;
+  const schemaNames = fields?.map((field: { name?: string }) => field.name ?? '') ?? [];
+  const columnNames = rows.length > 0 ? Object.keys(rows[0]) : schemaNames.every(Boolean) ? schemaNames : [];
 
   return {
     rows,

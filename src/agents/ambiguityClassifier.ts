@@ -30,6 +30,7 @@ export interface AmbiguityClassifierInput {
 export async function classifyAmbiguity(
   input: AmbiguityClassifierInput,
   apiKey: string,
+  onFallback?: () => void,
 ): Promise<AmbiguityClassification> {
   try {
     const ai = new GoogleGenAI({ apiKey });
@@ -42,17 +43,23 @@ export async function classifyAmbiguity(
     });
 
     const parsed = AmbiguityClassificationSchema.safeParse(JSON.parse(response.text || '{}'));
-    if (!parsed.success) return fallback(input);
-
-    return {
-      type: parsed.data.type,
-      question: parsed.data.question.trim() || fallback(input).question,
-      domain: parsed.data.domain.trim() || 'unclassified',
-      reasoning: parsed.data.reasoning.trim() || 'classifier returned no reasoning',
-    };
+    if (parsed.success) {
+      return {
+        type: parsed.data.type,
+        question: parsed.data.question.trim() || fallback(input).question,
+        domain: parsed.data.domain.trim() || 'unclassified',
+        reasoning: parsed.data.reasoning.trim() || 'classifier returned no reasoning',
+      };
+    }
   } catch {
-    return fallback(input);
+    // Preserve the classifier's fail-open result.
   }
+  try {
+    onFallback?.();
+  } catch {
+    // Keep classification fail-open when an observer throws.
+  }
+  return fallback(input);
 }
 
 function buildPrompt(input: AmbiguityClassifierInput): string {

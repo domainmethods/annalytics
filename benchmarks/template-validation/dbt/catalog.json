@@ -1,0 +1,410 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/catalog/v1.json"
+  },
+  "nodes": {
+    "model.template_validation.orders": {
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "INT64",
+          "index": 1
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "INT64",
+          "index": 2
+        },
+        "status": {
+          "name": "status",
+          "type": "STRING",
+          "index": 3
+        },
+        "gender": {
+          "name": "gender",
+          "type": "STRING",
+          "index": 4
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "index": 5
+        },
+        "returned_at": {
+          "name": "returned_at",
+          "type": "TIMESTAMP",
+          "index": 6
+        },
+        "shipped_at": {
+          "name": "shipped_at",
+          "type": "TIMESTAMP",
+          "index": 7
+        },
+        "delivered_at": {
+          "name": "delivered_at",
+          "type": "TIMESTAMP",
+          "index": 8
+        },
+        "num_of_item": {
+          "name": "num_of_item",
+          "type": "INT64",
+          "index": 9
+        }
+      }
+    },
+    "model.template_validation.order_items": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "INT64",
+          "index": 2
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "INT64",
+          "index": 3
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "INT64",
+          "index": 4
+        },
+        "inventory_item_id": {
+          "name": "inventory_item_id",
+          "type": "INT64",
+          "index": 5
+        },
+        "status": {
+          "name": "status",
+          "type": "STRING",
+          "index": 6
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "index": 7
+        },
+        "shipped_at": {
+          "name": "shipped_at",
+          "type": "TIMESTAMP",
+          "index": 8
+        },
+        "delivered_at": {
+          "name": "delivered_at",
+          "type": "TIMESTAMP",
+          "index": 9
+        },
+        "returned_at": {
+          "name": "returned_at",
+          "type": "TIMESTAMP",
+          "index": 10
+        },
+        "sale_price": {
+          "name": "sale_price",
+          "type": "FLOAT64",
+          "index": 11
+        }
+      }
+    },
+    "model.template_validation.users": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "STRING",
+          "index": 2
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "STRING",
+          "index": 3
+        },
+        "email": {
+          "name": "email",
+          "type": "STRING",
+          "index": 4
+        },
+        "age": {
+          "name": "age",
+          "type": "INT64",
+          "index": 5
+        },
+        "gender": {
+          "name": "gender",
+          "type": "STRING",
+          "index": 6
+        },
+        "state": {
+          "name": "state",
+          "type": "STRING",
+          "index": 7
+        },
+        "street_address": {
+          "name": "street_address",
+          "type": "STRING",
+          "index": 8
+        },
+        "postal_code": {
+          "name": "postal_code",
+          "type": "STRING",
+          "index": 9
+        },
+        "city": {
+          "name": "city",
+          "type": "STRING",
+          "index": 10
+        },
+        "country": {
+          "name": "country",
+          "type": "STRING",
+          "index": 11
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "FLOAT64",
+          "index": 12
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "FLOAT64",
+          "index": 13
+        },
+        "traffic_source": {
+          "name": "traffic_source",
+          "type": "STRING",
+          "index": 14
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "index": 15
+        },
+        "user_geom": {
+          "name": "user_geom",
+          "type": "GEOGRAPHY",
+          "index": 16
+        }
+      }
+    },
+    "model.template_validation.products": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "cost": {
+          "name": "cost",
+          "type": "FLOAT64",
+          "index": 2
+        },
+        "category": {
+          "name": "category",
+          "type": "STRING",
+          "index": 3
+        },
+        "name": {
+          "name": "name",
+          "type": "STRING",
+          "index": 4
+        },
+        "brand": {
+          "name": "brand",
+          "type": "STRING",
+          "index": 5
+        },
+        "retail_price": {
+          "name": "retail_price",
+          "type": "FLOAT64",
+          "index": 6
+        },
+        "department": {
+          "name": "department",
+          "type": "STRING",
+          "index": 7
+        },
+        "sku": {
+          "name": "sku",
+          "type": "STRING",
+          "index": 8
+        },
+        "distribution_center_id": {
+          "name": "distribution_center_id",
+          "type": "INT64",
+          "index": 9
+        }
+      }
+    },
+    "model.template_validation.inventory_items": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "product_id": {
+          "name": "product_id",
+          "type": "INT64",
+          "index": 2
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "index": 3
+        },
+        "sold_at": {
+          "name": "sold_at",
+          "type": "TIMESTAMP",
+          "index": 4
+        },
+        "cost": {
+          "name": "cost",
+          "type": "FLOAT64",
+          "index": 5
+        },
+        "product_category": {
+          "name": "product_category",
+          "type": "STRING",
+          "index": 6
+        },
+        "product_name": {
+          "name": "product_name",
+          "type": "STRING",
+          "index": 7
+        },
+        "product_brand": {
+          "name": "product_brand",
+          "type": "STRING",
+          "index": 8
+        },
+        "product_retail_price": {
+          "name": "product_retail_price",
+          "type": "FLOAT64",
+          "index": 9
+        },
+        "product_department": {
+          "name": "product_department",
+          "type": "STRING",
+          "index": 10
+        },
+        "product_sku": {
+          "name": "product_sku",
+          "type": "STRING",
+          "index": 11
+        },
+        "product_distribution_center_id": {
+          "name": "product_distribution_center_id",
+          "type": "INT64",
+          "index": 12
+        }
+      }
+    },
+    "model.template_validation.events": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "INT64",
+          "index": 2
+        },
+        "sequence_number": {
+          "name": "sequence_number",
+          "type": "INT64",
+          "index": 3
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "STRING",
+          "index": 4
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "index": 5
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "STRING",
+          "index": 6
+        },
+        "city": {
+          "name": "city",
+          "type": "STRING",
+          "index": 7
+        },
+        "state": {
+          "name": "state",
+          "type": "STRING",
+          "index": 8
+        },
+        "postal_code": {
+          "name": "postal_code",
+          "type": "STRING",
+          "index": 9
+        },
+        "browser": {
+          "name": "browser",
+          "type": "STRING",
+          "index": 10
+        },
+        "traffic_source": {
+          "name": "traffic_source",
+          "type": "STRING",
+          "index": 11
+        },
+        "uri": {
+          "name": "uri",
+          "type": "STRING",
+          "index": 12
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "STRING",
+          "index": 13
+        }
+      }
+    },
+    "model.template_validation.distribution_centers": {
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "INT64",
+          "index": 1
+        },
+        "name": {
+          "name": "name",
+          "type": "STRING",
+          "index": 2
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "FLOAT64",
+          "index": 3
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "FLOAT64",
+          "index": 4
+        },
+        "distribution_center_geom": {
+          "name": "distribution_center_geom",
+          "type": "GEOGRAPHY",
+          "index": 5
+        }
+      }
+    }
+  }
+}
