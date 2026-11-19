@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { bigQueryDecimalRow, BIGNUMERIC_TEXT, NUMERIC_TEXT } from '../fixtures/bigQueryDecimals.js';
 
 vi.mock('../../src/state/responseContext.js');
 vi.mock('../../src/validation/pipeline.js');
@@ -341,7 +342,7 @@ function parseCsv(text: string): string[][] {
   return records;
 }
 
-describe('handleCsvOverride line breaks inside cells (#71)', () => {
+describe('handleCsvOverride round-trips cells', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetCtx.mockResolvedValue(baseCtx);
@@ -366,6 +367,19 @@ describe('handleCsvOverride line breaks inside cells (#71)', () => {
       ['1', 'A\rB'],
       ['2', 'C\nD'],
       ['3', 'E\r\nF, "G"'],
+    ]);
+  });
+
+  it('round-trips exact SDK decimals with a quoted record cell', async () => {
+    const rows = [{ ...bigQueryDecimalRow(), duration: { value: 4, unit: 'hours' } }];
+    mockExecute.mockResolvedValue({ rows, columnNames: ['small', 'wide', 'duration'], totalRows: 1, bytesProcessed: 1024, truncated: false });
+
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', csvCurrentBlocks, mockClient, overrideConfig);
+
+    const csv = Buffer.from(mockClient.filesUploadV2.mock.calls[0][0].file).toString();
+    expect(parseCsv(csv)).toEqual([
+      ['small', 'wide', 'duration'],
+      [NUMERIC_TEXT, BIGNUMERIC_TEXT, '{"value":4,"unit":"hours"}'],
     ]);
   });
 });

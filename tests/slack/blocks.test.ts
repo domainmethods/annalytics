@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BigQueryDate } from '@google-cloud/bigquery';
+import { bigQueryDecimalRow, BIGNUMERIC_TEXT, NUMERIC_TEXT } from '../fixtures/bigQueryDecimals.js';
 import {
   buildSingleValueBlocks,
   buildTableBlocks,
@@ -43,6 +44,17 @@ describe('buildSingleValueBlocks', () => {
 });
 
 describe('buildTableBlocks', () => {
+  it('renders exact text from SDK decimal cells', () => {
+    const blocks = buildTableBlocks([bigQueryDecimalRow()], ['small', 'wide']);
+    expect(blocks).toMatchObject([{
+      type: 'table',
+      rows: [
+        [{ text: 'small' }, { text: 'wide' }],
+        [{ text: NUMERIC_TEXT }, { text: BIGNUMERIC_TEXT }],
+      ],
+    }]);
+  });
+
   it('creates header and rows', () => {
     const rows = [
       { region: 'US', revenue: '$1M' },

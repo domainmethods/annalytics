@@ -1,5 +1,5 @@
 import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
-import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
+import { formatBigQueryDecimal, unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
 /** Display for an empty single-value answer. */
@@ -12,7 +12,7 @@ export function formatValue(val: unknown): string {
   if (val === null || val === undefined) return '';
   if (val instanceof Date) return val.toISOString();
   if (typeof val === 'object') {
-    const wrapped = unwrapBigQueryScalar(val);
+    const wrapped = formatBigQueryDecimal(val) ?? unwrapBigQueryScalar(val);
     return wrapped !== undefined ? String(wrapped) : JSON.stringify(val);
   }
   return String(val);
