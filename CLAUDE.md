@@ -121,7 +121,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 
 | Collection | Key | Purpose |
 |---|---|---|
-| `processing_threads` | `threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
+| `processing_threads` | `channel:threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
 | `rate_limits` | `userId` | Per-user rate limiting (1-hour sliding window) |
 | `response_context` | `channel:threadTs_statusMsgTs` (Slack; pre-#30 answers: `threadTs_statusMsgTs`), `conversationId_statusMsgTs` (WhatsApp) | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |

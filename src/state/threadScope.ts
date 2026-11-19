@@ -31,6 +31,8 @@ export function ownedByConversation(owner: unknown, channel: string): boolean {
  * (pending clarification/escalation, participation) must not miss their own
  * conversation's state behind foreign or legacy records sharing the timestamp.
  * Uses only the query's existing filters and ordering, so no new index.
+ * Deliberately uncapped: every query filters on one thread timestamp, so the
+ * candidate set is one thread's records, and a cap would reintroduce misses.
  */
 export async function findOwnedDoc(
   query: Query,

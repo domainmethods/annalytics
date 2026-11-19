@@ -108,6 +108,7 @@ export async function getEscalationByThread(
 /**
  * The conversation an escalation-thread event happened in. The user id is
  * included only for DMs (D… channel ids), where it names the same conversation.
+ * Group DMs and channels match on the channel id alone.
  */
 export function escalationConversation(
   channel: string,

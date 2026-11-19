@@ -104,7 +104,10 @@ export async function recordFeedback(
   const compoundKey = `${threadTs}_${messageTs}`;
   try {
     const doc = await findSlackResponseContextDoc(channel, compoundKey);
-    if (!doc) throw new Error('not found');
+    if (!doc) {
+      console.warn(`No response context to record feedback for ${compoundKey}`);
+      return;
+    }
     await doc.ref.update({
       negativeFeedback: feedbackType === 'negative',
     });
