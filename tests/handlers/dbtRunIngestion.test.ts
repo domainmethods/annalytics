@@ -226,7 +226,7 @@ describe('registerDbtRunIngestion', () => {
       expect(entries[0].status).toBe('success');
       expect(entries[1].status).toBe('error');
       expect(entries[2].status).toBe('error');
-      expect(entries[3].status).toBe('skipped');
+      expect(entries[3].status).toBe('warn');
       expect(entries[4].status).toBe('success');
       expect(entries[5].status).toBe('skipped');
 
@@ -246,6 +246,19 @@ describe('registerDbtRunIngestion', () => {
       expect(entries[1].errorMessage).toBe('Got 1 result, configured to fail if != 0');
       expect(entries[2].errorMessage).toBe('Compilation error');
       expect(entries[3].errorMessage).toBeUndefined();
+    });
+
+    it.each([
+      ['success', 'success'], ['pass', 'success'], ['fail', 'error'],
+      ['error', 'error'], ['partial success', 'error'], ['runtime error', 'error'],
+      ['warn', 'warn'], ['skipped', 'skipped'], ['future-status', 'error'],
+    ])('maps %s to %s', async (input, expected) => {
+      const req = buildReq({ body: {
+        metadata: { generated_at: '2026-02-15T10:00:00Z' },
+        results: [{ unique_id: 'model.example.orders', status: input, execution_time: 1 }],
+      } });
+      await routeHandler(req, buildRes().res);
+      expect(mockSave.mock.calls[0][0][0].status).toBe(expected);
     });
 
     it('returns 500 when Firestore persist fails', async () => {

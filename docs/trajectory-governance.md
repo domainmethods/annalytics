@@ -485,3 +485,9 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 ### 2026-11-18 - Infrastructure validation CI maintenance (#109)
 
 - Under Current Decision #6, infrastructure reference validation now runs on PRs and main pushes with pinned Terraform 1.9.8, without GCP credentials or backend initialization. Missing Terraform/OpenTofu fails locally and in CI so success means the checks ran. Deploy opt-in behavior and manual provisioning remain unchanged.
+
+### 2026-11-18 — dbt run status defect repair (#108)
+
+- Partial success and runtime error now persist as error and appear in the existing failure query. Warnings persist distinctly as warn; only literal skipped maps to skipped.
+- Unknown or missing statuses conservatively map to error on ingestion and readback so unexpected outcomes remain visible for investigation. Existing success/error/skipped documents retain their meaning; previously misclassified skipped documents require re-ingestion because the original status was not retained.
+- This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.

@@ -6,8 +6,10 @@ import { saveDbtRunResults } from '../state/dbtRunHistory.js';
 
 function mapStatus(status: string): DbtRunHistoryEntry['status'] {
   if (status === 'success' || status === 'pass') return 'success';
-  if (status === 'fail' || status === 'error') return 'error';
-  return 'skipped';
+  if (status === 'warn') return 'warn';
+  if (status === 'skipped') return 'skipped';
+  // Failed, partially completed, and unknown outcomes must remain visible in failure queries.
+  return 'error';
 }
 
 export function registerDbtRunIngestion(router: Router, webhookSecret: string): void {

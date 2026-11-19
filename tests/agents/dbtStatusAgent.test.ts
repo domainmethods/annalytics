@@ -55,6 +55,14 @@ describe('handleDbtStatus', () => {
     expect(contents).toContain('How is the dim_customers model doing?');
   });
 
+  it('passes warnings distinctly to the formatter with warning guidance', async () => {
+    mockGenerateContent.mockResolvedValue({ text: 'The check completed with a warning.' });
+    await handleDbtStatus('Any warnings?', [{ ...sampleHistory[0], status: 'warn' }], 'test-key');
+    const args = mockGenerateContent.mock.calls[0][0];
+    expect(args.contents).toContain('"status": "warn"');
+    expect(args.config.systemInstruction).toContain('Treat warn as a completed check');
+  });
+
   it('returns hardcoded message when runHistory is empty (no LLM call)', async () => {
     const result = await handleDbtStatus(
       'What is the status of stg_orders?',
