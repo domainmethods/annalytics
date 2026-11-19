@@ -84,7 +84,7 @@ async function main(): Promise<void> {
   const modelsYaml = readFileSync(`${dbtDir}/models.yml`, 'utf8');
   const location = 'US';
   const bigquery = new BigQuery({ projectId, location });
-  await bigquery.dataset(TV_DATASET).get({ autoCreate: true, location });
+  await bigquery.dataset(TV_DATASET).get({ autoCreate: true });
   for (const query of views) {
     await bigquery.query({ query, location });
   }
