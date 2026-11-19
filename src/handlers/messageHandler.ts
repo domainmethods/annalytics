@@ -23,10 +23,11 @@ import {
 } from '../state/slackEventDedupe.js';
 import { preflightChecks } from './preflightChecks.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
-import { classifyFollowUp } from '../agents/followUpClassifier.js';
+import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
 import { buildThreadContext } from '../slack/threadContext.js';
-import { rootLogger } from '../logging.js';
+import { createTraceId, rootLogger } from '../logging.js';
+import { friendlyErrorMessage } from '../errors.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 
 /**
@@ -166,6 +167,10 @@ export async function handleMessageEvent({
 
     // Follow-up intent routing for thread replies
     if (msg.thread_ts) {
+      // Only a failed *classification* falls back to the standard pipeline.
+      // Once a follow-up route is chosen, its failures must not start an
+      // unrelated SQL run (#48).
+      let intent: FollowUpIntent = 'new_query';
       try {
         const threadMessages = await client.conversations.replies({
           channel: msg.channel,
@@ -178,19 +183,29 @@ export async function handleMessageEvent({
           maxTokens: 1000,
         });
         if (threadContext.length > 0) {
-          const { intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
-          if (intent !== 'new_query') {
-            await routeFollowUp(
-              intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
-              client, toPipelineConfig(config), getTables(),
-            );
-            await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
-            lockHeld = false;
-            return;
-          }
+          ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));
         }
       } catch {
         // Classification failed — fall through to standard pipeline
+      }
+      if (intent !== 'new_query') {
+        try {
+          await routeFollowUp(
+            intent, msg.text || '', threadTs, msg.channel, statusMsg.ts!,
+            client, toPipelineConfig(config), getTables(),
+          );
+        } catch (error) {
+          const traceId = createTraceId();
+          rootLogger.warn({ traceId, intent, err: (error as Error).message }, 'followup.route_failed');
+          await client.chat.update({
+            channel: msg.channel,
+            ts: statusMsg.ts!,
+            text: friendlyErrorMessage(error as Error, traceId),
+          }).catch(() => {});
+        }
+        await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+        lockHeld = false;
+        return;
       }
     }
 

@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 const {
   mockGenerateContent,
   mockRunPipeline,
+  mockClassifyFollowUp,
+  mockRouteFollowUp,
   firestoreStore,
   firestoreQueryResults,
   loggerWarn,
@@ -13,6 +15,8 @@ const {
 } = vi.hoisted(() => {
   const mockGenerateContent = vi.fn();
   const mockRunPipeline = vi.fn(async () => {});
+  const mockClassifyFollowUp = vi.fn();
+  const mockRouteFollowUp = vi.fn();
   const firestoreStore = new Map<string, any>();
   const firestoreQueryResults = new Map<string, any>();
   const loggerWarn = vi.fn();
@@ -75,6 +79,8 @@ const {
   return {
     mockGenerateContent,
     mockRunPipeline,
+    mockClassifyFollowUp,
+    mockRouteFollowUp,
     firestoreStore,
     firestoreQueryResults,
     loggerWarn,
@@ -112,6 +118,15 @@ vi.mock('../../src/pipeline.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/pipeline.js')>();
   return { ...actual, runPipeline: mockRunPipeline };
 });
+
+// Follow-up routing is exercised at the seam only: classification and the
+// chosen route are spies so tests can fail either one independently.
+vi.mock('../../src/agents/followUpClassifier.js', () => ({
+  classifyFollowUp: mockClassifyFollowUp,
+}));
+vi.mock('../../src/handlers/followUpRouter.js', () => ({
+  routeFollowUp: mockRouteFollowUp,
+}));
 
 // ─── Real imports (system under test + real collaborators) ───────
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
@@ -186,6 +201,8 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     mockGenerateContent.mockReset();
     mockRunPipeline.mockReset();
     mockRunPipeline.mockResolvedValue(undefined);
+    mockClassifyFollowUp.mockReset().mockResolvedValue({ intent: 'new_query', reasoning: 'test' });
+    mockRouteFollowUp.mockReset().mockResolvedValue(undefined);
     firestoreStore.clear();
     firestoreQueryResults.clear();
     loggerWarn.mockReset();
@@ -460,5 +477,78 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     );
     expect(statusPosts()).not.toContain(STATUS_TEXT);
     expect(mockRunPipeline).not.toHaveBeenCalled();
+  });
+
+  // ── #48: a failed follow-up route must not fall through into SQL generation ──
+  describe('follow-up routing failures (#48)', () => {
+    const threadReply = () => dmEvent('how was that calculated?', {
+      thread_ts: '1700000000.000100',
+      ts: '1700000000.000150',
+    });
+
+    beforeEach(() => {
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+      mockClient.conversations.replies.mockResolvedValue({
+        messages: [
+          { user: 'U1', text: 'show revenue last month', ts: '1700000000.000100' },
+          { bot_id: 'B1', text: 'Revenue last month was 42.', ts: '1700000000.000120' },
+        ],
+      });
+    });
+
+    it('reports a recoverable error and runs no pipeline when the explanation route fails', async () => {
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+      mockRouteFollowUp.mockRejectedValue(new Error('Firestore unavailable'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvMetaFail'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0][0]).toBe('meta_question');
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      const update = mockClient.chat.update.mock.calls.at(-1)?.[0];
+      expect(update).toMatchObject({ channel: 'D123', ts: '1700000000.000200' });
+      expect(update.text).toContain('trace-msg');
+      expect(update.text).not.toContain('Firestore unavailable');
+      expect([...firestoreStore.keys()].some(k => k.startsWith('processing_threads/'))).toBe(false);
+    });
+
+    it('still releases the lock and runs no pipeline when the error update also fails', async () => {
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+      mockRouteFollowUp.mockRejectedValue(new Error('Slack update failed'));
+      mockClient.chat.update.mockRejectedValue(new Error('Slack down'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvMetaFailUpdate'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      expect([...firestoreStore.keys()].some(k => k.startsWith('processing_threads/'))).toBe(false);
+    });
+
+    it('falls back to the standard pipeline only when classification itself fails', async () => {
+      mockClassifyFollowUp.mockRejectedValue(new Error('Gemini unavailable'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvClassifyFail'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
   });
 });
