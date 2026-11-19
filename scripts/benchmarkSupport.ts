@@ -516,16 +516,17 @@ export function scoreTableSelection(
     && expectedTablesAppearInText(sql, expectedTables)) {
     return { observedTables, tableSelectionPassed: null, tableSelectionUnscorableReason: unscorableReason };
   }
-  return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables) };
+  return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables, knownTables) };
 }
 
 export function tableSelectionPassed(
   expectedTables: string[] | undefined,
   observedTables: string[],
+  inventory: string[] = observedTables,
 ): boolean | null {
   if (!expectedTables || expectedTables.length === 0) return null;
   const observed = new Set(observedTables.map(table => table.toLowerCase()));
-  return expectedTables.every(table => matchesRelation(table, observed));
+  return expectedTables.every(table => matchesRelation(table, observed, inventory));
 }
 
 export function sqlShapePassed(

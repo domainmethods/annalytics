@@ -15,17 +15,17 @@ describe('toFeedbackRecords', () => {
       ctx({ negativeFeedback: false }),
       ctx({}),                       // no thumb -> dropped
     ];
-    const records = toFeedbackRecords(docs, map);
+    const records = toFeedbackRecords(docs, map, ['analytics.fct_orders']);
     expect(records).toHaveLength(2);
     expect(records[0]).toEqual({ domain: 'revenue', negative: true, confidence: 'high' });
   });
   it('drops a legacy doc that has a thumb but no confidence', () => {
     const docs = [ctx({ negativeFeedback: true, confidence: undefined })];
-    expect(toFeedbackRecords(docs, map)).toHaveLength(0);
+    expect(toFeedbackRecords(docs, map, ['analytics.fct_orders'])).toHaveLength(0);
   });
   it('tags unclassified when the doc has no tables', () => {
     const docs = [ctx({ negativeFeedback: false, tablesUsed: undefined })];
-    expect(toFeedbackRecords(docs, map)[0].domain).toBe('unclassified');
+    expect(toFeedbackRecords(docs, map, ['analytics.fct_orders'])[0].domain).toBe('unclassified');
   });
 });
 

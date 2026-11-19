@@ -500,3 +500,7 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - Synthetic offline regressions cover aliased cross-project relations and ephemeral exclusion. Deployment and production acceptance remain outside this change.
 
 PR #114 review repair: shared unambiguous relation matching preserves legacy ReferenceCard, teaching, feedback attribution and benchmark expectations. Complete normalized relation_name takes precedence over component metadata. Synthetic offline regressions cover qualification ambiguity and quoted/conflicting relations; no cloud resources or client evidence are involved.
+
+### 2026-11-18 — PR #114 complete-inventory review repair
+
+Feedback attribution and benchmark scoring now resolve legacy dataset.table names against the complete advertised inventory before comparing answer tables; cross-project ambiguity is rejected/left unattributed. Routine fast-path allowlisting uses the same matcher. Legacy compatibility requires inventory-wide uniqueness; migrate knowledge and expectations to physical three-part names. Explicit malformed relation_name values skip nodes with a warning, while absent/empty values reconstruct from components. Whitespace and identifier quotes are normalized. This repairs existing trust instruments without expanding the tranche; synthetic offline tests only.

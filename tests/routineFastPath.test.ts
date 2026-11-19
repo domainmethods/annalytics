@@ -95,6 +95,10 @@ beforeEach(() => {
 });
 
 describe('runRoutineFastPath', () => {
+  it('accepts a unique legacy name against the complete physical inventory', async () => {
+    const result = await runRoutineFastPath(baseInput({ tables: [{ ...tables[0], name: 'p.analytics.fct_orders' }] }));
+    expect(result.kind).toBe('complete');
+  });
   it('returns ineligible without generating SQL when disabled', async () => {
     const result = await runRoutineFastPath(baseInput({ enabled: false }));
     expect(result.kind).toBe('ineligible');

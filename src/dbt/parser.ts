@@ -232,8 +232,12 @@ export function parseDbtArtifacts(
     const withinCap = documented.length + undocumented.length <= maxColumnsPerTable;
     const columns = withinCap ? [...documented, ...undocumented] : documented;
     const omittedColumnCount = withinCap ? 0 : undocumented.length;
-    const relation = stringValue(node.relation_name).replace(/`/g, '').split('.');
-    const hasRelation = Boolean(stringValue(node.relation_name));
+    const relation = stringValue(node.relation_name).replace(/[`"\s]/g, '').split('.');
+    const hasRelation = Boolean(stringValue(node.relation_name).trim());
+    if (hasRelation && (relation.length !== 3 || relation.some(part => !part))) {
+      console.warn('Invalid dbt relation_name: skipping node; expected three non-empty identifiers');
+      continue;
+    }
     const schema = (hasRelation ? relation.at(-2) : stringValue(node.schema)) || '';
     const name = (hasRelation ? relation.at(-1) : stringValue(node.alias)) || stringValue(node.name, nodeId);
     const database = hasRelation ? (relation.length === 3 ? relation[0] : '') : stringValue(node.database);

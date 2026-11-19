@@ -28,3 +28,13 @@ it.each(['proj.ds.tbl', '`proj`.`ds`.`tbl`', '`proj.ds.tbl`'])('prioritizes comp
   expect(table.schema).toBe('ds');
   expect(table.sampleDDL).toContain('`proj.ds.tbl`');
 });
+
+it('normalizes relation whitespace and quotes and rejects malformed explicit relations', () => {
+  const node = { resource_type: 'model', database: 'p', schema: 'ds', alias: 'tbl' };
+  expect(parseDbtArtifacts({ nodes: { x: { ...node, relation_name: ' "p" . `ds` . tbl ' } } }, {})[0].name).toBe('p.ds.tbl');
+  expect(parseDbtArtifacts({ nodes: { x: { ...node, relation_name: 'ds.tbl' } } }, {})).toEqual([]);
+});
+
+it('reconstructs empty relation names from physical components', () => {
+  expect(parseDbtArtifacts({ nodes: { x: { resource_type: 'model', database: 'p', schema: 'ds', alias: 'tbl', relation_name: '   ' } } }, {})[0].name).toBe('p.ds.tbl');
+});

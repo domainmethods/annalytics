@@ -1,3 +1,4 @@
+import { matchesRelation } from './dbt/relationMatching.js';
 import type { ClarificationResult } from './agents/types.js';
 import type { GenerateSqlOptions } from './agents/sqlGenerator.js';
 import { generateSql } from './agents/sqlGenerator.js';
@@ -343,7 +344,7 @@ function normalizeTableName(value: string | undefined): string {
 }
 
 function isAllowedTable(candidate: string, allowedTables: string[]): boolean {
-  return allowedTables.some(allowed => sameTableReference(candidate, allowed));
+  return matchesRelation(candidate, allowedTables, allowedTables);
 }
 
 function sameTableReference(left: string, right: string): boolean {

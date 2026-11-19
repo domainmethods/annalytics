@@ -13,3 +13,10 @@ it('attributes legacy and qualified cards without crossing ambiguous projects', 
   expect(resolveDomain(['proj.ds.tbl', 'other.ds.tbl'], cards)).toBe('ds');
   expect(resolveDomain(['proj.ds.tbl'], [{ table: 'proj.ds.tbl', domain: 'sales' }])).toBe('sales');
 });
+
+import { tableSelectionPassed } from '../../scripts/benchmarkSupport.js';
+it('rejects a legacy card and expectation when another advertised project collides', () => {
+  const inventory = ['p.ds.tbl', 'q.ds.tbl'];
+  expect(resolveDomain(['q.ds.tbl'], [{ table: 'ds.tbl', domain: 'sales' }], inventory)).toBe('ds');
+  expect(tableSelectionPassed(['ds.tbl'], ['q.ds.tbl'], inventory)).toBe(false);
+});

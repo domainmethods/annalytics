@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initFirestore } from '../src/state/firestore.js';
@@ -26,7 +28,10 @@ async function main() {
     .map((c) => ({ table: c.canonical_table, domain: c.domain }));
 
   const docs = await getResponseContextsSince(windowDays);
-  const records = toFeedbackRecords(docs, domainMap);
+  const manifest = JSON.parse(await readFile(process.env.DBT_MANIFEST_PATH || './dbt/manifest.json', 'utf8'));
+  const catalog = JSON.parse(await readFile(process.env.DBT_CATALOG_PATH || './dbt/catalog.json', 'utf8'));
+  const inventory = parseDbtArtifacts(manifest, catalog).map(table => table.name);
+  const records = toFeedbackRecords(docs, domainMap, inventory);
 
   console.log(formatReport(
     getDomainPainRanking(records),

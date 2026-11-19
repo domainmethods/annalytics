@@ -6,11 +6,11 @@ import type { FeedbackRecord, DomainPain, CalibrationBucket } from './aggregatio
  *  rest with a domain. This is a retroactive read over historical Firestore
  *  docs, some persisted before `confidence` was consistently populated, so the
  *  `confidence` guard keeps a stray legacy doc from poisoning the calibration. */
-export function toFeedbackRecords(docs: ResponseContext[], domainMap: DomainMapEntry[]): FeedbackRecord[] {
+export function toFeedbackRecords(docs: ResponseContext[], domainMap: DomainMapEntry[], inventory: string[] = []): FeedbackRecord[] {
   return docs
     .filter((d) => d.negativeFeedback !== undefined && d.confidence !== undefined)
     .map((d) => ({
-      domain: resolveDomain(d.tablesUsed ?? [], domainMap),
+      domain: resolveDomain(d.tablesUsed ?? [], domainMap, inventory),
       negative: d.negativeFeedback === true,
       confidence: d.confidence,
     }));
