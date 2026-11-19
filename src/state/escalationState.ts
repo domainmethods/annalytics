@@ -1,3 +1,4 @@
+import { LOCK_TTL_MS } from './threadLock.js';
 import { getDb } from './firestore.js';
 import type { EscalationState } from '../types.js';
 
@@ -72,7 +73,7 @@ async function queryPendingEscalation(
  * original thread guarded while it does, but only for the thread-lock TTL so a
  * resolution interrupted mid-delivery does not wedge the thread forever.
  */
-export const RESOLVING_GUARD_MS = 300_000;
+export const RESOLVING_GUARD_MS = LOCK_TTL_MS;
 
 export async function getEscalationByThread(
   threadTs: string,

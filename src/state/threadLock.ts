@@ -1,6 +1,6 @@
 import { getDb, FieldValue } from './firestore.js';
 
-const LOCK_TTL_MS = 300_000; // 300s — matches Cloud Run timeout
+export const LOCK_TTL_MS = 300_000; // 300s — matches Cloud Run timeout
 
 export async function acquireThreadLock(threadTs: string, ownerToken: string): Promise<boolean> {
   const db = getDb();

@@ -130,6 +130,21 @@ describe('checkOverdueEscalations', () => {
     );
   });
 
+  it('skips the timeout notice when a concurrent resolution already claimed the escalation', async () => {
+    mockGetAll.mockResolvedValue([{
+      ...baseEscalation,
+      behavior: 'park_wait' as const,
+      expiresAt: new Date(Date.now() - 1000), // expired
+    }]);
+    mockTimeout.mockResolvedValueOnce(false);
+
+    const result = await checkOverdueEscalations(mockClient, escalationConfig);
+
+    expect(mockTimeout).toHaveBeenCalledWith('esc_trace-1');
+    expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(result.timedOut).toBe(0);
+  });
+
   it('marks timed_out and posts best_effort_verify timeout message', async () => {
     mockGetAll.mockResolvedValue([{
       ...baseEscalation,
