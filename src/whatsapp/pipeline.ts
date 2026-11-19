@@ -275,6 +275,8 @@ export async function answerWhatsAppQuestion(
     config.geminiApiKey,
     resolvedQuestion,
     config.maxBytesProcessed,
+    undefined,
+    input.question,
   );
   logStage(logger, {
     traceId,

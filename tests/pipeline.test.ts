@@ -190,6 +190,15 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).not.toHaveBeenCalled();
   });
 
+  it('generates against the clarification but keeps the original wording for review (#44)', async () => {
+    await runPipeline(baseInput);
+
+    const call = mockQualityLoop.mock.calls[0];
+    expect(call[0].question).toBe('What is total revenue from all orders?');
+    expect(call[2]).toBe('What is total revenue from all orders?');
+    expect(call[5]).toBe('What is total revenue?');
+  });
+
   it('MEDIUM confidence: includes assumptions in response', async () => {
     mockClassify.mockResolvedValue({
       ...highClarification,

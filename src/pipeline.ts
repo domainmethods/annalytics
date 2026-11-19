@@ -460,6 +460,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           onReview: () => updateStatus('Reviewing for accuracy...'),
           onRetry: () => updateStatus('Refining the approach...'),
         },
+        question,
       );
     }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });

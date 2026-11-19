@@ -729,6 +729,8 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
               apiKey,
               resolved,
               maxBytes,
+              undefined,
+              entry.question,
             );
             const tableScore = scoreTableSelection(entry.expectedTables, quality.sqlResult.sql, knownBenchmarkTables);
             result = buildResult(entry, quality.sqlResult.sql, {

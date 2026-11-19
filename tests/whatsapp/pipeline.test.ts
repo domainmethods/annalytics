@@ -438,12 +438,31 @@ describe('answerWhatsAppQuestion', () => {
       'gemini-key',
       'What was revenue yesterday?',
       1_000,
+      undefined,
+      'What was revenue yesterday?',
     );
     expect(mockExecuteQuery).toHaveBeenCalledWith('SELECT 123 AS revenue', {
       maxRows: 10,
       timeoutMs: 30_000,
       maxBytes: 1_000,
     });
+  });
+
+  it('generates against the clarification but keeps the original wording for review (#44)', async () => {
+    mockClassifyQuestion.mockResolvedValue({ ...highClarification, resolved_question: 'What were orders yesterday?' });
+
+    await answerWhatsAppQuestion({
+      question: 'What were paid orders yesterday?',
+      conversationId: 'whatsapp:15551234567',
+      providerMessageId: 'wamid.inbound',
+      tables: [table],
+      config,
+    });
+
+    const call = mockQualityLoop.mock.calls[0];
+    expect(call[0].question).toBe('What were orders yesterday?');
+    expect(call[2]).toBe('What were orders yesterday?');
+    expect(call[5]).toBe('What were paid orders yesterday?');
   });
 
   it('returns a safe answer without executing when supervisor is exhausted', async () => {
