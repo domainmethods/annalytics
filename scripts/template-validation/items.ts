@@ -116,7 +116,7 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
 }
 
 const publicProject = 'bigquery-public-data';
-const scanToken = /`[^`]*`|"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|bigquery-public-data\b|[a-z0-9_]+|\s+|./gi;
+const scanToken = /`{3,}|`[^`\r\n]*`|"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|--[^\r\n]*|#[^\r\n]*|bigquery-public-data\b|[a-z0-9_]+|\s+|./gi;
 const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
 const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
@@ -124,6 +124,7 @@ type ScanToken = {
   value: string;
   kind: 'name' | 'quoted' | 'syntax';
   spaceBefore: boolean;
+  quotedHyphen?: true;
 };
 
 function decodeScanEscapes(text: string): string {
@@ -140,7 +141,7 @@ function tokenizeReferences(text: string, references: Set<string>): ScanToken[] 
     whitespace ? decodeScanEscapes(escape) : escape,
   );
   for (const [value] of input.matchAll(scanToken)) {
-    if (/^\s/.test(value)) {
+    if (/^(?:\s|`{3})/.test(value)) {
       spaceBefore = true;
       continue;
     }
@@ -158,7 +159,7 @@ function tokenizeReferences(text: string, references: Set<string>): ScanToken[] 
     if (value.startsWith('`') && value.length > 1) {
       for (const [part] of value.slice(1, -1).trim().matchAll(quotedPart)) {
         const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
-        tokens.push({ value: part.trim(), kind, spaceBefore });
+        tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
         spaceBefore = false;
       }
     } else {
@@ -188,9 +189,27 @@ function collectReferences(text: string, references: Set<string>): void {
     const token = tokens[index];
     const depth = fromLists.length - 1;
     if (token.kind !== 'syntax') {
-      const segments = [token.value];
-      let quoted = token.kind === 'quoted';
+      const hyphen = tokens[index - 1];
+      const beforeHyphen = tokens[index - 2];
+      const attachedPrefix = hyphen?.value === '-' && !hyphen.spaceBefore && !token.spaceBefore &&
+        beforeHyphen && beforeHyphen.kind !== 'syntax' &&
+        (hyphen.quotedHyphen || token.value.toLowerCase() === publicProject)
+        ? beforeHyphen.value + '-' : '';
+
       let previous = token;
+      let tablePrefix = '';
+      while (tablePosition) {
+        const separator = tokens[index + 1];
+        const next = tokens[index + 2];
+        if (separator?.value !== '-' || separator.spaceBefore || !next || next.spaceBefore ||
+            next.kind === 'syntax') break;
+        tablePrefix += previous.value + '-';
+        previous = next;
+        index += 2;
+      }
+
+      const segments = [previous.value];
+      let quoted = previous.kind === 'quoted';
 
       while (tokens[index + 1]?.value === '.') {
         const dot = tokens[index + 1];
@@ -208,8 +227,10 @@ function collectReferences(text: string, references: Set<string>): void {
         const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
         // Digit-only chains in free text are numeric literals.
         const hasIdentifier = segments.some((segment) => /[a-z_]/i.test(segment));
-        if ((namesTable || (segments.length >= 3 && hasIdentifier)) && !isAllowedChain(segments)) {
-          references.add(segments.join('.'));
+        const prefix = tablePrefix || attachedPrefix;
+        if ((namesTable || (segments.length >= 3 && hasIdentifier)) &&
+            (prefix || !isAllowedChain(segments))) {
+          references.add(prefix + segments.join('.'));
         }
         tablePosition = false;
         continue;

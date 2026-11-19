@@ -35,7 +35,7 @@ it.each(['{', '{}'])('reports the line of a malformed item (%s)', (line) => {
 
 it('flags email addresses, foreign table references and GCP resource names', () => {
   const violations = scanTemplateSafety('a@b.com `acme-prod.analytics.orders` projects/acme-prod/datasets');
-  for (const match of ['a@b.com', 'prod.analytics.orders', 'projects/acme-prod']) {
+  for (const match of ['a@b.com', 'acme-prod.analytics.orders', 'projects/acme-prod']) {
     expect(violations.some((violation) => violation.includes(match))).toBe(true);
   }
 });
@@ -79,7 +79,15 @@ it.each([
   ['SELECT `o.shipping_address.city` FROM tv_thelook.orders o', 'o.shipping_address.city'],
   ['Use `private_dataset.customers`', 'private_dataset.customers'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
-  ['`acme-prod.analytics.orders`', 'prod.analytics.orders'],
+  ['`acme-prod.analytics.orders`', 'acme-prod.analytics.orders'],
+  ['```sql\nSELECT * FROM `private_dataset.customers`\n```', 'private_dataset.customers'],
+  ['Unmatched ` on this line\nSELECT * FROM `private_dataset.customers`', 'private_dataset.customers'],
+  ['`acme-bigquery-public-data.thelook_ecommerce.orders`', 'acme-bigquery-public-data.thelook_ecommerce.orders'],
+  ['acme-bigquery-public-data.thelook_ecommerce.orders', 'acme-bigquery-public-data.thelook_ecommerce.orders'],
+  ['`acme-tv_thelook.orders`', 'acme-tv_thelook.orders'],
+  ['FROM acme-123.2024.01', 'acme-123.2024.01'],
+  ['FROM acme-tv_thelook.orders', 'acme-tv_thelook.orders'],
+  ['JOIN acme-123.2024.01', 'acme-123.2024.01'],
   ['Use tv_thelook.orders. acme.analytics.orders.', 'acme.analytics.orders'],
   ['Use bigquery-public-data.thelook_ecommerce.orders. acme.analytics.orders.', 'acme.analytics.orders'],
   ['SELECT o.gross-`private_dataset.customers` FROM tv_thelook.orders o', 'private_dataset.customers'],
@@ -115,6 +123,8 @@ it.each([
   'Use Alpha. Beta. Gamma',
   'Use a.b. orders',
   'version 1.2.3',
+  '```sql\nSELECT * FROM tv_thelook.orders\n```',
+  '```sql\nSELECT * FROM `tv_thelook.orders`\n```',
   'e.g. revenue',
   'tv_thelook.orders',
   'tv_thelook.orders.order_id',
