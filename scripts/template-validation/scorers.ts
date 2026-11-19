@@ -37,7 +37,8 @@ const NUMBER_SCALES: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
 const YEAR = /(?:19\d{2}|20\d{2}|2100)/.source;
 const DAY = /(?:0?[1-9]|[12]\d|3[01])/.source;
 const ISO_DATE = `${YEAR}${/-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?/.source}`;
-const MAY_DATE = `(?:may\\s+${DAY},?\\s+${YEAR}|${DAY}\\s+may,?\\s+${YEAR}|${YEAR},?\\s+may\\s+${DAY})`;
+const NUMBER_CONTINUATION = /(?:[,.](?=\d)|%|[kmb](?!\w))/.source;
+const MAY_DATE = `(?:may\\s+${DAY},?\\s+${YEAR}|${DAY}\\s+may,?\\s+${YEAR}|${YEAR},?\\s+may(?:\\s+${DAY}|(?=\\s+${DAY}${NUMBER_CONTINUATION})))(?!${NUMBER_CONTINUATION})`;
 const NUMBER_CLAIM = /((?:[-+]\$?|\$[-+]?)?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+))(e[+-]?\d+)?([kmb%]?)/;
 const SUMMARY_TOKENS = new RegExp(`(?<![\\w.])(?:${ISO_DATE}|${MAY_DATE}|${NUMBER_CLAIM.source})(?!\\w|\\.\\d)`, 'gi');
 const BARE_YEAR = new RegExp(`^${YEAR}$`);
@@ -50,8 +51,9 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
     .map(Number)
     .filter(Number.isFinite);
   // Skip ISO dates and timestamps whole. Skip bare years beside English months,
-  // with a day or preceding date preposition required for May. Exponents and
-  // suffixes scale the displayed precision, including for fractional percentages.
+  // with a day or preceding date preposition required for May. A year-first May
+  // prefix leaves a following formatted number intact. Exponents and suffixes
+  // scale the displayed precision, including for fractional percentages.
   let matches = 0;
   let count = 0;
   for (const match of summary.matchAll(SUMMARY_TOKENS)) {

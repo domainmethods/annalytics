@@ -107,12 +107,26 @@ describe('scoreSummaryNumbers', () => {
     expect(scoreSummaryNumbers('2024 May Qualify for Refunds', [])).toBe(0);
   });
 
-  it.each(['In MAY 2024', 'in may 2024', 'May 3, 2024', '3 MAY 2024'])(
+  it.each(['In MAY 2024', 'in may 2024', 'In May 2024', 'May 3, 2024', '3 MAY 2024', '2024 May 3'])(
     'skips %s as a date and scores the count',
     (date) => {
       expect(scoreSummaryNumbers(`${date}, there were 42 orders.`, [{ orders: 42 }])).toBe(1);
     },
   );
+
+  it.each([
+    ['2024 May 12,345 orders', 12345],
+    ['2024 May 12.5 orders per day', 12.5],
+    ['2024 May 12k orders', 12000],
+  ])('scores the full claim in %s', (summary, orders) => {
+    expect(scoreSummaryNumbers(summary, [{ orders }])).toBe(1);
+    expect(scoreSummaryNumbers(summary, [])).toBe(0);
+  });
+
+  it('counts a percentage immediately after a year and May', () => {
+    expect(scoreSummaryNumbers('2024 May 12% conversion', [])).toBe(0);
+    expect(scoreSummaryNumbers('2024 May 12% conversion', [{ rate: 0.12 }])).toBe(1);
+  });
 
   it('scores scientific notation as one number and rounds on the exponent scale', () => {
     const summary = 'Revenue was $1.2e6.';
