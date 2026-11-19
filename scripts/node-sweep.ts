@@ -933,6 +933,9 @@ export async function main(argv = process.argv.slice(2), templateResultsDir = jo
   const args = parseArgs(argv);
   const apiKey = process.env.GEMINI_API_KEY;
   if (args.corpus === 'template') {
+    for (const name of ['MODEL_ID_OVERRIDES', 'NODE_PROFILE_OVERRIDES']) {
+      if (process.env[name]) throw new Error(`Unset ${name} in the shell and .env before running a template sweep`);
+    }
     if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
     await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir);
     return;

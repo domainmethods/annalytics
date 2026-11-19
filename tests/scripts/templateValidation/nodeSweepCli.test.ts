@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { main, type PerEntry } from '../../../scripts/node-sweep.js';
 import { hashItemInput, loadItems } from '../../../scripts/template-validation/items.js';
@@ -28,21 +29,13 @@ afterEach(() => {
 
 it.each([
   'regression', 'reference outage', 'candidate rejection', 'default comparator', 'paired outage',
-  'paired exhaustion', 'stable picked exhaustion', 'unsafe model override',
+  'paired exhaustion', 'stable picked exhaustion',
 ] as const)(
   'writes the correct supervisor decision and failure evidence for %s',
   async scenario => {
     vi.stubEnv('GCP_PROJECT_ID', 'test-project');
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
-    const unsafeUrl = 'https://private.invalid/v1';
-    const unsafeProject = 'projects/private-project/locations/us/models/test';
     const defaultSql = defaultProfileForNode('sqlGenerator');
-    if (scenario === 'unsafe model override') {
-      vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({
-        'flash/3': `${unsafeUrl}/${unsafeProject}`,
-        [`${defaultSql.tier}/${defaultSql.version}`]: `${unsafeUrl}/${unsafeProject}-default`,
-      }));
-    }
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     vi.mocked(readFile).mockImplementation(async (path, options) => {
@@ -71,9 +64,7 @@ it.each([
         : paired ? (comparesExhaustion ? 38 : 34) : sqlPick ? (scenario === 'default comparator' ? 32 : 38) : 32;
       const failure: PerEntry['failure'] = scenario === 'reference outage' && baseline && defaults <= 2
         ? { category: 'reference', code: 'sql-execution' }
-        : (scenario === 'candidate rejection' || (scenario === 'unsafe model override' &&
-          overrides.sqlGenerator?.tier === 'flash' && overrides.sqlGenerator.version === '3')) &&
-          node === 'sqlGenerator' && sqlPick && !paired
+        : scenario === 'candidate rejection' && node === 'sqlGenerator' && sqlPick && !paired
           ? { category: 'candidate', code: 'sql-validation' }
           : scenario === 'paired outage' && paired
             ? { category: 'warehouse', code: 'sql-execution' }
@@ -111,20 +102,6 @@ it.each([
       } else if (scenario === 'default comparator' || scenario === 'stable picked exhaustion') {
         expect(sql.applicable).toBe(scenario === 'stable picked exhaustion');
         expect(supervisor.applicable).toBe(true);
-      } else if (scenario === 'unsafe model override') {
-        for (const row of [sql, supervisor]) {
-          expect(row).toMatchObject({ applicable: false, applicationReason: 'measured under local model override' });
-        }
-        expect(sql.failureCounts).toContainEqual({
-          profile: 'flash/3@high', category: 'candidate', code: 'sql-validation', count: 1,
-        });
-        expect(sql.recommended).not.toBe('flash/3@high');
-        expect(markdown).toContain('measured under local model override');
-        for (const report of [markdown, jsonText]) {
-          expect(report).not.toContain(unsafeUrl);
-          expect(report).not.toContain(unsafeProject);
-          expect(report).toContain('flash/3@high');
-        }
       } else {
         expect(sql).toMatchObject({ currentMetric: 0.8, recommendedMetric: 0.95, eps: 0.01, applicable: true });
         expect(supervisor).toMatchObject({ applicable: false, recommended: supervisor.current, recommendedMetric: 0.9 });
@@ -226,6 +203,39 @@ it.each([
     for (const name of fullReport) expect(await realFs.readFile(join(dir, name), 'utf8')).toBe('previous report');
   } finally {
     vi.mocked(readFile).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function templateLauncher(dir: string, env: NodeJS.ProcessEnv) {
+  await Promise.all([
+    copyFile('package.json', join(dir, 'package.json')),
+    symlink(resolve('scripts'), join(dir, 'scripts'), 'dir'),
+    symlink(resolve('node_modules'), join(dir, 'node_modules'), 'dir'),
+  ]);
+  return spawnSync('npm', ['run', 'sweep:template', '--', '--node', 'slackIntake'], {
+    cwd: dir, encoding: 'utf8', timeout: 10_000, env: {
+      ...process.env, GEMINI_API_KEY: 'test-key', MODEL_ID_OVERRIDES: undefined, NODE_PROFILE_OVERRIDES: undefined, ...env,
+    },
+  });
+}
+
+it.each([
+  ['MODEL_ID_OVERRIDES', 'shell', '{"pro/3.1":"synthetic-unselected-id"}'],
+  ['NODE_PROFILE_OVERRIDES', 'shell', '{"chart":{"thinkingLevel":"low","tier":"flash","version":"3"}}'],
+  ['MODEL_ID_OVERRIDES', 'dotenv', '{"pro/3.1":"synthetic-unselected-id"}'],
+  ['NODE_PROFILE_OVERRIDES', 'dotenv', '{"chart":{"thinkingLevel":"low","tier":"flash","version":"3"}}'],
+])('refuses template mode with %s supplied by %s before reading the corpus', async (variable, source, value) => {
+  const dir = await mkdtemp(join(tmpdir(), 'template-override-'));
+  try {
+    await writeFile(join(dir, '.env'), source === 'dotenv' ? `${variable}='${value}'\n` : '');
+    const { status, stderr, stdout } = await templateLauncher(dir, source === 'shell' ? { [variable]: value } : {});
+    expect(status).toBe(1);
+    expect(stderr).toContain(variable);
+    expect(stderr).not.toContain(value);
+    expect(stderr).not.toMatch(/ENOENT|not frozen/i);
+    expect(stdout).not.toContain(value);
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
