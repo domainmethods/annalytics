@@ -8,6 +8,7 @@ import {
   resolveEscalation,
   updateReminderTime,
   hasPendingEscalation,
+  RESOLVING_GUARD_MS,
 } from '../../src/state/escalationState.js';
 
 let transactionState = 'awaiting_human';
@@ -126,6 +127,32 @@ describe('getEscalationByThread', () => {
     const result = await getEscalationByThread('nonexistent');
 
     expect(result).toBeNull();
+  });
+
+  it('treats a recently claimed resolution as pending so the thread stays guarded', async () => {
+    const resolvingDoc = (claimedAt: Date) => ({
+      get: vi.fn().mockResolvedValue({
+        empty: false,
+        docs: [{
+          data: () => ({
+            escalationId: 'esc-123',
+            originalThreadTs: '1234.5678',
+            pipelineState: 'resolving',
+            claimedAt,
+            createdAt: new Date(),
+            expiresAt: new Date(Date.now() + 60_000),
+          }),
+        }],
+      }),
+    });
+    const empty = { get: vi.fn().mockResolvedValue({ empty: true, docs: [] }) };
+
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date()));
+    const fresh = await getEscalationByThread('1234.5678');
+    expect(fresh?.status).toBe('pending');
+
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date(Date.now() - RESOLVING_GUARD_MS - 1)));
+    expect(await getEscalationByThread('1234.5678')).toBeNull();
   });
 
   it('returns expired_now and marks expired escalation as timed_out', async () => {

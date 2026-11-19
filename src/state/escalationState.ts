@@ -67,10 +67,30 @@ async function queryPendingEscalation(
   return { status: 'pending', state };
 }
 
+/**
+ * A claimed resolution is re-running the pipeline for this thread. Keep the
+ * original thread guarded while it does, but only for the thread-lock TTL so a
+ * resolution interrupted mid-delivery does not wedge the thread forever.
+ */
+export const RESOLVING_GUARD_MS = 300_000;
+
 export async function getEscalationByThread(
   threadTs: string,
 ): Promise<EscalationLookup> {
-  return queryPendingEscalation('originalThreadTs', threadTs);
+  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs);
+  if (awaiting) return awaiting;
+
+  const snapshot = await getDb().collection(COLLECTION)
+    .where('originalThreadTs', '==', threadTs)
+    .where('pipelineState', '==', 'resolving')
+    .limit(1)
+    .get();
+  if (snapshot.empty) return null;
+
+  const data = snapshot.docs[0].data();
+  const claimedAt = toDate(data.claimedAt as Date | FirestoreTimestamp | undefined);
+  if (!claimedAt || Date.now() - claimedAt.getTime() > RESOLVING_GUARD_MS) return null;
+  return { status: 'pending', state: toEscalationState(data) };
 }
 
 export async function getEscalationByEscalationThread(
