@@ -256,6 +256,18 @@ describe('qualityLoop', () => {
     expect(mockReviewSql).toHaveBeenCalledTimes(1); // Supervisor was still reached
   });
 
+  it('runs core validation by default and a supplied validateAttempt instead of it', async () => {
+    await qualityLoop(baseOptions, 'supervisor-key', 'total revenue?', 1_000_000, {});
+    expect(mockDryRun).toHaveBeenCalledWith(baseSqlResult.sql);
+
+    mockDryRun.mockClear();
+    const validateAttempt = vi.fn(async () => ({ records: [], blockedLayer: null, blocked: null, bytesProcessed: 7 }));
+    const result = await qualityLoop(baseOptions, 'supervisor-key', 'total revenue?', 1_000_000, { validateAttempt });
+    expect(validateAttempt).toHaveBeenCalledWith(baseSqlResult.sql, 0);
+    expect(mockDryRun).not.toHaveBeenCalled();
+    expect(result.verdict).toBe('pass');
+  });
+
   // 10. Status callbacks invocation order
   it('calls status callbacks in correct order', async () => {
     const callOrder: string[] = [];

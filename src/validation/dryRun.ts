@@ -1,12 +1,8 @@
 import { BigQuery } from '@google-cloud/bigquery';
 import type { ValidationResult } from '../types.js';
+import { pickRelationMetadata, type QueryRelationMetadata } from './relationMetadata.js';
 
-export type ReferencedTable = { projectId?: string; datasetId?: string; tableId?: string };
-export type QueryRelationMetadata = {
-  referencedTables?: ReferencedTable[];
-  referencedLogicalViews?: ReferencedTable[];
-  referencedRoutines?: { projectId?: string; datasetId?: string; routineId?: string }[];
-};
+export type { QueryRelationMetadata, ReferencedTable } from './relationMetadata.js';
 export type DryRunValidationResult = ValidationResult & QueryRelationMetadata;
 
 let bigquery: BigQuery;
@@ -18,8 +14,8 @@ export function initBigQuery(projectId?: string): void {
 /**
  * True only for errors that reject the query itself. Everything else (including
  * `notFound` and `accessDenied`) is treated as a warehouse failure. That is safe
- * in the template harness only because its relation allowlist rejects unknown
- * tables before the dry run; without such a pre-filter, a hallucinated table
+ * only for a caller whose relation allowlist rejects unknown tables before
+ * the dry run; without such a pre-filter, a hallucinated table
  * would be misread as infrastructure instead of a model error.
  */
 export function isBigQueryQueryRejection(error: unknown): boolean {
@@ -49,13 +45,7 @@ export async function dryRunValidation(sql: string): Promise<DryRunValidationRes
     }
 
     const bytesProcessed = parseInt(statistics.totalBytesProcessed, 10);
-    const { referencedTables, referencedLogicalViews, referencedRoutines } = statistics.query;
-    return {
-      valid: true, layer: 'L3-dryrun', bytesProcessed,
-      ...(referencedTables && { referencedTables }),
-      ...(referencedLogicalViews && { referencedLogicalViews }),
-      ...(referencedRoutines && { referencedRoutines }),
-    };
+    return { valid: true, layer: 'L3-dryrun', bytesProcessed, ...pickRelationMetadata(statistics.query) };
   } catch (error) {
     return {
       valid: false,

@@ -19,7 +19,8 @@ export interface ValidationResult {
   bytesProcessed?: number;    // from dry run
   /**
    * Set by dryRunValidation for errors beyond invalidQuery and billingTierLimitExceeded,
-   * including accessDenied, notFound, and quotaExceeded. Only the template harness reads it.
+   * including accessDenied, notFound, and quotaExceeded. Lets a caller tell infrastructure
+   * failures apart from model errors.
    */
   warehouseFailure?: true;
 }
