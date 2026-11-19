@@ -2,8 +2,9 @@
 
 Notable template changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow Semantic Versioning. Before 1.0, minor versions may contain
-breaking configuration changes, always flagged **Action required**. This first baseline summarizes merged history;
-0.1.0 matches package.json and is proposed, not yet tagged or released.
+breaking configuration changes, always flagged **Action required**. This first
+baseline summarizes merged history; 0.1.0 matches package.json and is proposed,
+not yet tagged or released. CI/meta-only changes are omitted.
 package.json previously read 1.0.0 (an npm default, never a release), so
 recorded `packageVersion` metadata may appear to move backwards.
 
@@ -12,7 +13,7 @@ Maintainers: at release time, move Unreleased entries into a dated version secti
 package.json and package-lock.json if the version changes. After merging to main,
 tag that main commit `vX.Y.Z` and create a GitHub release from its changelog section.
 
-## [Unreleased]
+## Unreleased
 
 ### Added
 
@@ -61,7 +62,7 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
   silently; install one of them to validate `infra/` locally. A credential-free
   CI job runs the same validation on pull requests and main.
 
-## [0.1.0] - Proposed
+## 0.1.0 - Proposed
 
 ### Added
 

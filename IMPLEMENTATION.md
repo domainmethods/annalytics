@@ -69,33 +69,33 @@ None currently — the template's Operational Trust tranche closed the previousl
 Read [CHANGELOG.md](CHANGELOG.md), especially **Action required** notes, before
 updating or deploying (see its versioning note). Work in a clean checkout on an
 update branch and back up implementation-owned content. Add the remote once,
-with `--no-tags` so later fetches never pull template tags into your own tag
-namespace:
+with `--no-tags` so later fetches never pull template tags into your own tags:
 
 ```bash
 git remote add --no-tags template https://github.com/domainmethods/annalytics.git
 ```
 
-Then, for each update, fetch template tags into their own namespace (so they
-cannot collide with your implementation's own `vX.Y.Z` tags) and merge:
+Then, for each update, fetch template tags into a separate namespace outside
+`refs/tags/` (so they cannot collide with your own `vX.Y.Z` tags or be
+published by `git push --tags`) and merge:
 
 ```bash
-git fetch --no-tags template 'refs/tags/*:refs/tags/template/*'
+git fetch --no-tags template 'refs/tags/*:refs/template-tags/*'
 git switch -c update/template-release
 # Replace vX.Y.Z with an actual published template release tag.
-git merge refs/tags/template/vX.Y.Z
+git merge refs/template-tags/vX.Y.Z
 ```
 
 No release tags exist until the first maintainer release. Do not assume the
 proposed changelog version is already available. For a repository created with
 GitHub **Use this template** (or another copy without shared history), use
-`git merge --allow-unrelated-histories refs/tags/template/vX.Y.Z` for the first
+`git merge --allow-unrelated-histories refs/template-tags/vX.Y.Z` for the first
 sync instead.
 With unrelated histories there is no merge base: files changed upstream can
 produce add/add conflicts even when you never edited them locally, including
 runtime code, tests, infrastructure, and deploy configuration. Files the
 template deleted after your snapshot are not removed for you and produce no
-conflict; after the merge, compare `git ls-tree -r --name-only refs/tags/template/vX.Y.Z`
+conflict; after the merge, compare `git ls-tree -r --name-only refs/template-tags/vX.Y.Z`
 against your tree and delete obsolete template files deliberately.
 
 In this merge direction (template into your implementation), resolve each file
