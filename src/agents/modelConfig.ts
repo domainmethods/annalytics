@@ -15,7 +15,7 @@ export function getJudgeModel(): string {
 
 export type ModelTier = 'flash-lite' | 'flash' | 'pro';
 
-// The Gemini 3.x `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
+// The Gemini `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
 // not a real API value: it means "omit thinkingConfig and let the model manage its
 // own budget" (see modelGateway). Lives here — next to the model registry it pairs
 // with — so the registry below and every sweep/profile can speak one

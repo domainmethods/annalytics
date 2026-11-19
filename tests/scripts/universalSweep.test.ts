@@ -80,8 +80,10 @@ describe('buildModelLadder', () => {
     expect(ladder).toHaveLength(10);
     const models = ladder.map((r) => `${r.tier}/${r.version}`);
     expect(new Set(models)).toEqual(
-      new Set(['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
-      'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon']),
+      new Set([
+        'flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
+        'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon',
+      ]),
     );
     // Every candidate must resolve to a real Gemini model id.
     for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();
