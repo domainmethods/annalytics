@@ -2,6 +2,13 @@
 
 Anna Lytics is a Slack bot that answers business questions by translating natural-language questions into read-only BigQuery SQL. It uses dbt metadata as the semantic layer, configurable Gemini model aliases for generation and review, and Gemini File Search for domain-specific knowledge.
 
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) for the proposed release baseline and update
+notes, and [Updating from the template](IMPLEMENTATION.md#updating-from-the-template)
+for syncing an existing implementation. Releases are cut by maintainers; the
+proposed baseline is not yet a published tag.
+
 ## Architecture
 
 Users ask questions in Slack via `@Anna Lytics`, `/anna`, DMs, or thread replies. Each request flows through `src/pipeline.ts`:
