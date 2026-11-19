@@ -22,6 +22,7 @@ import {
   handleTableOverride,
   handleSummaryOverride,
   handleCsvOverride,
+  csvField,
   formatValue,
 } from '../../src/handlers/responseOverrides.js';
 import { rootLogger } from '../../src/logging.js';
@@ -313,6 +314,67 @@ describe('handleCsvOverride with BigQuery Date objects', () => {
 
     const csv = Buffer.from(mockClient.filesUploadV2.mock.calls[0][0].file).toString();
     expect(csv.split('\n')[1]).toBe('2025-01-15,"{""value"":4,""unit"":""hours""}"');
+  });
+});
+
+/** Minimal RFC 4180 reader: CR, LF or CRLF outside quotes ends a record, as in
+ *  common spreadsheet/CSV readers. */
+function parseCsv(text: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { record.push(field); field = ''; }
+    else if (ch === '\r' || ch === '\n') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      record.push(field); records.push(record); record = []; field = '';
+    } else field += ch;
+  }
+  record.push(field); records.push(record);
+  return records;
+}
+
+describe('handleCsvOverride line breaks inside cells (#71)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(baseCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockClient.chat.update.mockResolvedValue({});
+  });
+
+  it('round-trips a bare carriage return, a line feed and CRLF without splitting the row', async () => {
+    const rows = [
+      { id: '1', note: 'A\rB' },
+      { id: '2', note: 'C\nD' },
+      { id: '3', note: 'E\r\nF, "G"' },
+    ];
+    mockExecute.mockResolvedValue({ rows, columnNames: ['id', 'note'], totalRows: 3, bytesProcessed: 1024, truncated: false });
+
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', csvCurrentBlocks, mockClient, overrideConfig);
+
+    const csv = Buffer.from(mockClient.filesUploadV2.mock.calls[0][0].file).toString();
+    expect(parseCsv(csv)).toEqual([
+      ['id', 'note'],
+      ['1', 'A\rB'],
+      ['2', 'C\nD'],
+      ['3', 'E\r\nF, "G"'],
+    ]);
+  });
+});
+
+describe('csvField', () => {
+  it('quotes only fields that need it', () => {
+    expect(csvField('plain')).toBe('plain');
+    expect(csvField('A\rB')).toBe('"A\rB"');
+    expect(csvField('a "b" c')).toBe('"a ""b"" c"');
   });
 });
 
