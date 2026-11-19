@@ -184,3 +184,30 @@ describe('WhatsApp allowlist normalization', () => {
     expect(() => loadConfig()).toThrow(/WHATSAPP_ALLOWED_WA_IDS/);
   });
 });
+
+describe('numeric startup settings', () => {
+  const settings = ['COST_GATE_MAX_BYTES', 'QUERY_TIMEOUT_MS', 'MAX_RESULT_ROWS',
+    'RATE_LIMIT_PER_HOUR', 'ESCALATION_REMINDER_MINUTES', 'ESCALATION_TIMEOUT_HOURS',
+    'FAST_PATH_MAX_BYTES', 'PORT', 'RESPONSE_CONTEXT_RETENTION_DAYS'];
+  beforeEach(() => { vi.unstubAllEnvs(); baseEnv(); });
+  for (const name of settings) {
+    it.each(['oops', 'NaN', 'Infinity', '-Infinity', '-1', '0', '1.5', '9007199254740992'])(`${name} rejects %s`, value => {
+      vi.stubEnv(name, value);
+      expect(() => loadConfig()).toThrow(name);
+    });
+    it('accepts a positive integer', () => {
+      vi.stubEnv(name, '42');
+      expect(() => loadConfig()).not.toThrow();
+    });
+    it.each(['', '  ', undefined])(`${name} defaults for blank or unset %s`, value => {
+      vi.stubEnv(name, undefined);
+      const expected = loadConfig();
+      vi.stubEnv(name, value);
+      expect(loadConfig()).toEqual(expected);
+    });
+  }
+  it('rejects ports outside the TCP range', () => {
+    vi.stubEnv('PORT', '65536');
+    expect(() => loadConfig()).toThrow('PORT');
+  });
+});

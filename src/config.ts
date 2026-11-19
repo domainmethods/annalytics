@@ -65,11 +65,13 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function parseEnvInt(name: string, defaultVal: number): number {
+function parseEnvInt(name: string, defaultVal: number, max = Number.MAX_SAFE_INTEGER): number {
   const val = process.env[name];
-  if (val === undefined || val === '') return defaultVal;
+  if (val === undefined || val.trim() === '') return defaultVal;
   const parsed = Number(val);
-  if (Number.isNaN(parsed)) throw new Error(`Invalid config: ${name} must be a number, got "${val}"`);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > max) {
+    throw new Error(`Invalid config: ${name} must be a positive safe integer no greater than ${max}`);
+  }
   return parsed;
 }
 
@@ -129,6 +131,7 @@ function loadWhatsAppConfig(): AppConfig['whatsapp'] {
 }
 
 export function loadConfig(): AppConfig {
+  parseEnvInt('RESPONSE_CONTEXT_RETENTION_DAYS', 90, 99_000_000);
   return {
     slack: {
       botToken: requireEnv('SLACK_BOT_TOKEN'),
@@ -167,7 +170,7 @@ export function loadConfig(): AppConfig {
       requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
     },
     whatsapp: loadWhatsAppConfig(),
-    port: parseEnvInt('PORT', 3000),
+    port: parseEnvInt('PORT', 3000, 65535),
     lifecycleSweepSecret: process.env.LIFECYCLE_SWEEP_SECRET || undefined,
   };
 }
