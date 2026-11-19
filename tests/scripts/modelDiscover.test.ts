@@ -90,3 +90,13 @@ test('formatRegistryStub emits a candidate entry with TODO placeholders', () => 
     status: 'candidate',
   },`);
 });
+
+test('discovery reports a missing retired model without failing when no default uses it', () => {
+  const retired: RegisteredModel = {
+    tier: 'flash', version: '2.0', id: 'gemini-2.0-flash', status: 'retired',
+    thinkingLevels: [], inputPricePerMTok: 0, outputPricePerMTok: 0,
+  };
+  const diff = diffModels([], [retired], new Map());
+  expect(diff.missing).toEqual([{ id: retired.id, usedByDefaults: [] }]);
+  expect(discoveryExitCode(diff)).toBe(0);
+});
