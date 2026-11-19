@@ -481,3 +481,7 @@ The Slack and WhatsApp pipelines now run the shared L1–L4 validator on the fin
 ### 2026-11-18 — Model configuration documentation (#70)
 
 Corrected deployment guidance to use node profiles and model-ID overrides; documented residual legacy script/config consumers. Documentation maintenance only; no model defaults, sizing evidence, runtime behavior, or tranche order changed.
+
+### 2026-11-18 - Infrastructure validation CI maintenance (#109)
+
+- Under Current Decision #6, infrastructure reference validation now runs on PRs and main pushes with pinned Terraform 1.9.8, without GCP credentials or backend initialization. Missing Terraform/OpenTofu fails locally and in CI so success means the checks ran. Deploy opt-in behavior and manual provisioning remain unchanged.
