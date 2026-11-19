@@ -1,3 +1,4 @@
+import { BigQueryDate, BigQueryInt } from '@google-cloud/bigquery';
 import { describe, expect, it } from 'vitest';
 import { referenceIsOrdered, resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
 
@@ -22,6 +23,41 @@ describe('resultsEquivalent', () => {
     expect(resultsEquivalent(singleValue(1000000), singleValue(1000000.5), {
       ...unordered, relTol: 1e-8,
     })).toBe(false);
+  });
+
+  it('backtracks to a global column swap when both columns have the same multiset', () => {
+    const ref = { columnNames: ['a', 'b'], rows: [{ a: 1, b: 2 }, { a: 2, b: 1 }] };
+    const cand = { columnNames: ['x', 'y'], rows: [{ x: 2, y: 1 }, { x: 1, y: 2 }] };
+    expect(resultsEquivalent(ref, cand, { ordered: true })).toBe(true);
+  });
+
+  it.each([false, true])('rejects a swap on only one row (ordered=%s)', ordered => {
+    const ref = { columnNames: ['a', 'b'], rows: [{ a: 1, b: 10 }, { a: 2, b: 20 }] };
+    const cand = { columnNames: ['x', 'y'], rows: [{ x: 1, y: 10 }, { x: 20, y: 2 }] };
+    expect(resultsEquivalent(ref, cand, { ordered })).toBe(false);
+  });
+
+  it('matches duplicate identical columns', () => {
+    const ref = { columnNames: ['a', 'b'], rows: [{ a: 1, b: 1 }, { a: 2, b: 2 }] };
+    const cand = { columnNames: ['x', 'y'], rows: [{ x: 2, y: 2 }, { x: 1, y: 1 }] };
+    expect(resultsEquivalent(ref, cand, unordered)).toBe(true);
+  });
+
+  it('rejects columns that have compatible partners but no complete mapping', () => {
+    const columnNames = Array.from({ length: 12 }, (_, i) => `c${i}`);
+    const result = (ones: number) => ({
+      columnNames,
+      rows: [Object.fromEntries(columnNames.map((name, i) => [name, Number(i < ones)]))],
+    });
+    expect(resultsEquivalent(result(11), result(10), unordered)).toBe(false);
+  });
+
+  it('returns false when the matching column permutation is beyond the search cap', () => {
+    const columnNames = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+    const rows = columnNames.map(name => Object.fromEntries(columnNames.map(column => [column, Number(column === name)])));
+    const ref = { columnNames, rows };
+    const cand = { columnNames: [...columnNames].reverse(), rows };
+    expect(resultsEquivalent(ref, cand, { ordered: true })).toBe(false);
   });
 
   it('compares NULL safely', () => {
@@ -64,17 +100,35 @@ describe('resultsEquivalent', () => {
 
   it.each([
     [12n, 12, true],
-    [{ value: '12' }, 12, true],
-    [{ toString: () => '1.2e+1' }, 12, true],
-    [{ value: '2026-11-18' }, '2026-11-18', true],
-    [{ value: '' }, 0, false],
+    [new BigQueryInt('12'), 12, true],
+    [{ value: '12', status: 'paid' }, 12, false],
+    [{ toString: () => '1.2e+1' }, 12, false],
     ['12', 12, false],
     [true, 1, false],
     [false, 'false', false],
     [[{ b: 2, a: 1 }], [{ a: 1, b: 2 }], true],
     [[1, 2], [2, 1], false],
+    [[1, 2], '[1,2]', false],
+    [[NaN], [null], false],
   ])('normalizes %o against %o to %s', (ref, cand, equivalent) => {
     expect(resultsEquivalent(singleValue(ref), singleValue(cand), unordered)).toBe(equivalent);
+  });
+
+  it('distinguishes a BigQueryDate from a record with the same value field', () => {
+    const date = new BigQueryDate('2026-11-18');
+    expect(resultsEquivalent(singleValue(date), singleValue('2026-11-18'), unordered)).toBe(true);
+    expect(resultsEquivalent(singleValue(date), singleValue({ value: date.value }), unordered)).toBe(false);
+  });
+
+  it('trims recognized numeric wrapper text for parsing and preserves other text', () => {
+    class Big {
+      constructor(private readonly text: string) {}
+      toFixed() { return this.text; }
+      toString() { return this.text; }
+    }
+    expect(resultsEquivalent(singleValue(new Big(' 12 ')), singleValue(12), unordered)).toBe(true);
+    expect(resultsEquivalent(singleValue(new Big('  ')), singleValue(0), unordered)).toBe(false);
+    expect(resultsEquivalent(singleValue(new Big('  ')), singleValue('  '), unordered)).toBe(true);
   });
 
   it('matches tolerant numeric values once each within a row', () => {

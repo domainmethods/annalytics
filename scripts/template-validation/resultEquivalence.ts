@@ -1,5 +1,9 @@
+import { BigQueryDate, BigQueryDatetime, BigQueryInt, BigQueryTime, BigQueryTimestamp } from '@google-cloud/bigquery';
+
 type QueryResult = { columnNames: string[]; rows: Record<string, unknown>[] };
-type Value = null | boolean | number | string;
+type Scalar = null | boolean | number | string;
+type Value = Scalar | { encoded: string };
+const MAX_COLUMN_MAPPINGS = 5000;
 
 export function referenceIsOrdered(sql: string): boolean {
   // Consume quoted text and comments as whole tokens so their parentheses cannot affect depth.
@@ -20,85 +24,76 @@ export function referenceIsOrdered(sql: string): boolean {
 }
 
 function normalizeWrappedString(value: string): string | number {
-  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) {
-    const number = Number(value);
-    if (Number.isFinite(number)) return number;
-  }
-  return value;
+  const text = value.trim();
+  const number = Number(text);
+  return text !== '' && Number.isFinite(number) ? number : value;
 }
 
-function normalize(value: unknown): Value {
+function normalizeScalar(value: unknown): Scalar | undefined {
   if (value == null) return null;
   if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') return value;
-  if (typeof value === 'object' && !Array.isArray(value)) {
-    if ('value' in value && typeof value.value === 'string') return normalizeWrappedString(value.value);
-    if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
-      return normalizeWrappedString(value.toString());
-    }
+  if (value instanceof BigQueryDate || value instanceof BigQueryDatetime || value instanceof BigQueryTime
+    || value instanceof BigQueryTimestamp || value instanceof BigQueryInt) {
+    return normalizeWrappedString(value.value);
   }
-  return JSON.stringify(value, (_key, child: unknown) => {
-    if (typeof child === 'bigint') return Number(child);
-    if (child === null || typeof child !== 'object' || Array.isArray(child)) return child;
-    return Object.fromEntries(Object.entries(child).sort(([a], [b]) => a < b ? -1 : Number(a > b)));
-  }) ?? String(value);
+  if (typeof value === 'object' && value.constructor?.name === 'Big'
+    && 'toFixed' in value && typeof value.toFixed === 'function') {
+    return normalizeWrappedString(value.toString());
+  }
+  return undefined;
 }
 
-function typeRank(value: Value): number {
-  if (value === null) return 0;
-  if (typeof value === 'boolean') return 1;
-  if (typeof value === 'number') return 2;
-  return 3;
+function encodeNested(value: unknown): unknown {
+  if (value === undefined) return ['undefined'];
+  const scalar = normalizeScalar(value);
+  if (typeof scalar === 'number' && !Number.isFinite(scalar)) return ['number', String(scalar)];
+  if (scalar !== undefined) return scalar;
+  if (Array.isArray(value)) return ['array', value.map(encodeNested)];
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return ['record', Object.keys(record).sort().map(key => [key, encodeNested(record[key])])];
+  }
+  return [typeof value, String(value)];
 }
 
-function compareValues(a: Value, b: Value): number {
-  const typeDifference = typeRank(a) - typeRank(b);
-  if (typeDifference !== 0) return typeDifference;
-  if (a === null || b === null) return 0;
-  if (Number.isNaN(a)) return Number(Number.isNaN(b)) - 1;
-  if (Number.isNaN(b)) return 1;
-  return a < b ? -1 : Number(a > b);
+function normalize(value: unknown): Value {
+  const scalar = normalizeScalar(value);
+  return scalar === undefined ? { encoded: JSON.stringify(encodeNested(value)) } : scalar;
 }
 
 function equalValues(a: Value, b: Value, relTol: number): boolean {
   if (a === b || Object.is(a, b)) return true;
+  if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+    return a.encoded === b.encoded;
+  }
   return typeof a === 'number' && typeof b === 'number'
     && Number.isFinite(a) && Number.isFinite(b)
     && Math.abs(a - b) <= relTol * Math.max(Math.abs(a), Math.abs(b), 1e-12);
 }
 
 function matchMultiset<T>(ref: T[], cand: T[], equal: (a: T, b: T) => boolean): boolean {
-  const used = new Set<number>();
-  return ref.every(value => {
-    const index = cand.findIndex((candidate, i) => !used.has(i) && equal(value, candidate));
-    if (index === -1) return false;
-    used.add(index);
-    return true;
-  });
-}
+  const assigned: (T | undefined)[] = Array.from({ length: cand.length });
 
-function matchUnorderedRows(ref: Value[][], cand: Value[][], equal: (a: Value[], b: Value[]) => boolean): boolean {
-  const assigned: (Value[] | undefined)[] = Array.from({ length: cand.length });
-
-  function assign(row: Value[], visited: Set<number>): boolean {
-    const free = cand.findIndex((candidate, i) => assigned[i] === undefined && equal(row, candidate));
+  function assign(value: T, visited: Set<number>): boolean {
+    const free = cand.findIndex((candidate, i) => assigned[i] === undefined && equal(value, candidate));
     if (free !== -1) {
-      assigned[free] = row;
+      assigned[free] = value;
       return true;
     }
 
-    // If every compatible row is taken, try moving its current match to another candidate.
+    // If every compatible candidate is taken, try moving its current match.
     return cand.some((candidate, i) => {
       const current = assigned[i];
-      if (current === undefined || visited.has(i) || !equal(row, candidate)) return false;
+      if (current === undefined || visited.has(i) || !equal(value, candidate)) return false;
       visited.add(i);
       if (!assign(current, visited)) return false;
-      assigned[i] = row;
+      assigned[i] = value;
       return true;
     });
   }
 
-  return ref.every(row => assign(row, new Set()));
+  return ref.every(value => assign(value, new Set()));
 }
 
 export function resultsEquivalent(
@@ -107,14 +102,50 @@ export function resultsEquivalent(
   opts: { ordered: boolean; relTol?: number },
 ): boolean {
   if (ref.columnNames.length !== cand.columnNames.length || ref.rows.length !== cand.rows.length) return false;
+  if (ref.rows.length === 0) return true;
 
   const normalizeRows = ({ columnNames, rows }: QueryResult) =>
-    rows.map(row => columnNames.map(name => normalize(row[name])).sort(compareValues));
+    rows.map(row => columnNames.map(name => normalize(row[name])));
   const refRows = normalizeRows(ref);
   const candRows = normalizeRows(cand);
   const relTol = opts.relTol ?? 1e-6;
-  const equalRows = (a: Value[], b: Value[]) => matchMultiset(a, b, (left, right) => equalValues(left, right, relTol));
-  return opts.ordered
-    ? refRows.every((row, i) => equalRows(row, candRows[i]))
-    : matchUnorderedRows(refRows, candRows, equalRows);
+  const equal = (a: Value, b: Value) => equalValues(a, b, relTol);
+  const refColumns = ref.columnNames.map((_, i) => refRows.map(row => row[i]));
+  const candColumns = cand.columnNames.map((_, i) => candRows.map(row => row[i]));
+  const columnIndices = refColumns.map((_, i) => i);
+  const compatible = refColumns.map(column => new Set(
+    columnIndices.filter(i => matchMultiset(column, candColumns[i], equal))));
+
+  const mapping: number[] = [];
+  const used = new Set<number>();
+  let mappingsTried = 0;
+  const equalRows = (a: Value[], b: Value[]) => a.every((value, i) => equal(value, b[i]));
+
+  function search(): boolean {
+    if (mapping.length === refColumns.length) {
+      mappingsTried++;
+      const projected = candRows.map(row => mapping.map(i => row[i]));
+      return opts.ordered
+        ? refRows.every((row, i) => equalRows(row, projected[i]))
+        : matchMultiset(refRows, projected, equalRows);
+    }
+    const remaining = columnIndices.slice(mapping.length);
+    const available = columnIndices.filter(i => !used.has(i));
+    // Skip prefixes that cannot extend to a full mapping, even if every column has an edge.
+    if (!matchMultiset(remaining, available, (a, b) => compatible[a].has(b))) return false;
+
+    for (const i of compatible[mapping.length]) {
+      // Treat a result as inequivalent when the search exhausts its mapping budget.
+      if (mappingsTried >= MAX_COLUMN_MAPPINGS) return false;
+      if (used.has(i)) continue;
+      mapping.push(i);
+      used.add(i);
+      if (search()) return true;
+      mapping.pop();
+      used.delete(i);
+    }
+    return false;
+  }
+
+  return search();
 }
