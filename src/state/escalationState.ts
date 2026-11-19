@@ -45,6 +45,11 @@ function toEscalationState(data: Record<string, unknown>): EscalationState {
   } as EscalationState;
 }
 
+/**
+ * `originalChannel` scopes original-thread lookups to their conversation. It is
+ * omitted for escalation-thread lookups, whose timestamps all live in the one
+ * escalation channel (or DM) and are therefore already unique.
+ */
 async function queryPendingEscalation(
   field: string,
   value: string,

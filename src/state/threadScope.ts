@@ -21,5 +21,5 @@ export const THREAD_SCOPE_SCAN_LIMIT = 20;
  * owner never match, so they can't leak into another conversation.
  */
 export function ownedByConversation(owner: unknown, channel: string): boolean {
-  return typeof owner === 'string' && owner === channel;
+  return owner === channel;
 }

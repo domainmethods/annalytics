@@ -230,6 +230,16 @@ describe('runPipeline', () => {
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
   });
 
+  it('LOW confidence: scopes the clarification id to the conversation', async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, channel: 'C_ONE' });
+    await runPipeline({ ...baseInput, channel: 'C_TWO' });
+
+    const ids = mockSaveClarification.mock.calls.map(([state]) => state.clarificationId);
+    expect(ids).toEqual([`clarify_C_ONE:${baseInput.threadTs}`, `clarify_C_TWO:${baseInput.threadTs}`]);
+  });
+
   it('quality loop fail_then_pass: proceeds to execution', async () => {
     mockQualityLoop.mockResolvedValue({
       ...baseQualityResult,
