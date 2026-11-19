@@ -86,7 +86,7 @@ describe('buildModelLadder', () => {
     for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();
   });
 
-  it('holds thinking at the anchor, or default where the model lacks it (single-axis: model only)', () => {
+  it('holds thinking at the anchor, or default where the model lacks it', () => {
     const levels = Object.fromEntries(buildModelLadder().map((r) => [r.rung, r.thinkingLevel]));
     expect(levels).toEqual({
       'flash-lite/3.1': UNIVERSAL_ANCHOR, 'flash-lite/3.5': UNIVERSAL_ANCHOR, 'flash/3': UNIVERSAL_ANCHOR,

@@ -6,7 +6,7 @@ Use the frozen set in `benchmarks/template-validation/` to review template defau
 
    The sweep measures only models in that registry, so a newly offered model is a candidate only after you add its entry here.
 
-   Before the live refresh, check every registry price against the pricing page and resolve any `TODO(price)`. Stage 1 uses those rates to break ties.
+   Before the live refresh, check every registry price against the pricing page and resolve any `TODO(price)`. Stage 1 uses those rates to break ties. Some entries use rates that take effect later, as their comments note, so a report's cost columns can differ from current billing.
 2. Run `npm run tv:setup` on the first run and when using a new machine or project. It creates the `tv_thelook` views over `bigquery-public-data.thelook_ecommerce` and generates the template dbt artifacts.
 
    On the first run from the seed-only checkout, run `npm run tv:label` after setup to build the initial set. Use authenticated local agent CLIs and a BigQuery labeling principal with job creation permission and data access scoped to the template views and the public TheLook dataset. Labels require unanimous agreement. The default is three distinct families. Two produce a reduced quorum, and one requires `npm run tv:label -- --allow-single-family`. Multiple CLIs from the same family count once.

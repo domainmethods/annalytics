@@ -61,7 +61,7 @@ export const UNIVERSAL_ANCHOR: ThinkingLevel = 'minimal';
  * not a hand-authored subset, so coverage can't silently drop a model) at the fixed
  * thinking anchor. listRegisteredModels() is already ordered cheapest-tier-first, which
  * is exactly the ordering pickFloorUp requires ("cheapest that passes" = "first that
- * passes"). One axis varies — the model — so a pick is attributable to the model alone.
+ * passes"). Only the model varies, except that models without the anchor also change thinking.
  * A model that lacks the anchor level (pro/3.1, flash/3.8) runs at `default`, the level
  * the runtime guard would substitute, so the report names the coordinate that ran.
  */
