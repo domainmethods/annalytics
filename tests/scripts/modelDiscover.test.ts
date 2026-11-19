@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { RegisteredModel } from '../../src/agents/modelConfig.js';
-import { diffModels, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from '../../scripts/model-discover-core.js';
+import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from '../../scripts/model-discover-core.js';
 
 test('isTextGenerationModel excludes non-text and aliases', () => {
   const excluded = [
@@ -38,6 +38,18 @@ test('diffModels flags missing models referenced by defaults', () => {
     missing: [{ id: 'gemini-3-flash-preview', usedByDefaults: ['dbtStatus'] }],
     unchanged: [retired.id],
   });
+});
+
+test('discoveryExitCode signals a missing model', () => {
+  expect(discoveryExitCode({
+    added: ['gemini-3.8-flash'],
+    missing: [{ id: 'gemini-3-flash-preview', usedByDefaults: ['dbtStatus'] }],
+    unchanged: [],
+  })).toBe(1);
+});
+
+test('discoveryExitCode succeeds with additions only', () => {
+  expect(discoveryExitCode({ added: ['gemini-3.8-flash'], missing: [], unchanged: [] })).toBe(0);
 });
 
 test('probeThinkingLevels records rejected levels', async () => {

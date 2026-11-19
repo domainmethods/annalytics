@@ -27,6 +27,10 @@ export function diffModels(liveIds: string[], registry: RegisteredModel[], defau
   };
 }
 
+export function discoveryExitCode(diff: ModelDiff): 0 | 1 {
+  return diff.missing.length > 0 ? 1 : 0;
+}
+
 export async function probeThinkingLevels(id: string, call: (id: string, level: string) => Promise<void>): Promise<string[]> {
   const accepted: string[] = [];
   for (const level of THINKING_LEVELS) {

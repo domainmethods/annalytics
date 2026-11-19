@@ -1,7 +1,7 @@
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { listAllRegisteredModels, resolveModelId } from '../src/agents/modelConfig.js';
 import { NODE_IDS, defaultProfileForNode, type NodeId } from '../src/agents/nodeProfiles.js';
-import { diffModels, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from './model-discover-core.js';
+import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from './model-discover-core.js';
 
 async function main(): Promise<void> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -25,10 +25,19 @@ async function main(): Promise<void> {
     return [node, resolveModelId(tier, version)];
   }));
   const diff = diffModels(liveIds, listAllRegisteredModels(), defaultIds);
+  process.exitCode = discoveryExitCode(diff);
+  if (diff.missing.length > 0) {
+    console.error('Missing registered models');
+    for (const { id, usedByDefaults } of diff.missing) {
+      const nodes = usedByDefaults.length > 0 ? usedByDefaults.join(', ') : 'none';
+      console.error(`- ${id} (template defaults: ${nodes})`);
+    }
+  }
   console.log(JSON.stringify(diff, null, 2));
 
+  const incomplete: string[] = [];
   for (const id of diff.added) {
-    let incomplete = false;
+    const failureReasons = new Set<string>();
     const levels = await probeThinkingLevels(id, async (model, level) => {
       try {
         await ai.models.generateContent({
@@ -41,18 +50,19 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 400) {
-          incomplete = true;
-          const reason = error instanceof ApiError ? `HTTP ${error.status}` : 'request failed';
-          console.error(`Probe failed for ${model} at ${level} (${reason}).`);
+          failureReasons.add(error instanceof ApiError ? `HTTP ${error.status}` : 'request failed');
         }
         throw error;
       }
     });
-    if (incomplete) {
-      process.exitCode = 1;
+    if (failureReasons.size > 0) {
+      incomplete.push(`- ${id} (${[...failureReasons].join(', ')})`);
     } else {
       console.log(formatRegistryStub(id, levels));
     }
+  }
+  if (incomplete.length > 0) {
+    console.error(['Probe incomplete', ...incomplete].join('\n'));
   }
 }
 
