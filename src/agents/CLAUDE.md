@@ -19,6 +19,9 @@ eligible template-set result only after checking the traps below.
   Difficulty still depends on the installed knowledge, schema, or run history.
   Installs are expected to size these nodes on their own data and set
   `NODE_PROFILE_OVERRIDES`.
+  Production SQL generation gets organization knowledge through File Search, and the
+  supervisor gets it through the generator's citations. The template set cannot replicate
+  File Search and measures both nodes on schema-only questions and queries.
 - **`PROVISIONAL`.** The default is based on the node's role and awaits sizing.
 
 Once measured, each `DEFAULTS` entry comment must cite the set version and

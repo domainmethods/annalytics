@@ -204,7 +204,7 @@ export async function labelNode(
 async function templateContext(node: NodeId, root: string): Promise<string> {
   const modelsPath = join(root, 'dbt', 'models.yml');
   const schema = existsSync(modelsPath) ? 'Warehouse schema:\n' + readFileSync(modelsPath, 'utf8') : '';
-  const knowledge = ['clarification', 'sqlGenerator', 'supervisor', 'ambiguityClassifier'].includes(node)
+  const knowledge = node === 'clarification' || node === 'ambiguityClassifier'
     ? await loadLocalKnowledgeSummaries(join(root, 'knowledge')) : [];
   return [schema, knowledge.length ? 'Local knowledge:\n' + JSON.stringify(knowledge) : ''].filter(Boolean).join('\n\n');
 }

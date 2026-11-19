@@ -153,12 +153,12 @@ const templateScorers: Scorers = {
     const candidate = await generateTeachingCandidate({ ...item.context, apiKey });
     return scoreTeachingCandidate(candidate, item);
   },
-  async sqlGenerator(item, { apiKey, tables, knowledge, execute }, evidence) {
+  async sqlGenerator(item, { apiKey, tables, execute }, evidence) {
     const reference = await executeScoredSql(execute, item.referenceSql, evidence, true);
     if (!reference) return 0;
     let warehouseFailure = false;
     const quality = await qualityLoop(
-      { question: item.question, tables, threadContext: [], apiKey, knowledgeSummaries: knowledge },
+      { question: item.question, tables, threadContext: [], apiKey },
       apiKey, item.question, TEMPLATE_MAX_BYTES,
       { async validateAttempt(sql, attempt) {
         const relations = templateQueryRelations(sql);

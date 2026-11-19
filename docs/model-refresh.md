@@ -23,4 +23,6 @@ Use the frozen set in `benchmarks/template-validation/` to review template defau
 5. Update the applicable `DEFAULTS` entries in `src/agents/nodeProfiles.ts` and align the model defaults in `.env.example` and the `DEFAULT_*_MODEL` constants. Mark superseded registry entries `retired` once no default or documented override uses them.
 6. Commit only the default changes and their supporting registry updates. Cite the set version and measurement date in each measured `DEFAULTS` comment, for example `TEMPLATE-MEASURED tv-v1 2026-12-02`. The refresh reports are gitignored. Keep benchmark evidence, project IDs, store IDs, and client data local.
 
+Production SQL generation gets organization knowledge through File Search, and supervisor review gets it through the generator's citations. The template set cannot replicate File Search. Drafting, labeling, and scoring for these nodes use schema-only questions and queries.
+
 For an installation sweep, export the installation environment first, including `GEMINI_API_KEY` and `GCP_PROJECT_ID`. The plain `node-sweep` script does not load `.env`. Run `npm run node-sweep -- --corpus <path>` with the installation corpus path. Size install-coupled nodes on local data and set `NODE_PROFILE_OVERRIDES` according to the [per-node sizing rules](../src/agents/CLAUDE.md).

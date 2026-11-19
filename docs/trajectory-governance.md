@@ -551,3 +551,4 @@ The full-path quality loop passed the clarified question to the supervisor twice
 - **Decision:** Activate model refresh via template validation set now as T3 #1.
 - **Rationale:** pinned Gemini 3.x preview defaults are obsolete (live list 2026-11-18 offers 3.5–3.8 Flash, Gemini 4); obsolescence is recurring.
 - The first live refresh is pending. Follow the [model refresh runbook](model-refresh.md).
+- The template set measures SQL generation and supervisor review on schema-only questions and queries. Production knowledge for these nodes comes through File Search and the generator's citations.

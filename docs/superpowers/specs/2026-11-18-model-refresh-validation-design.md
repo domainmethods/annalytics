@@ -213,16 +213,18 @@ grounded in execution, not opinion.
 and `supervisor`, the amount expected to bring ε below a meaningful delta. The builder adjusts
 based on the ε the first calibration run reports; the report must print ε for every node.
 
-**Knowledge layer (my call, after the builder check):** `clarification` and `sqlGenerator`
-are install-coupled through `teachingSummaries` (ReferenceCards + Teachings), not through the
-fixtures above. The set therefore includes a small **synthetic, template-safe knowledge layer**
-under `benchmarks/template-validation/knowledge/`: a few generic ReferenceCards and Teachings
-over thelook (e.g. "revenue excludes cancelled/returned order_items"). It gets written as part
-of item generation and passed to the agents as local summaries. File Search is **disabled** in
-template mode. `--corpus template` must **force** the operator's own knowledge summaries and
-`FILE_SEARCH_STORE_ID` off, so no client knowledge can leak into a measurement meant to be
-committed. Some `clarification` items must hinge on that knowledge (e.g. ambiguous without the
-card, clear with it), or the rule change's reasoning in §6 fails.
+**Knowledge layer:** Production clarification receives ReferenceCards and Teachings as
+`teachingSummaries`. Template clarification uses synthetic summaries from
+`benchmarks/template-validation/knowledge/`. Some items must be ambiguous from the schema
+and clear once the supplied ReferenceCard is applied.
+
+Production `sqlGenerator` gets organization knowledge through File Search. The supervisor
+gets that knowledge through the generator's File Search citations. The template set cannot
+replicate File Search, so it measures SQL generation and supervisor review on schema-only
+questions and queries. Drafting, mutation, and blind labeling for both nodes use the documented
+schema and omit organization-specific definitions. The standalone supervisor runner reviews
+the question and candidate SQL with no citations. Template mode ignores the installation's
+knowledge and `FILE_SEARCH_STORE_ID`.
 
 ### 4. Quorum labeling (`scripts/label-quorum.ts`, new, run once per set version)
 
@@ -322,7 +324,7 @@ The current rule forbids template defaults for install-coupled nodes. Amend it:
 - Install-coupled nodes (`clarification`, `sqlGenerator`, `supervisor`, `discrepancy`,
   `dbtStatus`, `teachingCandidate`) measured on the template set → `TEMPLATE-MEASURED
   (starting point)`. Allowed as a default because the template set has a real schema and
-  non-empty fixtures, not an empty knowledge layer. Installs are still expected to size these
+  non-empty fixtures. Installs are still expected to size these
   via `NODE_PROFILE_OVERRIDES` against their own data.
 - The flat-at-floor and vacuous-ε traps still block any change.
 - Each `DEFAULTS` entry comment records the set version and date it was measured on.

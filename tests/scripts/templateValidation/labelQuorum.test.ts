@@ -84,6 +84,39 @@ it('accepts unanimous items and quarantines splits without exposing labels betwe
   }
 });
 
+it('keeps synthetic knowledge out of SQL drafting, mutation and blind labeling', async () => {
+  mkdirSync(join(root, 'dbt'));
+  writeFileSync(join(root, 'dbt', 'models.yml'), 'models: [orders]');
+  mkdirSync(join(root, 'knowledge', 'references'), { recursive: true });
+  writeFileSync(join(root, 'knowledge', 'references', 'revenue.yml'),
+    readFileSync('benchmarks/template-validation/knowledge/references/thelook-metrics.yml', 'utf8'));
+
+  const question = 'How many orders were placed?';
+  const referenceSql = 'SELECT 1 AS n';
+  const candidateSql = 'SELECT 2 AS n';
+  deps.execute = vi.fn(async sql => ({ columnNames: ['n'], rows: [{ n: sql === referenceSql ? 1 : 2 }] }));
+  deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+    cached: false,
+    value: prompt.startsWith('Draft') ? { items: [{ question, category: 'simple' }] }
+      : prompt.startsWith('Mutate') ? { items: [{ mutations: [candidateSql] }] }
+        : prompt.startsWith('Label each sqlGenerator') ? { labels: [{ referenceSql }] }
+          : { labels: [{ expectedVerdict: 'PASS' }, { expectedVerdict: 'FAIL' }] },
+  }));
+
+  await run({ nodes: ['sqlGenerator', 'supervisor'], targetCounts: { sqlGenerator: 1, supervisor: 2 } });
+  const prompts = vi.mocked(deps.runLabeler).mock.calls.map(([, { prompt }]) => prompt);
+  expect(prompts).toEqual(expect.arrayContaining([
+    expect.stringMatching(/^Draft 1 .* sqlGenerator/),
+    expect.stringMatching(/^Mutate each/),
+    expect.stringMatching(/^Label each sqlGenerator/),
+    expect.stringMatching(/^Label each supervisor/),
+  ]));
+  for (const prompt of prompts) {
+    expect(prompt).toContain('Warehouse schema:');
+    expect(prompt).not.toContain('Local knowledge:');
+  }
+});
+
 it('discards equivalent and invalid supervisor SQL mutations before blind labeling', async () => {
   const reference = 'SELECT 1 AS n';
   const broken = 'SELECT 2 AS n';

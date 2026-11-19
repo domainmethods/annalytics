@@ -54,7 +54,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('template corpus runners', () => {
-  it('loads only template knowledge and never passes a file search store to qualityLoop', async () => {
+  it('loads template knowledge but uses only schema inputs for SQL generation', async () => {
     vi.stubEnv('FILE_SEARCH_STORE_ID', 'x');
     const env = await loadTemplateEnv('test');
     expect(env.knowledge.length).toBeGreaterThan(0);
@@ -62,8 +62,9 @@ describe('template corpus runners', () => {
     expect(env.tables.every(table => table.name.startsWith('tv_thelook.'))).toBe(true);
     await createTemplateRunner('sqlGenerator', [{ ...base, question: 'A question', referenceSql }], env)();
     const [options] = vi.mocked(qualityLoop).mock.calls[0];
-    expect(options.fileSearchStoreId).toBeUndefined();
-    expect(options.knowledgeSummaries).toEqual(env.knowledge);
+    expect(options).toStrictEqual({
+      question: 'A question', tables: env.tables, threadContext: [], apiKey: 'test',
+    });
   });
 
   it('scores clarification suspend matches and records an agent throw without dropping the item', async () => {

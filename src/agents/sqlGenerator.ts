@@ -3,7 +3,6 @@ import type { TableContext } from '../dbt/types.js';
 import type { SqlGenerationResult, ThreadMessage } from '../types.js';
 import { assessQuality } from '../dbt/quality.js';
 import { formatSampleRowsForPrompt } from '../dbt/sampleRowCache.js';
-import type { KnowledgeSummary } from '../teachings/types.js';
 import { generateForNode } from './modelGateway.js';
 import { extractGroundingCitations } from './grounding.js';
 
@@ -15,7 +14,6 @@ export interface GenerateSqlOptions {
   model?: string;
   previousAttempt?: { sql: string; error: string; refinement?: string };
   fileSearchStoreId?: string;
-  knowledgeSummaries?: KnowledgeSummary[];
   sampleRows?: Map<string, { rows: Record<string, unknown>[]; stale: boolean }>;
   negativeExample?: { sql: string; explanation: string; userFeedback: string };
   bqml_hint?: 'forecast' | 'anomaly' | 'generate' | null;
@@ -72,10 +70,6 @@ ${schemaSections.join('\n\n')}
     if (sampleSections.length > 0) {
       prompt += `\nSAMPLE DATA:\n${sampleSections.join('\n\n')}\n`;
     }
-  }
-
-  if (opts.knowledgeSummaries?.length) {
-    prompt += `\nKNOWLEDGE CONTEXT (use the canonical definitions when they apply):\n${JSON.stringify(opts.knowledgeSummaries)}\n`;
   }
 
   // Add File Search context hint
