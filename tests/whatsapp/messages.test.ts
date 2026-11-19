@@ -528,7 +528,7 @@ describe('handleWhatsAppMessages', () => {
 
     await handleWhatsAppMessages([message()], dependencies);
 
-    expect(mockGetEscalationByThread).toHaveBeenCalledWith('whatsapp:15551234567');
+    expect(mockGetEscalationByThread).toHaveBeenCalledWith('whatsapp:15551234567', 'whatsapp:15551234567');
     expect(dependencies.client.sendText).toHaveBeenCalledWith(
       conversation,
       "I'm still waiting for the data team on your previous question.",

@@ -57,9 +57,9 @@ describe('preflightChecks', () => {
     const result = await preflightChecks('C123', '1234.5678', mockClient, 'owner');
 
     expect(result).toBe(true);
-    expect(mockAcquireThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
-    expect(mockGetClarificationState).toHaveBeenCalledWith('1234.5678');
-    expect(mockGetEscalationByThread).toHaveBeenCalledWith('1234.5678');
+    expect(mockAcquireThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
+    expect(mockGetClarificationState).toHaveBeenCalledWith('C123', '1234.5678');
+    expect(mockGetEscalationByThread).toHaveBeenCalledWith('C123', '1234.5678');
   });
 
   it('returns false and posts message when lock fails', async () => {
@@ -113,7 +113,7 @@ describe('preflightChecks', () => {
         ]),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
     // Should not check escalation
     expect(mockGetEscalationByThread).not.toHaveBeenCalled();
   });
@@ -137,7 +137,7 @@ describe('preflightChecks', () => {
         text: expect.stringContaining('still waiting for the data team'),
       }),
     );
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the clarification guard throws', async () => {
@@ -148,7 +148,7 @@ describe('preflightChecks', () => {
 
     await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('releases the lock and propagates when the escalation guard throws', async () => {
@@ -156,7 +156,7 @@ describe('preflightChecks', () => {
 
     await expect(preflightChecks('C123', '1234.5678', mockClient, 'owner')).rejects.toThrow('Firestore error');
 
-    expect(mockReleaseThreadLock).toHaveBeenCalledWith('1234.5678', 'owner');
+    expect(mockReleaseThreadLock).toHaveBeenCalledWith('C123', '1234.5678', 'owner');
   });
 
   it('returns true and notifies when escalation expires during preflight', async () => {

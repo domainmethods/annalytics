@@ -4,6 +4,7 @@ import {
   claimEscalation,
   getEscalationByThread,
   getEscalationByEscalationThread,
+  escalationConversation,
   getEscalationById,
   resolveEscalation,
   updateReminderTime,
@@ -99,6 +100,7 @@ describe('getEscalationByThread', () => {
           data: () => ({
             escalationId: 'esc-123',
             originalThreadTs: '1234.5678',
+            originalChannel: 'C123',
             pipelineState: 'awaiting_human',
             createdAt: { toDate: () => createdDate },
             expiresAt: { toDate: () => futureDate },
@@ -108,7 +110,7 @@ describe('getEscalationByThread', () => {
       }),
     });
 
-    const result = await getEscalationByThread('1234.5678');
+    const result = await getEscalationByThread('C123', '1234.5678');
 
     expect(result).not.toBeNull();
     expect(result!.status).toBe('pending');
@@ -124,7 +126,7 @@ describe('getEscalationByThread', () => {
       get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
     });
 
-    const result = await getEscalationByThread('nonexistent');
+    const result = await getEscalationByThread('C123', 'nonexistent');
 
     expect(result).toBeNull();
   });
@@ -137,6 +139,7 @@ describe('getEscalationByThread', () => {
           data: () => ({
             escalationId: 'esc-123',
             originalThreadTs: '1234.5678',
+            originalChannel: 'C123',
             pipelineState: 'resolving',
             claimedAt,
             createdAt: new Date(),
@@ -148,11 +151,11 @@ describe('getEscalationByThread', () => {
     const empty = { get: vi.fn().mockResolvedValue({ empty: true, docs: [] }) };
 
     mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date()));
-    const fresh = await getEscalationByThread('1234.5678');
+    const fresh = await getEscalationByThread('C123', '1234.5678');
     expect(fresh?.status).toBe('pending');
 
     mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolvingDoc(new Date(Date.now() - RESOLVING_GUARD_MS - 1)));
-    expect(await getEscalationByThread('1234.5678')).toBeNull();
+    expect(await getEscalationByThread('C123', '1234.5678')).toBeNull();
   });
 
   it('returns expired_now and marks expired escalation as timed_out', async () => {
@@ -164,6 +167,7 @@ describe('getEscalationByThread', () => {
         docs: [{
           data: () => ({
             escalationId: 'esc-expired',
+            originalChannel: 'C123',
             pipelineState: 'awaiting_human',
             expiresAt: { toDate: () => pastDate },
           }),
@@ -172,7 +176,7 @@ describe('getEscalationByThread', () => {
       }),
     });
 
-    const result = await getEscalationByThread('1234.5678');
+    const result = await getEscalationByThread('C123', '1234.5678');
 
     expect(result).toMatchObject({
       status: 'expired_now',
@@ -191,6 +195,7 @@ describe('getEscalationByThread', () => {
           docs: [{
             data: () => ({
               escalationId: 'esc-expired',
+              originalChannel: 'C123',
               pipelineState: 'awaiting_human',
               expiresAt: { toDate: () => pastDate },
             }),
@@ -202,12 +207,64 @@ describe('getEscalationByThread', () => {
         get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
       });
 
-    const first = await getEscalationByThread('1234.5678');
-    const second = await getEscalationByThread('1234.5678');
+    const first = await getEscalationByThread('C123', '1234.5678');
+    const second = await getEscalationByThread('C123', '1234.5678');
 
     expect(first?.status).toBe('expired_now');
     expect(second).toBeNull();
     expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('conversation scoping', () => {
+  const doc = (escalationId: string, pipelineState: string, originalChannel?: string) => ({
+    data: () => ({
+      escalationId, originalThreadTs: 'same.ts', pipelineState,
+      claimedAt: new Date(), createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+      ...(originalChannel === undefined ? {} : { originalChannel }),
+    }),
+    ref: { update: vi.fn() },
+  });
+  const snap = (docs: unknown[]) => ({ get: vi.fn().mockResolvedValue({ empty: docs.length === 0, docs }) });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transactionState = 'awaiting_human';
+    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
+  });
+
+  it('awaiting_human: returns only the escalation of the requested conversation', async () => {
+    const docs = [doc('esc-two', 'awaiting_human', 'C_TWO'), doc('esc-one', 'awaiting_human', 'C_ONE')];
+    mockLimit.mockReturnValue(snap(docs));
+    const one = await getEscalationByThread('C_ONE', 'same.ts');
+    const two = await getEscalationByThread('C_TWO', 'same.ts');
+    expect(one?.state.escalationId).toBe('esc-one');
+    expect(two?.state.escalationId).toBe('esc-two');
+    expect(mockLimit).toHaveBeenCalledWith(20);
+  });
+
+  it('awaiting_human: another conversation escalation is invisible and not expired/mutated', async () => {
+    mockLimit.mockReturnValue(snap([doc('esc-two', 'awaiting_human', 'C_TWO')]));
+    expect(await hasPendingEscalation('C_ONE', 'same.ts')).toBe(false);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('resolving: only the requested conversation is guarded', async () => {
+    const resolving = () => snap([doc('esc-two', 'resolving', 'C_TWO')]);
+    const empty = snap([]);
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolving());
+    expect(await getEscalationByThread('C_ONE', 'same.ts')).toBeNull();
+
+    mockLimit.mockReturnValueOnce(empty).mockReturnValueOnce(resolving());
+    const other = await getEscalationByThread('C_TWO', 'same.ts');
+    expect(other?.status).toBe('pending');
+    expect(other?.state.escalationId).toBe('esc-two');
+  });
+
+  it('never returns a legacy record without originalChannel', async () => {
+    mockLimit.mockReturnValueOnce(snap([doc('legacy', 'awaiting_human')]))
+      .mockReturnValueOnce(snap([doc('legacy', 'resolving')]));
+    expect(await getEscalationByThread('C_ONE', 'same.ts')).toBeNull();
   });
 });
 
@@ -228,6 +285,7 @@ describe('getEscalationByEscalationThread', () => {
           data: () => ({
             escalationId: 'esc-456',
             escalationTs: '9999.0001',
+            escalationChannel: 'C_ESC',
             pipelineState: 'awaiting_human',
             createdAt: { toDate: () => createdDate },
             expiresAt: { toDate: () => futureDate },
@@ -237,7 +295,7 @@ describe('getEscalationByEscalationThread', () => {
       }),
     });
 
-    const result = await getEscalationByEscalationThread('9999.0001');
+    const result = await getEscalationByEscalationThread({ channel: 'C_ESC' }, '9999.0001');
 
     expect(result).not.toBeNull();
     expect(result!.status).toBe('pending');
@@ -245,6 +303,67 @@ describe('getEscalationByEscalationThread', () => {
     expect(result!.state.createdAt).toBeInstanceOf(Date);
     expect(result!.state.expiresAt).toBeInstanceOf(Date);
     expect(mockWhere).toHaveBeenCalledWith('escalationTs', '==', '9999.0001');
+  });
+});
+
+describe('escalation card conversation scoping', () => {
+  const card = (escalationId: string, escalationChannel?: string) => ({
+    data: () => ({
+      escalationId, escalationTs: 'same.ts', pipelineState: 'awaiting_human',
+      createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+      ...(escalationChannel === undefined ? {} : { escalationChannel }),
+    }),
+    ref: { update: vi.fn() },
+  });
+  const snap = (docs: unknown[]) => ({ get: vi.fn().mockResolvedValue({ empty: docs.length === 0, docs }) });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transactionState = 'awaiting_human';
+    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
+  });
+
+  it('does not return an escalation card from a different channel sharing the escalationTs', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-two', 'C_TWO')]));
+    expect(await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts')).toBeNull();
+    const two = await getEscalationByEscalationThread({ channel: 'C_TWO' }, 'same.ts');
+    expect(two?.state.escalationId).toBe('esc-two');
+  });
+
+  it('picks the card of the requested channel among several sharing the escalationTs', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-two', 'C_TWO'), card('esc-one', 'C_ONE')]));
+    const one = await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts');
+    expect(one?.state.escalationId).toBe('esc-one');
+  });
+
+  it('DM mode: matches a card whose escalationChannel is the analyst user id via the DM event user', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-dm', 'U_ANALYST')]));
+    const hit = await getEscalationByEscalationThread({ channel: 'D1', user: 'U_ANALYST' }, 'same.ts');
+    expect(hit?.state.escalationId).toBe('esc-dm');
+  });
+
+  it('DM mode: a different analyst user id does not match', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-dm', 'U_ANALYST')]));
+    expect(await getEscalationByEscalationThread({ channel: 'D2', user: 'U_OTHER' }, 'same.ts')).toBeNull();
+  });
+
+  it('never returns a legacy card without escalationChannel', async () => {
+    mockLimit.mockReturnValue(snap([card('legacy')]));
+    expect(await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts')).toBeNull();
+  });
+});
+
+describe('escalationConversation', () => {
+  it('returns only the channel for a non-DM channel', () => {
+    expect(escalationConversation('C1', 'U1')).toEqual({ channel: 'C1' });
+  });
+
+  it('includes the user id for a DM channel', () => {
+    expect(escalationConversation('D1', 'U1')).toEqual({ channel: 'D1', user: 'U1' });
+  });
+
+  it('omits the user when none is given in a DM', () => {
+    expect(escalationConversation('D1', undefined)).toEqual({ channel: 'D1' });
   });
 });
 
@@ -297,6 +416,7 @@ describe('hasPendingEscalation', () => {
         docs: [{
           data: () => ({
             escalationId: 'esc-123',
+            originalChannel: 'C123',
             pipelineState: 'awaiting_human',
             expiresAt: { toDate: () => futureDate },
           }),
@@ -305,7 +425,7 @@ describe('hasPendingEscalation', () => {
       }),
     });
 
-    const result = await hasPendingEscalation('1234.5678');
+    const result = await hasPendingEscalation('C123', '1234.5678');
 
     expect(result).toBe(true);
   });

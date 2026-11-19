@@ -97,7 +97,7 @@ export function registerCommands(app: App, getConfig: () => AppConfig, getTables
       // The lock is only ever taken after the placeholder exists; its ts is the
       // thread identity.
       if (statusMsgTs) {
-        await releaseThreadLock(statusMsgTs, ownerToken).catch(() => {});
+        await releaseThreadLock(command.channel_id, statusMsgTs, ownerToken).catch(() => {});
       }
 
       if (isChannelAccessError(error)) {

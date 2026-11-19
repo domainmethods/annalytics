@@ -59,11 +59,12 @@ describe('shouldRespond', () => {
   it('responds to thread reply where bot has participated', async () => {
     mockBotHasReplied.mockResolvedValue(true);
     const result = await shouldRespond({
+      channel: 'C1',
       channel_type: 'channel',
       thread_ts: 'thread-1',
     } as any);
     expect(result).toBe(true);
-    expect(mockBotHasReplied).toHaveBeenCalledWith('thread-1');
+    expect(mockBotHasReplied).toHaveBeenCalledWith('C1', 'thread-1');
   });
 
   it('ignores thread reply where bot has NOT participated', async () => {

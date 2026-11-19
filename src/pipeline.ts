@@ -26,6 +26,7 @@ import {
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
 import { saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
+import { conversationThreadKey } from './state/threadScope.js';
 import { getTeachingSummaries } from './teachings/summaryMap.js';
 import { getSampleRows } from './dbt/sampleRowCache.js';
 import { createTraceId, createLogger, logStage } from './logging.js';
@@ -238,8 +239,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         reasoning: ambiguity.reasoning,
       }, 'ambiguity.classified');
 
+      // Scoped to the conversation so same-timestamp threads in other channels
+      // can't overwrite or cancel this clarification.
+      const clarificationId = `clarify_${conversationThreadKey(channel, threadTs)}`;
       const blocks = buildClarificationBlocks({
-        clarificationId: `clarify_${threadTs}`,
+        clarificationId,
         clarifyingQuestions: clarification.clarifying_questions,
         originalQuestion: question,
       });
@@ -250,7 +254,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         blocks: blocks as unknown as KnownBlock[],
       });
       await saveClarificationState({
-        clarificationId: `clarify_${threadTs}`,
+        clarificationId,
         threadTs,
         channel,
         originalQuestion: question,
@@ -285,6 +289,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       await saveResponseContext({
         responseId: traceId,
         threadTs,
+        channel,
         statusMsgTs,
         clarifiedQuestion: resolvedQuestion,
         assumptions: assumptions || [],
@@ -345,7 +350,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     logStage(logger, { traceId, stage: 'retrieve', durationMs: Date.now() - startTime });
 
     // Stage 3: Unified Quality Loop (generate + validate + supervise)
-    const negativeExample = await getLatestNegativeFeedback(threadTs);
+    const negativeExample = await getLatestNegativeFeedback(channel, threadTs);
 
     let pipelineMode: 'full_quality_loop' | 'routine_fast_path' = 'full_quality_loop';
     let supervisorDecision: 'skipped' | 'required' = 'required';
@@ -586,6 +591,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     await saveResponseContext({
       responseId: traceId,
       threadTs,
+      channel,
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
       assumptions,
@@ -702,7 +708,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     });
   } finally {
     // Only callers that acquired the lease in preflight pass a token; resume paths do not.
-    if (input.ownerToken) await releaseThreadLock(threadTs, input.ownerToken).catch(() => {});
+    if (input.ownerToken) await releaseThreadLock(channel, threadTs, input.ownerToken).catch(() => {});
   }
 }
 

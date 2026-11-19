@@ -15,7 +15,7 @@ vi.mock('../../src/logging.js', () => ({
   rootLogger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
 
-import { getResponseContext } from '../../src/state/responseContext.js';
+import { getSlackResponseContext } from '../../src/state/responseContext.js';
 import { validateSql } from '../../src/validation/pipeline.js';
 import { executeQuery } from '../../src/execution/runner.js';
 import {
@@ -26,7 +26,7 @@ import {
 } from '../../src/handlers/responseOverrides.js';
 import { rootLogger } from '../../src/logging.js';
 
-const mockGetCtx = vi.mocked(getResponseContext);
+const mockGetCtx = vi.mocked(getSlackResponseContext);
 const mockValidate = vi.mocked(validateSql);
 const mockExecute = vi.mocked(executeQuery);
 
@@ -84,7 +84,7 @@ describe('handleTableOverride', () => {
   it('re-executes SQL and updates message with table blocks', async () => {
     await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
 
-    expect(mockGetCtx).toHaveBeenCalledWith('thread-1_status-1');
+    expect(mockGetCtx).toHaveBeenCalledWith('C-CHAN', 'thread-1_status-1');
     expect(mockValidate).toHaveBeenCalledWith('SELECT SUM(amount) FROM orders', 10_000_000);
     expect(mockExecute).toHaveBeenCalledWith('SELECT SUM(amount) FROM orders', {
       maxRows: 1000,

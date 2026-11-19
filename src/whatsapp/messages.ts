@@ -133,8 +133,8 @@ export async function handleWhatsAppMessages(
         continue;
       }
 
-      const clarification = await getClarificationState(inbound.conversation.conversationId);
-      const escalationLookup = await getEscalationByThread(inbound.conversation.conversationId);
+      const clarification = await getClarificationState(inbound.conversation.conversationId, inbound.conversation.conversationId);
+      const escalationLookup = await getEscalationByThread(inbound.conversation.conversationId, inbound.conversation.conversationId);
       if (escalationLookup?.status === 'pending') {
         await deps.client.sendText(
           inbound.conversation,

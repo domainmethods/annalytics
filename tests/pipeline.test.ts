@@ -180,7 +180,7 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
-    expect(mockReleaseLock).toHaveBeenCalledWith('thread-1', 'lease-1');
+    expect(mockReleaseLock).toHaveBeenCalledWith('C123', 'thread-1', 'lease-1');
   });
 
   it('does not release the thread lock when no lease token was passed (resume paths)', async () => {
@@ -228,6 +228,16 @@ describe('runPipeline', () => {
       ambiguityDomain: 'revenue',
     }));
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('LOW confidence: scopes the clarification id to the conversation', async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+
+    await runPipeline({ ...baseInput, channel: 'C_ONE' });
+    await runPipeline({ ...baseInput, channel: 'C_TWO' });
+
+    const ids = mockSaveClarification.mock.calls.map(([state]) => state.clarificationId);
+    expect(ids).toEqual([`clarify_C_ONE:${baseInput.threadTs}`, `clarify_C_TWO:${baseInput.threadTs}`]);
   });
 
   it('quality loop fail_then_pass: proceeds to execution', async () => {

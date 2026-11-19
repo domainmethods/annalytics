@@ -121,16 +121,16 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 
 | Collection | Key | Purpose |
 |---|---|---|
-| `processing_threads` | `threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
+| `processing_threads` | `channel:threadTs` | Thread lock (atomic via `create()`, 300s TTL) |
 | `rate_limits` | `userId` | Per-user rate limiting (1-hour sliding window) |
-| `response_context` | `threadTs_statusMsgTs` | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
+| `response_context` | `channel:threadTs_statusMsgTs` (Slack; pre-#30 answers: `threadTs_statusMsgTs`), `conversationId_statusMsgTs` (WhatsApp) | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
 | `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
 | `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
 | `config` | `metadata_state` | `/health/doctor` Firestore connectivity probe target (cheap read; the doc need not exist). The dbt-metadata-freshness writer was never wired; its dead module was removed 2026-06-19. |
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
-| `feedback_notes` | `traceId` or `threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
+| `feedback_notes` | `traceId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
 | `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 | `whatsapp_event_dedupe` | event doc id | WhatsApp webhook delivery dedupe (gated prototype); `expiresAt` TTL |
 | `whatsapp_action_context` | action context id | Answer context for WhatsApp interactive controls (feedback/reasoning/SQL/format follow-ups); `expiresAt` TTL (24h) |

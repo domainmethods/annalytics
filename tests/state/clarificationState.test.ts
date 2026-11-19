@@ -64,6 +64,7 @@ describe('getClarificationState', () => {
           data: () => ({
             clarificationId: 'clarify-123',
             threadTs: '1234.5678',
+            channel: 'C123',
             state: 'awaiting_reply',
             expiresAt: { toDate: () => futureDate },
           }),
@@ -72,7 +73,7 @@ describe('getClarificationState', () => {
       }),
     });
 
-    const result = await getClarificationState('1234.5678');
+    const result = await getClarificationState('C123', '1234.5678');
 
     expect(result).not.toBeNull();
     expect(result!.clarificationId).toBe('clarify-123');
@@ -84,7 +85,7 @@ describe('getClarificationState', () => {
       get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
     });
 
-    const result = await getClarificationState('nonexistent');
+    const result = await getClarificationState('C123', 'nonexistent');
 
     expect(result).toBeNull();
   });
@@ -98,6 +99,7 @@ describe('getClarificationState', () => {
         docs: [{
           data: () => ({
             clarificationId: 'clarify-expired',
+            channel: 'C123',
             state: 'awaiting_reply',
             expiresAt: { toDate: () => pastDate },
           }),
@@ -106,10 +108,51 @@ describe('getClarificationState', () => {
       }),
     });
 
-    const result = await getClarificationState('1234.5678');
+    const result = await getClarificationState('C123', '1234.5678');
 
     expect(result).toBeNull();
     expect(mockDeleteRef).toHaveBeenCalled();
+  });
+});
+
+describe('conversation scoping', () => {
+  const future = () => ({ toDate: () => new Date(Date.now() + 60 * 60 * 1000) });
+  const doc = (clarificationId: string, channel?: string) => ({
+    data: () => ({
+      clarificationId, threadTs: 'same.ts', state: 'awaiting_reply', expiresAt: future(),
+      ...(channel === undefined ? {} : { channel }),
+    }),
+    ref: { delete: vi.fn() },
+  });
+  const returnDocs = (docs: unknown[]) => {
+    mockLimit.mockReturnValue({ get: vi.fn().mockResolvedValue({ empty: docs.length === 0, docs }) });
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
+  });
+
+  it('scans a bounded number of candidates', async () => {
+    returnDocs([]);
+    await getClarificationState('C_ONE', 'same.ts');
+    expect(mockLimit).toHaveBeenCalledWith(20);
+  });
+
+  it('returns only the state belonging to the requested conversation', async () => {
+    returnDocs([doc('clar-two', 'C_TWO'), doc('clar-one', 'C_ONE')]);
+    expect((await getClarificationState('C_ONE', 'same.ts'))?.clarificationId).toBe('clar-one');
+    expect((await getClarificationState('C_TWO', 'same.ts'))?.clarificationId).toBe('clar-two');
+  });
+
+  it('does not see another conversation state for the same thread ts', async () => {
+    returnDocs([doc('clar-two', 'C_TWO')]);
+    expect(await getClarificationState('C_ONE', 'same.ts')).toBeNull();
+  });
+
+  it('never returns a legacy record without a channel', async () => {
+    returnDocs([doc('legacy')]);
+    expect(await getClarificationState('C_ONE', 'same.ts')).toBeNull();
   });
 });
 

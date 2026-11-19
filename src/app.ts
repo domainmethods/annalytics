@@ -10,7 +10,7 @@ import { registerAppHome } from './handlers/appHome.js';
 import { registerMentions } from './handlers/mentions.js';
 import { registerMessageHandler } from './handlers/messageHandler.js';
 import { registerEscalationReaction } from './handlers/escalationReaction.js';
-import { recordFeedback, getResponseContext } from './state/responseContext.js';
+import { recordFeedback, getSlackResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
@@ -226,7 +226,8 @@ app.action(/thumbs_(up|down)_.*/, async ({ action, ack, body, client }) => {
   const threadTs = (body as any).message?.thread_ts || (body as any).message?.ts;
   const messageTs = (body as any).message?.ts;
   if (threadTs && messageTs) {
-    await recordFeedback(threadTs, messageTs, feedbackType as 'positive' | 'negative');
+    const channel = (body as any).channel?.id;
+    if (channel) await recordFeedback(channel, threadTs, messageTs, feedbackType as 'positive' | 'negative');
   }
 
   // On 👎, offer the reason prompt only when negative-feedback escalation is
@@ -328,8 +329,8 @@ app.action(/show_reasoning_.*/, async ({ action, ack, body, client }) => {
   const compoundKey = btn.value; // threadTs_statusMsgTs
   if (!compoundKey) return;
 
-  const ctx = await getResponseContext(compoundKey);
   const channel = (body as any).channel?.id;
+  const ctx = channel ? await getSlackResponseContext(channel, compoundKey) : null;
   if (!ctx) {
     if (channel) await notifyContextUnavailable(client, channel, overrideViewer(body));
     return;
@@ -360,12 +361,12 @@ app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
   const compoundKey = btn.value; // threadTs_statusMsgTs
   if (!compoundKey) return;
 
-  const ctx = await getResponseContext(compoundKey);
-  if (!ctx) return;
-
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
+
+  const ctx = await getSlackResponseContext(channel, compoundKey);
+  if (!ctx) return;
 
   // Remove all reasoning blocks by block_id prefix
   const currentBlocks: any[] = (body as any).message?.blocks || [];
@@ -401,12 +402,12 @@ app.action(/show_sql_.*/, async ({ action, ack, body, client }) => {
   const compoundKey = btn.value; // threadTs_statusMsgTs
   if (!compoundKey) return;
 
-  const ctx = await getResponseContext(compoundKey);
-  if (!ctx) return;
-
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
+
+  const ctx = await getSlackResponseContext(channel, compoundKey);
+  if (!ctx) return;
 
   // Drop the existing feedback row (it holds the "Show SQL" button) so we can
   // re-render it in the "Hide SQL" state below the SQL panel.
@@ -441,12 +442,12 @@ app.action(/hide_sql_.*/, async ({ action, ack, body, client }) => {
   const compoundKey = btn.value; // threadTs_statusMsgTs
   if (!compoundKey) return;
 
-  const ctx = await getResponseContext(compoundKey);
-  if (!ctx) return;
-
   const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
+
+  const ctx = await getSlackResponseContext(channel, compoundKey);
+  if (!ctx) return;
 
   // Remove the SQL panel (by block_id prefix) and the current feedback row.
   const currentBlocks: any[] = (body as any).message?.blocks || [];
