@@ -287,14 +287,19 @@ export async function handleOtherNoteSubmission(
   if (ctx?.clarifiedQuestion !== undefined) note.clarifiedQuestion = ctx.clarifiedQuestion;
   if (ctx?.traceId !== undefined) note.traceId = ctx.traceId;
 
+  // Only claim the note was logged when the write actually succeeded; on a
+  // failed write, say so honestly so the user can resubmit.
+  let ackText: string;
   try {
     await saveFeedbackNote(note);
     rootLogger.info({ userId, traceId: ctx?.traceId, threadTs }, 'feedback.other_note.saved');
+    ackText = 'Thanks — noted. I logged this for review.';
   } catch (err) {
     rootLogger.error(
       { error: (err as Error).message, userId, threadTs },
       'feedback.other_note.save_failed',
     );
+    ackText = "Sorry — I couldn't save your note. Please try again in a moment.";
   }
 
   await client.chat
@@ -302,7 +307,7 @@ export async function handleOtherNoteSubmission(
       channel,
       user: userId,
       thread_ts: threadTs,
-      text: 'Thanks — noted. I logged this for review.',
+      text: ackText,
     })
     .catch((err) =>
       rootLogger.warn(

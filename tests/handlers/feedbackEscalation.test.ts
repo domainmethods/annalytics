@@ -392,7 +392,7 @@ describe('handleOtherNoteSubmission', () => {
     },
   );
 
-  it('still acks when saveFeedbackNote throws (save failure does not short-circuit ack)', async () => {
+  it('tells the user the save failed (not "logged") when saveFeedbackNote throws', async () => {
     mockSaveFeedbackNote.mockRejectedValue(new Error('firestore down'));
     const postEphemeral = vi.fn().mockResolvedValue({});
     const client = { chat: { postEphemeral } } as any;
@@ -405,7 +405,10 @@ describe('handleOtherNoteSubmission', () => {
       }),
     ).resolves.toBeUndefined();
     expect(mockSaveFeedbackNote).toHaveBeenCalled();
-    expect(postEphemeral).toHaveBeenCalled();
+    expect(postEphemeral).toHaveBeenCalledTimes(1);
+    const { text } = postEphemeral.mock.calls[0][0];
+    expect(text).toContain("couldn't save your note");
+    expect(text).not.toContain('logged this for review');
   });
 
   it('does not throw on non-JSON private_metadata (logs and returns)', async () => {
