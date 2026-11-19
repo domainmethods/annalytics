@@ -200,14 +200,22 @@ describe('numeric startup settings', () => {
       expect(() => loadConfig()).not.toThrow();
     });
     it.each(['', '  ', undefined])(`${name} defaults for blank or unset %s`, value => {
-      vi.stubEnv(name, undefined);
-      const expected = loadConfig();
+      const expected = { costGateMaxBytes: 10737418240, queryTimeoutMs: 30000, maxResultRows: 1000, rateLimitPerHour: 30 };
       vi.stubEnv(name, value);
-      expect(loadConfig()).toEqual(expected);
+      const config = loadConfig();
+      expect(config.limits).toEqual(expected);
+      expect(config.port).toBe(3000);
+      expect(config.escalation.reminderIntervalMinutes).toBe(30);
+      expect(config.escalation.timeoutHours).toBe(4);
+      expect(config.fastPath.maxBytesProcessed).toBe(1073741824);
     });
   }
   it('rejects ports outside the TCP range', () => {
     vi.stubEnv('PORT', '65536');
     expect(() => loadConfig()).toThrow('PORT');
   });
+});
+
+it.each([['ESCALATION_REMINDER_MINUTES', 525600], ['ESCALATION_TIMEOUT_HOURS', 8760], ['RESPONSE_CONTEXT_RETENTION_DAYS', 36500]] as const)('%s duration boundary', (name, max) => {
+ vi.unstubAllEnvs(); baseEnv(); vi.stubEnv(name, String(max)); expect(() => loadConfig()).not.toThrow(); vi.stubEnv(name, String(max + 1)); expect(() => loadConfig()).toThrow(name); vi.unstubAllEnvs();
 });

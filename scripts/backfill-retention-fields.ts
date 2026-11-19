@@ -1,3 +1,4 @@
+import { parseResponseContextRetentionDays } from '../src/state/retentionSettings.js';
 /**
  * Backfill retention fields on Firestore docs written before the TTL tranche.
  *
@@ -21,13 +22,7 @@ import { fileURLToPath } from 'node:url';
 import type { Firestore, QueryDocumentSnapshot } from '@google-cloud/firestore';
 import { initFirestore, getDb } from '../src/state/firestore.js';
 
-// Mirrors the private RETENTION_DAYS IIFE in src/state/responseContext.ts —
-// keep the env handling identical so backfilled values match values written
-// going forward.
-const RESPONSE_CONTEXT_RETENTION_DAYS = (() => {
-  const v = Number(process.env.RESPONSE_CONTEXT_RETENTION_DAYS);
-  return Number.isFinite(v) && v > 0 ? v : 90;
-})();
+const RESPONSE_CONTEXT_RETENTION_DAYS = parseResponseContextRetentionDays();
 
 // Mirrors the private RETAIN_DAYS constant in src/state/escalationState.ts.
 const ESCALATION_RETAIN_DAYS = 90;

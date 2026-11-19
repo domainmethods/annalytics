@@ -1,4 +1,5 @@
 import { normalizeWaId } from './whatsapp/waId.js';
+import { parseResponseContextRetentionDays } from './state/retentionSettings.js';
 import { getProModel } from './agents/modelConfig.js';
 
 export type WhatsAppConfig =
@@ -131,7 +132,7 @@ function loadWhatsAppConfig(): AppConfig['whatsapp'] {
 }
 
 export function loadConfig(): AppConfig {
-  parseEnvInt('RESPONSE_CONTEXT_RETENTION_DAYS', 90, 99_000_000);
+  parseResponseContextRetentionDays();
   return {
     slack: {
       botToken: requireEnv('SLACK_BOT_TOKEN'),
@@ -160,8 +161,9 @@ export function loadConfig(): AppConfig {
       mode: parseEscalationMode(process.env.ESCALATION_MODE),
       channelId: process.env.ESCALATION_CHANNEL_ID || undefined,
       analystUserId: process.env.ESCALATION_ANALYST_USER_ID || undefined,
-      reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30),
-      timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4),
+      // Cap escalation durations at one year to keep derived dates valid.
+      reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30, 525_600),
+      timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4, 8_760),
       onNegativeFeedback: parseEnvBool('ESCALATION_ON_NEGATIVE_FEEDBACK', true),
     },
     fastPath: {
