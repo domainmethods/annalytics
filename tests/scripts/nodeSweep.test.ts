@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  nodeCost,
   runSweep,
   runCombinedVerification,
   type CorpusRunResult,
@@ -74,14 +75,16 @@ function makeRunCorpusOnce(nodes: NodeId[], corpusSize = 12): () => Promise<Corp
     const sqlMetricDelta = sqlTier === 'pro' ? 0 : -OFF_PRO_METRIC;
 
     const perEntry: PerEntry[] = [];
-    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
+    const nodeUsage: CorpusRunResult['nodeUsage'] = new Map();
     const bump = (node: NodeId, prof: EffProfile): void => {
-      const tokens = 500 + THINK_TOKENS[prof.level];
-      const latency = 200 + tokens * 0.5 + TIER_LAT[prof.tier];
+      const inputTokens = 500;
+      const outputTokens = THINK_TOKENS[prof.level];
+      const latency = 200 + (inputTokens + outputTokens) * 0.5 + TIER_LAT[prof.tier];
       let b = nodeUsage.get(node);
-      if (!b) { b = { latencies: [], tokens: 0 }; nodeUsage.set(node, b); }
+      if (!b) { b = { latencies: [], inputTokens: 0, outputTokens: 0 }; nodeUsage.set(node, b); }
       b.latencies.push(latency);
-      b.tokens += tokens;
+      b.inputTokens += inputTokens;
+      b.outputTokens += outputTokens;
     };
 
     for (let i = 0; i < corpusSize; i++) {
@@ -114,6 +117,18 @@ const parseLabel = (label: string): { tier: string; version: string; level: stri
 };
 
 afterEach(() => { delete process.env.NODE_PROFILE_OVERRIDES; });
+
+it('nodeCost uses per-model input/output prices', () => {
+  const usage: CorpusRunResult['nodeUsage'] = new Map([
+    ['sqlGenerator', { latencies: [], inputTokens: 2_000_000, outputTokens: 1_000_000 }],
+  ]);
+  expect(nodeCost('sqlGenerator', { tier: 'pro', version: '3.1' }, usage)).toBe(2 * 2 + 12);
+});
+
+it('nodeCost rejects an unregistered profile even without recorded usage', () => {
+  expect(() => nodeCost('sqlGenerator', { tier: 'pro', version: 'unknown' }, new Map()))
+    .toThrow('pro/unknown');
+});
 
 describe('runSweep — two-stage coordinate isolation', () => {
   it('reports the Stage-1 thinking anchor it held fixed', async () => {

@@ -9,10 +9,9 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
-import { getJudgeModel, resolveModelId, listRegisteredModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, getRegisteredModel, resolveModelId, listRegisteredModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
 import {
   resolveNodeModel,
-  defaultTierForNode,
   defaultProfileForNode,
   isNodeId,
   NODE_IDS,
@@ -37,15 +36,6 @@ import { computeEpsilon } from './node-sweep-calibrate.js';
 // this module for the orchestration test harness never triggers process.exit.
 
 const MAX_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB cost gate, mirrors benchmark.ts
-
-// Relative per-token cost weights — UPDATE from live billing before trusting
-// absolute cost. Only the RATIO across tiers matters for the decision rule's
-// cost tie-break.
-const TIER_PRICES: Record<ModelTier, number> = {
-  'flash-lite': 0.0000001,
-  'flash': 0.0000003,
-  'pro': 0.000002,
-};
 
 const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervisor'];
 
@@ -191,7 +181,7 @@ export interface PerEntry {
 
 export interface CorpusRunResult {
   perEntry: PerEntry[];
-  nodeUsage: Map<NodeId, { latencies: number[]; tokens: number }>;
+  nodeUsage: Map<NodeId, { latencies: number[]; inputTokens: number; outputTokens: number }>;
 }
 
 // ── Orchestration (IO-free; injectable runCorpusOnce) ──────────────────────────
@@ -262,9 +252,18 @@ function nodeP95(nodeId: NodeId, nodeUsage: CorpusRunResult['nodeUsage']): numbe
   return p95(nodeUsage.get(nodeId)?.latencies ?? []);
 }
 
-function nodeCost(nodeId: NodeId, tier: ModelTier, nodeUsage: CorpusRunResult['nodeUsage']): number {
-  const tokens = nodeUsage.get(nodeId)?.tokens ?? 0;
-  return tokens * TIER_PRICES[tier];
+export function nodeCost(
+  node: NodeId,
+  profile: { tier: ModelTier; version: string },
+  usage: CorpusRunResult['nodeUsage'],
+): number {
+  const { tier, version } = profile;
+  const model = getRegisteredModel(tier, version);
+  if (!model) throw new Error(`No model pricing registered for ${tier}/${version}`);
+
+  const { inputTokens = 0, outputTokens = 0 } = usage.get(node) ?? {};
+  return (inputTokens / 1e6) * model.inputPricePerMTok
+    + (outputTokens / 1e6) * model.outputPricePerMTok;
 }
 
 // Align two runs by sorted intersection of ids, reading values in that order.
@@ -422,7 +421,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
         metric: nodeMetric(node, run.perEntry),
         e2e: e2eOf(run.perEntry),
         p95LatencyMs: nodeP95(node, run.nodeUsage),
-        cost: nodeCost(node, profile.tier, run.nodeUsage),
+        cost: nodeCost(node, profile, run.nodeUsage),
       };
     } catch (err) {
       log(`  [ERROR] ${label} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
@@ -446,7 +445,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       metric: nodeMetric(node, baselineRunA.perEntry),
       e2e: e2eOf(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
-      cost: nodeCost(node, defaultTierForNode(node), baselineRunA.nodeUsage),
+      cost: nodeCost(node, defaultProfileForNode(node), baselineRunA.nodeUsage),
     };
 
     // Map every label we score back to its concrete profile so the winners can be
@@ -581,7 +580,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
 
   const pointTable = (points: PointScore[], chosenLabel: string): string[] => {
     const lines: string[] = [];
-    lines.push('| point | metric | e2e | p95ms | cost | chosen |');
+    lines.push('| point | metric | e2e | p95ms | cost (USD) | chosen |');
     lines.push('|-------|--------|-----|-------|------|--------|');
     for (const c of points) {
       const rec = c.label === chosenLabel ? '✓' : '';
@@ -682,16 +681,17 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
   // The real corpus pass: classify → quality loop → judge, with per-node telemetry.
   return async function runCorpusOnce(): Promise<CorpusRunResult> {
     const perEntry: PerEntry[] = [];
-    const nodeUsage = new Map<NodeId, { latencies: number[]; tokens: number }>();
+    const nodeUsage: CorpusRunResult['nodeUsage'] = new Map();
 
     const sink = (r: UsageRecord) => {
       let bucket = nodeUsage.get(r.nodeId);
       if (!bucket) {
-        bucket = { latencies: [], tokens: 0 };
+        bucket = { latencies: [], inputTokens: 0, outputTokens: 0 };
         nodeUsage.set(r.nodeId, bucket);
       }
       bucket.latencies.push(r.latencyMs);
-      bucket.tokens += r.promptTokens + r.candidatesTokens + r.thoughtsTokens;
+      bucket.inputTokens += r.promptTokens;
+      bucket.outputTokens += r.candidatesTokens + r.thoughtsTokens;
     };
 
     await withUsageSink(sink, async () => {
