@@ -131,6 +131,33 @@ it('nodeCost rejects an unregistered profile even without recorded usage', () =>
 });
 
 describe('runSweep — two-stage coordinate isolation', () => {
+  it('prices baseline usage at the overridden model version', async () => {
+    const overrides = JSON.stringify({ clarification: { version: '3.5' } });
+    process.env.NODE_PROFILE_OVERRIDES = overrides;
+    const runCorpusOnce = makeRunCorpusOnce(['clarification']);
+    const seenOverrides: Array<string | undefined> = [];
+    const result = await runSweep({
+      nodes: ['clarification'],
+      corpusCount: 12,
+      corpusLabel: 'synthetic',
+      runDate: '2026-06-08',
+      runCorpusOnce: async () => {
+        seenOverrides.push(process.env.NODE_PROFILE_OVERRIDES);
+        const run = await runCorpusOnce();
+        run.nodeUsage.set('clarification', {
+          latencies: [],
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+        });
+        return run;
+      },
+      log: () => {},
+    });
+
+    expect(seenOverrides.slice(0, 2)).toEqual([overrides, overrides]);
+    expect(result.outcomes[0].baseline.cost).toBe(4.50);
+  });
+
   it('reports the Stage-1 thinking anchor it held fixed', async () => {
     const r = await sweep(['clarification']);
     expect(r.stage1Anchor).toBe('high');

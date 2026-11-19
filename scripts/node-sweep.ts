@@ -13,6 +13,7 @@ import { getJudgeModel, getRegisteredModel, resolveModelId, listRegisteredModels
 import {
   resolveNodeModel,
   defaultProfileForNode,
+  getNodeProfile,
   isNodeId,
   NODE_IDS,
   type NodeId,
@@ -445,7 +446,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       metric: nodeMetric(node, baselineRunA.perEntry),
       e2e: e2eOf(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
-      cost: nodeCost(node, defaultProfileForNode(node), baselineRunA.nodeUsage),
+      cost: nodeCost(node, getNodeProfile(node), baselineRunA.nodeUsage),
     };
 
     // Map every label we score back to its concrete profile so the winners can be
@@ -594,7 +595,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
   for (const o of outcomes) {
     const chosenLabel = o.chosenRung ? `${o.chosenRung.tier}/${o.chosenRung.version}@${o.chosenRung.thinkingLevel}` : 'DEFAULT';
     reportLines.push(`## ${o.nodeId}`);
-    reportLines.push(`- Default model: ${resolveNodeModel(o.nodeId)}`);
+    reportLines.push(`- Baseline model: ${resolveNodeModel(o.nodeId)}`);
     reportLines.push(`- ε(metric): ${metricEpsForNode(o.nodeId).toFixed(4)}`);
     reportLines.push(`- Final: ${o.chosenRung ? chosenLabel : 'DEFAULT (no change)'}`);
     reportLines.push('');

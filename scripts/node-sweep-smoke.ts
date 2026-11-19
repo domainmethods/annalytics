@@ -1,7 +1,7 @@
 /**
  * node-sweep-smoke — cheap go/no-go pre-check for the per-node sizing sweep.
  *
- * Runs the corpus N times at the DEFAULT profile (no NODE_PROFILE_OVERRIDES) and
+ * Runs the corpus N times with the current node profiles and
  * reports, per swept node, the run-to-run noise band ε computed EXACTLY as
  * runSweep's calibration does (id-aligned per-entry diff via computeEpsilon).
  * It builds its corpus pass through the SAME createRunCorpusOnce seam the real
@@ -34,7 +34,7 @@ import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry } from './benchmark-types.js';
 import { getJudgeModel, listRegisteredModels } from '../src/agents/modelConfig.js';
-import { resolveNodeModel, defaultProfileForNode, type NodeId } from '../src/agents/nodeProfiles.js';
+import { resolveNodeModel, getNodeProfile, type NodeId } from '../src/agents/nodeProfiles.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
 import { createRunCorpusOnce, nodeCost, type CorpusRunResult, type PerEntry } from './node-sweep.js';
@@ -131,7 +131,7 @@ async function main() {
   const root = process.cwd();
   const ai = new GoogleGenAI({ apiKey });
 
-  // Preflight: only the baseline (DEFAULT-profile) models the smoke actually calls.
+  // Preflight: only the baseline models the smoke actually calls.
   const requiredModels = [...new Set([judgeModel, ...SMOKE_NODES.map(n => resolveNodeModel(n))])];
   await assertGenerateContentModelsAvailable(apiKey, requiredModels);
 
@@ -249,7 +249,7 @@ async function main() {
   for (const node of SMOKE_NODES) {
     const usage = runA.nodeUsage.get(node);
     const tokens = usage ? usage.inputTokens + usage.outputTokens : 0;
-    const profile = defaultProfileForNode(node);
+    const profile = getNodeProfile(node);
     const cost = nodeCost(node, profile, runA.nodeUsage);
     totalCost += cost;
     console.log(`${node.padEnd(14)} tier=${profile.tier.padEnd(10)} tokens=${String(tokens).padStart(8)}  p95=${p95(usage?.latencies ?? []).toFixed(0)}ms  cost≈$${cost.toExponential(2)}`);
