@@ -1,0 +1,42 @@
+teachings:
+  - id: thelook-monthly-revenue
+    question_patterns: [monthly revenue, revenue by month]
+    sanctioned_sql: |
+      SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month, SUM(sale_price) AS revenue
+      FROM `tv_thelook.order_items`
+      WHERE status NOT IN ('Cancelled', 'Returned')
+      GROUP BY month
+      ORDER BY month
+    reasoning: |
+      Sum the selling price at order-item grain. Exclude items with Cancelled or Returned
+      status. Group by the UTC month in which the item was created.
+    models_referenced: [tv_thelook.order_items]
+    tags: [revenue, monthly]
+    author: template-validation
+    updated: "2026-11-18"
+
+  - id: thelook-active-users-in-window
+    question_patterns: [active users in a date range, active users last month]
+    sanctioned_sql: null
+    reasoning: |
+      An active user has at least one event during the requested time window. Filter
+      events.created_at to that window and count distinct non-null events.user_id.
+    models_referenced: [tv_thelook.events]
+    tags: [engagement, active-users]
+    author: template-validation
+    updated: "2026-11-18"
+
+  - id: thelook-orders-by-month
+    question_patterns: [count orders by month, monthly orders]
+    sanctioned_sql: |
+      SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month, COUNT(DISTINCT order_id) AS order_count
+      FROM `tv_thelook.orders`
+      GROUP BY month
+      ORDER BY month
+    reasoning: |
+      Count order identifiers from orders, which has one row per order. Apply a status
+      filter only when the question specifies one.
+    models_referenced: [tv_thelook.orders]
+    tags: [orders, monthly]
+    author: template-validation
+    updated: "2026-11-18"

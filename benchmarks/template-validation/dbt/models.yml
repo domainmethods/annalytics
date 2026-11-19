@@ -1,0 +1,105 @@
+version: 2
+models:
+  - name: orders
+    schema: tv_thelook
+    description: One row per order, with order status and fulfillment timestamps.
+    columns:
+      - { name: order_id, description: Unique order identifier. }
+      - { name: user_id, description: Customer identifier joining to users.id. }
+      - { name: status, description: Overall order status. }
+      - { name: gender, description: Gender recorded on the order. }
+      - { name: created_at, description: Timestamp when the order was created. }
+      - { name: returned_at, description: Timestamp when the order was returned. }
+      - { name: shipped_at, description: Timestamp when the order was shipped. }
+      - { name: delivered_at, description: Timestamp when the order was delivered. }
+      - { name: num_of_item, description: Number of items in the order. }
+  - name: order_items
+    schema: tv_thelook
+    description: One row per order line item, with its selling price and fulfillment status.
+    columns:
+      - { name: id, description: Unique order item identifier. }
+      - { name: order_id, description: Parent order identifier joining to orders.order_id. }
+      - { name: user_id, description: Customer identifier joining to users.id. }
+      - { name: product_id, description: Product identifier joining to products.id. }
+      - { name: inventory_item_id, description: Inventory unit identifier joining to inventory_items.id. }
+      - { name: status, description: Status of this order item. }
+      - { name: created_at, description: Timestamp when the order item was created. }
+      - { name: shipped_at, description: Timestamp when the order item was shipped. }
+      - { name: delivered_at, description: Timestamp when the order item was delivered. }
+      - { name: returned_at, description: Timestamp when the order item was returned. }
+      - { name: sale_price, description: Selling price of this order item. }
+  - name: users
+    schema: tv_thelook
+    description: One row per synthetic user, with profile and acquisition attributes.
+    columns:
+      - { name: id, description: Unique user identifier. }
+      - { name: first_name, description: Synthetic given name. }
+      - { name: last_name, description: Synthetic family name. }
+      - { name: email, description: Synthetic email address field. }
+      - { name: age, description: User age in years. }
+      - { name: gender, description: Gender recorded on the user profile. }
+      - { name: state, description: User state or region. }
+      - { name: street_address, description: Synthetic street address field. }
+      - { name: postal_code, description: User postal code. }
+      - { name: city, description: User city. }
+      - { name: country, description: User country. }
+      - { name: latitude, description: Latitude of the user location. }
+      - { name: longitude, description: Longitude of the user location. }
+      - { name: traffic_source, description: Recorded acquisition source for the user. }
+      - { name: created_at, description: Timestamp when the user profile was created. }
+      - { name: user_geom, description: Geographic point for the user location. }
+  - name: products
+    schema: tv_thelook
+    description: One row per catalog product, including category, cost, and retail price.
+    columns:
+      - { name: id, description: Unique product identifier. }
+      - { name: cost, description: Product cost. }
+      - { name: category, description: Product category. }
+      - { name: name, description: Product name. }
+      - { name: brand, description: Product brand. }
+      - { name: retail_price, description: Listed retail price. }
+      - { name: department, description: Product department. }
+      - { name: sku, description: Product stock keeping code. }
+      - { name: distribution_center_id, description: Distribution center identifier joining to distribution_centers.id. }
+  - name: inventory_items
+    schema: tv_thelook
+    description: One row per physical inventory unit, with stocking and sale timestamps and recorded product attributes.
+    columns:
+      - { name: id, description: Unique inventory unit identifier. }
+      - { name: product_id, description: Product identifier joining to products.id. }
+      - { name: created_at, description: Timestamp when the unit entered inventory. }
+      - { name: sold_at, description: Timestamp when the unit was sold. }
+      - { name: cost, description: Recorded cost of the unit. }
+      - { name: product_category, description: Recorded product category. }
+      - { name: product_name, description: Recorded product name. }
+      - { name: product_brand, description: Recorded product brand. }
+      - { name: product_retail_price, description: Recorded product retail price. }
+      - { name: product_department, description: Recorded product department. }
+      - { name: product_sku, description: Recorded product stock keeping code. }
+      - { name: product_distribution_center_id, description: Distribution center identifier joining to distribution_centers.id. }
+  - name: events
+    schema: tv_thelook
+    description: One row per website event, with session sequencing and event-level traffic source.
+    columns:
+      - { name: id, description: Unique event identifier. }
+      - { name: user_id, description: User identifier when available. Joins to users.id. }
+      - { name: sequence_number, description: Position of the event within its session. }
+      - { name: session_id, description: Session identifier shared by events in the same visit. }
+      - { name: created_at, description: Timestamp when the event occurred. }
+      - { name: ip_address, description: Synthetic IP address recorded for the event. }
+      - { name: city, description: City recorded for the event. }
+      - { name: state, description: State or region recorded for the event. }
+      - { name: postal_code, description: Postal code recorded for the event. }
+      - { name: browser, description: Browser recorded for the event. }
+      - { name: traffic_source, description: Traffic source recorded for the event. }
+      - { name: uri, description: URI of the page associated with the event. }
+      - { name: event_type, description: Kind of event recorded. }
+  - name: distribution_centers
+    schema: tv_thelook
+    description: One row per distribution center, with its name and coordinates.
+    columns:
+      - { name: id, description: Unique distribution center identifier. }
+      - { name: name, description: Distribution center name. }
+      - { name: latitude, description: Latitude of the distribution center. }
+      - { name: longitude, description: Longitude of the distribution center. }
+      - { name: distribution_center_geom, description: Geographic point for the distribution center. }

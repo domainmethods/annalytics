@@ -22,6 +22,7 @@
     "promote": "tsx scripts/promote-teachings.ts",
     "node-sweep": "tsx scripts/node-sweep.ts",
     "model:discover": "tsx scripts/model-discover.ts",
+    "tv:setup": "tsx scripts/template-validation/warehouse.ts",
     "prepare": "husky"
   },
   "lint-staged": {

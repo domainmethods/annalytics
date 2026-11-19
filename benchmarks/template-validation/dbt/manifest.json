@@ -1,0 +1,384 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.template_validation.orders": {
+      "resource_type": "model",
+      "name": "orders",
+      "schema": "tv_thelook",
+      "description": "One row per order, with order status and fulfillment timestamps.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Unique order identifier."
+        },
+        "user_id": {
+          "name": "user_id",
+          "description": "Customer identifier joining to users.id."
+        },
+        "status": {
+          "name": "status",
+          "description": "Overall order status."
+        },
+        "gender": {
+          "name": "gender",
+          "description": "Gender recorded on the order."
+        },
+        "created_at": {
+          "name": "created_at",
+          "description": "Timestamp when the order was created."
+        },
+        "returned_at": {
+          "name": "returned_at",
+          "description": "Timestamp when the order was returned."
+        },
+        "shipped_at": {
+          "name": "shipped_at",
+          "description": "Timestamp when the order was shipped."
+        },
+        "delivered_at": {
+          "name": "delivered_at",
+          "description": "Timestamp when the order was delivered."
+        },
+        "num_of_item": {
+          "name": "num_of_item",
+          "description": "Number of items in the order."
+        }
+      }
+    },
+    "model.template_validation.order_items": {
+      "resource_type": "model",
+      "name": "order_items",
+      "schema": "tv_thelook",
+      "description": "One row per order line item, with its selling price and fulfillment status.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique order item identifier."
+        },
+        "order_id": {
+          "name": "order_id",
+          "description": "Parent order identifier joining to orders.order_id."
+        },
+        "user_id": {
+          "name": "user_id",
+          "description": "Customer identifier joining to users.id."
+        },
+        "product_id": {
+          "name": "product_id",
+          "description": "Product identifier joining to products.id."
+        },
+        "inventory_item_id": {
+          "name": "inventory_item_id",
+          "description": "Inventory unit identifier joining to inventory_items.id."
+        },
+        "status": {
+          "name": "status",
+          "description": "Status of this order item."
+        },
+        "created_at": {
+          "name": "created_at",
+          "description": "Timestamp when the order item was created."
+        },
+        "shipped_at": {
+          "name": "shipped_at",
+          "description": "Timestamp when the order item was shipped."
+        },
+        "delivered_at": {
+          "name": "delivered_at",
+          "description": "Timestamp when the order item was delivered."
+        },
+        "returned_at": {
+          "name": "returned_at",
+          "description": "Timestamp when the order item was returned."
+        },
+        "sale_price": {
+          "name": "sale_price",
+          "description": "Selling price of this order item."
+        }
+      }
+    },
+    "model.template_validation.users": {
+      "resource_type": "model",
+      "name": "users",
+      "schema": "tv_thelook",
+      "description": "One row per synthetic user, with profile and acquisition attributes.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique user identifier."
+        },
+        "first_name": {
+          "name": "first_name",
+          "description": "Synthetic given name."
+        },
+        "last_name": {
+          "name": "last_name",
+          "description": "Synthetic family name."
+        },
+        "email": {
+          "name": "email",
+          "description": "Synthetic email address field."
+        },
+        "age": {
+          "name": "age",
+          "description": "User age in years."
+        },
+        "gender": {
+          "name": "gender",
+          "description": "Gender recorded on the user profile."
+        },
+        "state": {
+          "name": "state",
+          "description": "User state or region."
+        },
+        "street_address": {
+          "name": "street_address",
+          "description": "Synthetic street address field."
+        },
+        "postal_code": {
+          "name": "postal_code",
+          "description": "User postal code."
+        },
+        "city": {
+          "name": "city",
+          "description": "User city."
+        },
+        "country": {
+          "name": "country",
+          "description": "User country."
+        },
+        "latitude": {
+          "name": "latitude",
+          "description": "Latitude of the user location."
+        },
+        "longitude": {
+          "name": "longitude",
+          "description": "Longitude of the user location."
+        },
+        "traffic_source": {
+          "name": "traffic_source",
+          "description": "Recorded acquisition source for the user."
+        },
+        "created_at": {
+          "name": "created_at",
+          "description": "Timestamp when the user profile was created."
+        },
+        "user_geom": {
+          "name": "user_geom",
+          "description": "Geographic point for the user location."
+        }
+      }
+    },
+    "model.template_validation.products": {
+      "resource_type": "model",
+      "name": "products",
+      "schema": "tv_thelook",
+      "description": "One row per catalog product, including category, cost, and retail price.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique product identifier."
+        },
+        "cost": {
+          "name": "cost",
+          "description": "Product cost."
+        },
+        "category": {
+          "name": "category",
+          "description": "Product category."
+        },
+        "name": {
+          "name": "name",
+          "description": "Product name."
+        },
+        "brand": {
+          "name": "brand",
+          "description": "Product brand."
+        },
+        "retail_price": {
+          "name": "retail_price",
+          "description": "Listed retail price."
+        },
+        "department": {
+          "name": "department",
+          "description": "Product department."
+        },
+        "sku": {
+          "name": "sku",
+          "description": "Product stock keeping code."
+        },
+        "distribution_center_id": {
+          "name": "distribution_center_id",
+          "description": "Distribution center identifier joining to distribution_centers.id."
+        }
+      }
+    },
+    "model.template_validation.inventory_items": {
+      "resource_type": "model",
+      "name": "inventory_items",
+      "schema": "tv_thelook",
+      "description": "One row per physical inventory unit, with stocking and sale timestamps and recorded product attributes.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique inventory unit identifier."
+        },
+        "product_id": {
+          "name": "product_id",
+          "description": "Product identifier joining to products.id."
+        },
+        "created_at": {
+          "name": "created_at",
+          "description": "Timestamp when the unit entered inventory."
+        },
+        "sold_at": {
+          "name": "sold_at",
+          "description": "Timestamp when the unit was sold."
+        },
+        "cost": {
+          "name": "cost",
+          "description": "Recorded cost of the unit."
+        },
+        "product_category": {
+          "name": "product_category",
+          "description": "Recorded product category."
+        },
+        "product_name": {
+          "name": "product_name",
+          "description": "Recorded product name."
+        },
+        "product_brand": {
+          "name": "product_brand",
+          "description": "Recorded product brand."
+        },
+        "product_retail_price": {
+          "name": "product_retail_price",
+          "description": "Recorded product retail price."
+        },
+        "product_department": {
+          "name": "product_department",
+          "description": "Recorded product department."
+        },
+        "product_sku": {
+          "name": "product_sku",
+          "description": "Recorded product stock keeping code."
+        },
+        "product_distribution_center_id": {
+          "name": "product_distribution_center_id",
+          "description": "Distribution center identifier joining to distribution_centers.id."
+        }
+      }
+    },
+    "model.template_validation.events": {
+      "resource_type": "model",
+      "name": "events",
+      "schema": "tv_thelook",
+      "description": "One row per website event, with session sequencing and event-level traffic source.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique event identifier."
+        },
+        "user_id": {
+          "name": "user_id",
+          "description": "User identifier when available. Joins to users.id."
+        },
+        "sequence_number": {
+          "name": "sequence_number",
+          "description": "Position of the event within its session."
+        },
+        "session_id": {
+          "name": "session_id",
+          "description": "Session identifier shared by events in the same visit."
+        },
+        "created_at": {
+          "name": "created_at",
+          "description": "Timestamp when the event occurred."
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "description": "Synthetic IP address recorded for the event."
+        },
+        "city": {
+          "name": "city",
+          "description": "City recorded for the event."
+        },
+        "state": {
+          "name": "state",
+          "description": "State or region recorded for the event."
+        },
+        "postal_code": {
+          "name": "postal_code",
+          "description": "Postal code recorded for the event."
+        },
+        "browser": {
+          "name": "browser",
+          "description": "Browser recorded for the event."
+        },
+        "traffic_source": {
+          "name": "traffic_source",
+          "description": "Traffic source recorded for the event."
+        },
+        "uri": {
+          "name": "uri",
+          "description": "URI of the page associated with the event."
+        },
+        "event_type": {
+          "name": "event_type",
+          "description": "Kind of event recorded."
+        }
+      }
+    },
+    "model.template_validation.distribution_centers": {
+      "resource_type": "model",
+      "name": "distribution_centers",
+      "schema": "tv_thelook",
+      "description": "One row per distribution center, with its name and coordinates.",
+      "config": {
+        "materialized": "view"
+      },
+      "columns": {
+        "id": {
+          "name": "id",
+          "description": "Unique distribution center identifier."
+        },
+        "name": {
+          "name": "name",
+          "description": "Distribution center name."
+        },
+        "latitude": {
+          "name": "latitude",
+          "description": "Latitude of the distribution center."
+        },
+        "longitude": {
+          "name": "longitude",
+          "description": "Longitude of the distribution center."
+        },
+        "distribution_center_geom": {
+          "name": "distribution_center_geom",
+          "description": "Geographic point for the distribution center."
+        }
+      }
+    }
+  }
+}

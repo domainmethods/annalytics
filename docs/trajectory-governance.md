@@ -171,6 +171,8 @@ Every deferred item now carries its blocking condition. Reviving any item requir
 | Verbose provenance footers on every Slack answer | Compact provenance by default (guardrail #4) | Evidence that compact provenance is insufficient |
 | Wide production-corpus ingestion | No privacy-safe feedback events yet | Privacy-safe event design accepted |
 
+The [approved model-refresh design](superpowers/specs/2026-11-18-model-refresh-validation-design.md) adds a separate public-data validation set for template defaults. Its TheLook setup and synthetic knowledge are fixtures for that set. The T3 queue still governs implementation-specific evaluation work.
+
 ## Product Guardrails
 
 Use these guardrails when reviewing future plans:

@@ -1,0 +1,48 @@
+reference_cards:
+  - id: thelook-revenue
+    title: TheLook Revenue
+    domain: revenue
+    grain: order item
+    canonical_table: tv_thelook.order_items
+    canonical_metric: SUM(sale_price)
+    required_filters: ["status NOT IN ('Cancelled', 'Returned')"]
+    exclusions: [cancelled items, returned items]
+    avoid_tables: [tv_thelook.products]
+    aliases: [revenue, sales revenue]
+    routing_triggers: [total revenue, monthly revenue]
+    owner: template-validation
+    freshness_sla: Reads the current public TheLook dataset.
+    related_teachings: [thelook-monthly-revenue]
+    updated: "2026-11-18"
+
+  - id: thelook-active-users
+    title: TheLook Active Users
+    domain: engagement
+    grain: user
+    canonical_table: tv_thelook.events
+    canonical_metric: COUNT(DISTINCT user_id)
+    required_filters: [at least one event in the requested time window, user_id IS NOT NULL]
+    exclusions: [anonymous events, account creation without an event]
+    avoid_tables: [tv_thelook.users, tv_thelook.orders]
+    aliases: [active users, active customers]
+    routing_triggers: [daily active users, weekly active users, active users this month]
+    owner: template-validation
+    freshness_sla: Reads the current public TheLook dataset.
+    related_teachings: [thelook-active-users-in-window]
+    updated: "2026-11-18"
+
+  - id: thelook-order-count
+    title: TheLook Order Count
+    domain: orders
+    grain: order
+    canonical_table: tv_thelook.orders
+    canonical_metric: COUNT(DISTINCT order_id)
+    required_filters: []
+    exclusions: [counting each order item as a separate order]
+    avoid_tables: [tv_thelook.order_items]
+    aliases: [order count, total orders, orders placed]
+    routing_triggers: [how many orders, count orders by month]
+    owner: template-validation
+    freshness_sla: Reads the current public TheLook dataset.
+    related_teachings: [thelook-orders-by-month]
+    updated: "2026-11-18"
