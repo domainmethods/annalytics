@@ -14,15 +14,16 @@ import { buildOtherNoteModal } from '../slack/feedbackModals.js';
 import { saveFeedbackNote, type FeedbackNote } from '../state/feedbackNotes.js';
 import { rootLogger } from '../logging.js';
 
+/** Shown when the "Other" note modal fails to open; the reason buttons are re-rendered for a retry. */
+const OTHER_FORM_FAILED_MESSAGE =
+  "Sorry — I couldn't open the note form. Click *Other* again to retry.";
+
 /**
  * Shown when we can no longer reconstruct an answer's details (malformed
  * compound key, evicted ResponseContext, or a failed escalation-state write
  * after the card already posted). Single-sourced so the user-facing wording
  * stays identical across every degrade path.
  */
-const OTHER_FORM_FAILED_MESSAGE =
-  "Sorry — I couldn't open the note form. Click *Other* again to retry.";
-
 const REASK_MESSAGE =
   "I can't pull this answer's details anymore — please re-ask and I'll take another run at it.";
 
@@ -118,9 +119,8 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
 
   const reason = feedbackReasonById(reasonId);
 
-  // Unknown reason id → treat as record-only. Nothing is persisted here, and
-  // the earlier 👎 write (recordFeedback) swallows failures, so the ack must not
-  // claim that anything was recorded or logged.
+  // Unknown reason id → treat as record-only. Nothing is persisted on this
+  // path, so the ack must not claim anything was recorded or logged.
   if (!reason || reason.route === 'record') {
     await respond({ replace_original: true, text: 'Thanks for the feedback.', thread_ts: earlyThreadTs } as any);
     return;
