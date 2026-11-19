@@ -504,7 +504,7 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 
 ### 2026-11-18 - Template release and update process
 
-- Added a proposed 1.0.0 baseline aligned with package.json, based on merged PR
+- Added a proposed 0.1.0 baseline aligned with package.json, based on merged PR
   history, plus implementation sync and maintainer release instructions. No tag
   or release is created by this change. This is template trust maintenance, not
   a product tranche; existing gates and deferred work remain in force.

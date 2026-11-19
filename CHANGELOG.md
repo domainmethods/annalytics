@@ -22,6 +22,36 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
   L1–L4 validation before every execution, including best-effort answers.
   Expect rejected SQL to stop before execution; successful queries incur an
   additional dry run. Verify warehouse validation and cost limits before deploying.
+- **Action required — numeric settings (#112):** every numeric environment
+  setting must be a positive safe integer (blank/unset uses the default; `PORT`
+  must be a valid TCP port; escalation reminder/timeout values are bounded).
+  Fractional, negative, infinite, or out-of-range values now fail startup with
+  an error naming the variable, instead of silently becoming zero or unbounded.
+  Response-context retention uses the same shared parser. Check numeric env
+  values against `.env.example` before updating.
+- **Action required — dbt relation identity (#114):** schema, sampling, and
+  INFORMATION_SCHEMA contexts use physical three-part `project.dataset.table`
+  names from dbt `relation_name` (or database/schema/alias when absent);
+  ephemeral models are no longer advertised as queryable, and malformed
+  `relation_name` values skip the node with a warning. Legacy `dataset.table`
+  names in ReferenceCards, teachings, and benchmark expectations resolve only
+  when unique across the advertised inventory; ambiguous names are rejected or
+  left unattributed. Routine fast-path SQL resolves two-part references only in
+  the execution default project. Migrate knowledge and expectations to
+  three-part names and re-run benchmark acceptance.
+- **Action required — dbt status ingestion (#116):** dbt `warn`, no-op, and
+  reused outcomes are stored distinctly instead of as failures; partial success
+  and runtime errors map to error. Records ingested before this change keep
+  their old status — re-ingest recent `run_results.json` if dbt status answers
+  matter to you.
+- Infrastructure validation fails when neither Terraform nor OpenTofu is
+  installed, and a credential-free CI job validates `infra/` (#115).
+
+### Changed
+
+- Documentation identifies `NODE_PROFILE_OVERRIDES` and `MODEL_ID_OVERRIDES` as
+  the production Gemini model controls; legacy model-alias settings are not
+  serving controls (#111). Runtime defaults are unchanged.
 
 ### Added
 
