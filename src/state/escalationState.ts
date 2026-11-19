@@ -168,23 +168,51 @@ export async function resolveEscalation(
   });
 }
 
-export async function updateReminderTime(
+/**
+ * Claim the next reminder for an escalation before it is posted (#54). Inside a
+ * transaction, records the reminder only while the escalation still awaits a
+ * human and its last reminder (or creation) is older than `dueBefore`, so
+ * overlapping sweeps or instances cannot both post the same reminder. Returns
+ * false when another sweep already claimed it or the escalation moved on.
+ */
+export async function claimReminder(
   escalationId: string,
-): Promise<void> {
+  dueBefore: Date,
+): Promise<boolean> {
   const db = getDb();
-  await db.collection(COLLECTION).doc(escalationId).update({
-    lastReminderAt: new Date(),
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists) return false;
+    const data = doc.data()!;
+    if (data.pipelineState !== 'awaiting_human') return false;
+    const last = toDate((data.lastReminderAt ?? data.createdAt) as Date | FirestoreTimestamp | undefined);
+    if (!last || last >= dueBefore) return false;
+    transaction.update(ref, { lastReminderAt: new Date() });
+    return true;
   });
 }
 
-export async function getAllPendingEscalations(): Promise<EscalationState[]> {
-  const db = getDb();
-  const snapshot = await db.collection(COLLECTION)
-    .where('pipelineState', '==', 'awaiting_human')
-    .limit(50)
-    .get();
+const PENDING_SWEEP_PAGE_SIZE = 50;
 
-  return snapshot.docs.map(doc => toEscalationState(doc.data()));
+/**
+ * Every escalation awaiting a human, for the lifecycle sweep. Pages with a
+ * cursor instead of reading one fixed page: records that stay pending (for
+ * example ones just reminded) would otherwise fill that page on every tick and
+ * hide later overdue escalations from reminders and timeouts (#54). Uses the
+ * existing equality filter and default document order, so no new index. The
+ * set is bounded by the escalation timeout, which moves records out of it.
+ */
+export async function getAllPendingEscalations(): Promise<EscalationState[]> {
+  const query = getDb().collection(COLLECTION).where('pipelineState', '==', 'awaiting_human');
+  const escalations: EscalationState[] = [];
+  let page = query.limit(PENDING_SWEEP_PAGE_SIZE);
+  for (;;) {
+    const snapshot = await page.get();
+    escalations.push(...snapshot.docs.map(doc => toEscalationState(doc.data())));
+    if (snapshot.docs.length < PENDING_SWEEP_PAGE_SIZE) return escalations;
+    page = query.startAfter(snapshot.docs[snapshot.docs.length - 1]).limit(PENDING_SWEEP_PAGE_SIZE);
+  }
 }
 
 export async function timeoutEscalation(
