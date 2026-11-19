@@ -9,6 +9,11 @@ const mockLimit = vi.fn();
 const mockSelect = vi.fn();
 const mockOrderBy = vi.fn();
 
+const mockHasThreadParticipation = vi.fn();
+vi.mock('../../src/state/threadParticipation.js', () => ({
+  hasThreadParticipation: (...args: unknown[]) => mockHasThreadParticipation(...args),
+}));
+
 vi.mock('../../src/state/firestore.js', () => ({
   getDb: () => ({
     collection: () => ({
@@ -182,6 +187,14 @@ describe('botHasRepliedInThread', () => {
     mockWhere.mockReturnValue({ select: mockSelect });
     mockSelect.mockReturnValue({ limit: mockLimit });
     mockLimit.mockReturnValue({ get: mockGet });
+    mockHasThreadParticipation.mockResolvedValue(false);
+  });
+
+  it('returns true from the participation mark without querying answers (#53)', async () => {
+    mockHasThreadParticipation.mockResolvedValue(true);
+    await expect(botHasRepliedInThread('C_ONE', 'thread-1')).resolves.toBe(true);
+    expect(mockHasThreadParticipation).toHaveBeenCalledWith('C_ONE', 'thread-1');
+    expect(mockGet).not.toHaveBeenCalled();
   });
 
   it('returns true when response context exists for the conversation', async () => {

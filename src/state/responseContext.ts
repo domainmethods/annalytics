@@ -2,6 +2,7 @@ import { parseResponseContextRetentionDays } from './retentionSettings.js';
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
 import { conversationThreadKey, findOwnedDoc } from './threadScope.js';
+import { hasThreadParticipation } from './threadParticipation.js';
 
 type FirestoreTimestamp = { toDate: () => Date };
 
@@ -74,6 +75,8 @@ export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
 }
 
 export async function botHasRepliedInThread(channel: string, threadTs: string): Promise<boolean> {
+  // Cheap single-doc check first: covers replies that saved no answer (#53).
+  if (await hasThreadParticipation(channel, threadTs)) return true;
   const doc = await findOwnedDoc(
     getDb()
       .collection('response_context')

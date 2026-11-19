@@ -12,6 +12,7 @@ const {
   mockReleaseSlackEventClaim,
   mockMaybeHandleSlackIntake,
   mockPreflightChecks,
+  mockRecordThreadParticipation,
 } = vi.hoisted(() => ({
   mockRunPipeline: vi.fn(),
   mockToPipelineConfig: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockReleaseSlackEventClaim: vi.fn(),
   mockMaybeHandleSlackIntake: vi.fn(),
   mockPreflightChecks: vi.fn(),
+  mockRecordThreadParticipation: vi.fn(),
 }));
 
 vi.mock('../../src/pipeline.js', () => ({
@@ -46,6 +48,10 @@ vi.mock('../../src/handlers/slackIntake.js', () => ({
 }));
 vi.mock('../../src/handlers/preflightChecks.js', () => ({
   preflightChecks: mockPreflightChecks,
+}));
+
+vi.mock('../../src/state/threadParticipation.js', () => ({
+  recordThreadParticipation: mockRecordThreadParticipation,
 }));
 
 import { registerMentions } from '../../src/handlers/mentions.js';
@@ -76,6 +82,7 @@ describe('registerMentions app_mention seam', () => {
     mockMarkSlackEventVisible.mockResolvedValue(undefined);
     mockReleaseThreadLock.mockResolvedValue(undefined);
     mockRunPipeline.mockResolvedValue(undefined);
+    mockRecordThreadParticipation.mockResolvedValue(undefined);
   });
 
   it('on an immediate response, does not post the status message and does not run the pipeline', async () => {
@@ -141,5 +148,39 @@ describe('registerMentions app_mention seam', () => {
     expect(mockMarkSlackEventVisible).toHaveBeenCalledWith('evt-1');
     await intakeArg.releaseLock();
     expect(mockReleaseThreadLock).toHaveBeenCalledWith('C1', 'T1', expect.any(String));
+  });
+
+  describe('thread participation (#53)', () => {
+    it('marks the thread after an immediate intake reply', async () => {
+      mockMaybeHandleSlackIntake.mockResolvedValue(true);
+      const handler = captureMentionHandler();
+      await handler({ event: { text: '<@U1> hi', user: 'U2', channel: 'C1', ts: 'T1' }, body: {}, client: makeClient() });
+      expect(mockRecordThreadParticipation).toHaveBeenCalledWith('C1', 'T1');
+    });
+
+    it('marks the thread when the status message posts, before the pipeline runs', async () => {
+      mockMaybeHandleSlackIntake.mockResolvedValue(false);
+      mockRunPipeline.mockImplementation(async () => {
+        expect(mockRecordThreadParticipation).toHaveBeenCalledWith('C1', 'T0');
+      });
+      const handler = captureMentionHandler();
+      await handler({ event: { text: '<@U1> leads', user: 'U2', channel: 'C1', ts: 'T1', thread_ts: 'T0' }, body: {}, client: makeClient() });
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not mark the thread for a rate-limit reply', async () => {
+      mockCheckRateLimit.mockResolvedValue({ allowed: false, retryAfterMinutes: 5 });
+      const handler = captureMentionHandler();
+      await handler({ event: { text: '<@U1> leads', user: 'U2', channel: 'C1', ts: 'T1' }, body: {}, client: makeClient() });
+      expect(mockRecordThreadParticipation).not.toHaveBeenCalled();
+    });
+
+    it('still runs the pipeline when the mark fails', async () => {
+      mockMaybeHandleSlackIntake.mockResolvedValue(false);
+      mockRecordThreadParticipation.mockRejectedValue(new Error('firestore down'));
+      const handler = captureMentionHandler();
+      await handler({ event: { text: '<@U1> leads', user: 'U2', channel: 'C1', ts: 'T1' }, body: {}, client: makeClient() });
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
   });
 });

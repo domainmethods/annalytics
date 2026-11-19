@@ -13,6 +13,18 @@ import {
 } from '../state/slackEventDedupe.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { preflightChecks } from './preflightChecks.js';
+import { recordThreadParticipation } from '../state/threadParticipation.js';
+import { rootLogger } from '../logging.js';
+
+/**
+ * Best-effort: a reply in the thread means later unmentioned replies there are
+ * for the bot (#53). A failed write only costs that convenience.
+ */
+function markParticipation(channel: string, threadTs: string): Promise<void> {
+  return recordThreadParticipation(channel, threadTs).catch((err: Error) => {
+    rootLogger.warn({ err: err.message }, 'thread_participation.record_failed');
+  });
+}
 
 export function registerMentions(app: App, getConfig: () => AppConfig, getTables: () => TableContext[]) {
   app.event('app_mention', async ({ event, body, client }) => {
@@ -57,6 +69,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       });
       if (handledByIntake) {
         visibleResponse = true;
+        await markParticipation(event.channel, threadTs);
         lockHeld = false;
         return;
       }
@@ -68,6 +81,7 @@ export function registerMentions(app: App, getConfig: () => AppConfig, getTables
       });
       const statusMsgTs = statusMsg.ts!;
       visibleResponse = true;
+      await markParticipation(event.channel, threadTs);
       await markSlackEventVisible(eventId).catch(() => {});
       lockHeld = false;
 
