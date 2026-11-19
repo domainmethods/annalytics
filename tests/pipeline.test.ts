@@ -435,6 +435,8 @@ describe('runPipeline', () => {
     expect(mockExecute).toHaveBeenCalledTimes(1);
     expect(mockBuildCaveat).toHaveBeenCalledWith('Uncertain about join logic');
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
+    // Overrides recover the verification warning from this verdict (#47).
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ supervisorVerdict: 'exhausted' }));
     expect(mockSaveEscalation).toHaveBeenCalledWith(
       expect.objectContaining({
         behavior: 'best_effort_verify',

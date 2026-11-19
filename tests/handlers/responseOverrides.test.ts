@@ -163,6 +163,59 @@ describe('override handlers preserve assumptions', () => {
   });
 });
 
+describe('override handlers keep the best-effort verification warning (#47)', () => {
+  const bestEffortCtx = { ...baseCtx, supervisorVerdict: 'exhausted' as const, supervisorNotes: 'Unsure about the join' };
+  const lastBlocks = () => JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(bestEffortCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('keeps the warning when re-rendering as a table', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).toContain('The data team is verifying it');
+    expect(lastBlocks()).toContain('Unsure about the join');
+    expect(lastBlocks()).toContain('region');
+  });
+
+  it('keeps the warning while summarizing and on the summary', async () => {
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const progress = mockClient.chat.update.mock.calls[0][0];
+    expect(progress.text).toBe('Generating summary...');
+    expect(JSON.stringify(progress.blocks)).toContain('The data team is verifying it');
+    expect(lastBlocks()).toContain('The data team is verifying it');
+    expect(lastBlocks()).toContain('a summary');
+  });
+
+  it('keeps the warning on the summary fallback table', async () => {
+    mockGenerateContent.mockRejectedValue(new Error('Flash down'));
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).toContain("Couldn't generate a summary");
+    expect(lastBlocks()).toContain('The data team is verifying it');
+  });
+
+  it('keeps the warning when the summary comes back empty', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).toContain("Couldn't generate a summary");
+    expect(lastBlocks()).toContain('The data team is verifying it');
+  });
+
+  it('adds no warning to a verified answer', async () => {
+    mockGetCtx.mockResolvedValue(baseCtx);
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).not.toContain('verifying');
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(lastBlocks()).not.toContain('verifying');
+    expect(mockClient.chat.update.mock.calls.find((c: any[]) => c[0].text === 'Generating summary...')[0].blocks).toBeUndefined();
+  });
+});
+
 const csvCurrentBlocks = [
   { type: 'section', text: { type: 'mrkdwn', text: 'answer' } },
   { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
