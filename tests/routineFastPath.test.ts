@@ -57,6 +57,7 @@ const sqlResult: SqlGenerationResult = {
 
 function baseInput(overrides: Partial<Parameters<typeof runRoutineFastPath>[0]> = {}) {
   return {
+    executionDefaultProject: 'example-project',
     enabled: true,
     requireSupervisor: false,
     question: 'total revenue?',
@@ -95,6 +96,26 @@ beforeEach(() => {
 });
 
 describe('runRoutineFastPath', () => {
+  it('accepts a unique legacy name against the complete physical inventory', async () => {
+    const result = await runRoutineFastPath(baseInput({ tables: [{ ...tables[0], name: 'example-project.analytics.fct_orders' }] }));
+    expect(result.kind).toBe('complete');
+  });
+  it('rejects SQL resolved in a different execution project', async () => {
+    const result = await runRoutineFastPath(baseInput({ tables: [{ ...tables[0], name: 'other-project.analytics.fct_orders' }] }));
+    expect(result.kind).toBe('fallback');
+  });
+  it('matches legacy reports and canonical cards against qualified SQL', async () => {
+    vi.mocked(generateSql).mockResolvedValue({ ...sqlResult, sql: 'SELECT * FROM `example-project.analytics.fct_orders`' });
+    const result = await runRoutineFastPath(baseInput({
+      tables: [{ ...tables[0], name: 'example-project.analytics.fct_orders' }],
+      knowledgeSummaries: [{ ...knowledgeSummaries[0], canonical_table: 'example-project.analytics.fct_orders' }],
+    }));
+    expect(result.kind).toBe('complete');
+  });
+  it('requires a default project for two-part SQL', async () => {
+    const result = await runRoutineFastPath(baseInput({ executionDefaultProject: undefined }));
+    expect(result.kind).toBe('fallback');
+  });
   it('returns ineligible without generating SQL when disabled', async () => {
     const result = await runRoutineFastPath(baseInput({ enabled: false }));
     expect(result.kind).toBe('ineligible');

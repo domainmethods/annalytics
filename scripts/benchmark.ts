@@ -142,12 +142,8 @@ async function main() {
     console.warn(`Warning: Could not load dbt artifacts: ${(err as Error).message}. Running without schema context.`);
   }
 
-  const knownBenchmarkTables = [
-    ...new Set([
-      ...tables.map(table => table.name),
-      ...corpus.flatMap(entry => entry.expectedTables ?? []),
-    ]),
-  ];
+  // No advertised schema means no inferred inventory from expectation or card labels.
+  const knownBenchmarkTables = tables.map(table => table.name);
   console.log(`Corpus: ${corpus.length} questions\n`);
   const packageJson = await readFile(join(root, 'package.json'), 'utf-8');
   const metadata = buildBenchmarkMetadata({

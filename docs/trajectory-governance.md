@@ -493,3 +493,10 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.
 
 - PR #116 review correction: preserve dbt no-op and reused as distinct non-failure outcomes in ingestion, stored-history readback, and dbt_status formatting. Unknown and missing statuses still map conservatively to error. Regression tests cover failure-query exclusion and formatter guidance. Queries and composite indexes are unchanged.
+
+### 2026-11-18 - dbt physical relation identity (#42, #43)
+
+- Schema and sampling inputs now use dbt `relation_name` (normalized for whitespace and identifier quotes) or, only when it is absent/empty, database/schema/alias. A malformed non-empty `relation_name` skips the node with a warning. Ephemeral nodes are excluded from the queryable schema; dependency node IDs remain intact for lineage. INFORMATION_SCHEMA contexts retain project qualification.
+- Physical three-part names are authoritative for identity matching (ReferenceCards, teachings, feedback attribution, benchmark and node-sweep scoring, fast-path reported/canonical names). A legacy `dataset.table` resolves only when it is unique across the complete advertised physical inventory; cross-project ambiguity is rejected or left unattributed. Expectation and card labels are never inventory candidates. Feedback reports without dbt artifacts warn and keep only fully qualified attribution. Migrate knowledge and expectations to three-part names.
+- SQL authorization in the routine fast path is separate from identity matching: two-part SQL references resolve only in the BigQuery execution default project and are rejected when that project is not configured, so inventory uniqueness can never authorize a cross-project table.
+- Defect repair of existing trust instruments only; no tranche change. Synthetic offline regressions only; no cloud resources or client evidence. Deployment and production acceptance remain outside this change.

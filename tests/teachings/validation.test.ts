@@ -70,3 +70,10 @@ describe('loadDbtTableNames', () => {
     await expect(loadDbtTableNames(root)).resolves.toBeNull();
   });
 });
+
+it.each(['analytics.fct_orders', 'proj.analytics.fct_orders'])('validates qualified teaching %s', model => {
+  expect(validateTeachingIntegrity([teaching({ models_referenced: [model] })], { validTableNames: new Set(['proj.analytics.fct_orders']) })).toEqual([]);
+});
+it('rejects ambiguous legacy teaching references', () => {
+  expect(validateTeachingIntegrity([teaching()], { validTableNames: new Set(['proj.analytics.fct_orders', 'other.analytics.fct_orders']) })).not.toEqual([]);
+});

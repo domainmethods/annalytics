@@ -70,7 +70,7 @@ describe('getSchemaFallback', () => {
     const result = await getSchemaFallback('my-project', 'raw_dataset', 'raw_events');
 
     expect(result).not.toBeNull();
-    expect(result!.name).toBe('raw_dataset.raw_events');
+    expect(result!.name).toBe('my-project.raw_dataset.raw_events');
     expect(result!.schema).toBe('raw_dataset');
     expect(result!.description).toBe('');
     expect(result!.materialization).toBe('unknown');
@@ -81,7 +81,7 @@ describe('getSchemaFallback', () => {
       { name: 'created_at', dataType: 'TIMESTAMP', description: '', meta: {} },
       { name: 'amount', dataType: 'FLOAT64', description: '', meta: {} },
     ]);
-    expect(result!.sampleDDL).toContain('CREATE TABLE `raw_dataset.raw_events`');
+    expect(result!.sampleDDL).toContain('CREATE TABLE `my-project.raw_dataset.raw_events`');
     expect(result!.sampleDDL).toContain('event_id STRING -- Unique event identifier');
     expect(result!.sampleDDL).toContain('created_at TIMESTAMP');
     expect(result!.sampleDDL).toContain('amount FLOAT64');
@@ -154,7 +154,7 @@ describe('getSchemaFallback', () => {
 
     // Verify DDL format matches parser.ts pattern
     const expectedDDL = [
-      'CREATE TABLE `analytics.dim_users` (',
+      'CREATE TABLE `my-project.analytics.dim_users` (',
       '  user_id INT64 -- User primary key,',
       '  email STRING -- User email address,',
       '  metadata RECORD -- Nested metadata',

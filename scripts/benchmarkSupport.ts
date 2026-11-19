@@ -1,3 +1,4 @@
+import { matchesRelation } from '../src/dbt/relationMatching.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -432,11 +433,8 @@ export function analyzeTablesInSql(
   } catch (error) {
     return { observedTables: [], unscorableReason: unscorableReasonFor(error) };
   }
-  // A short expectation can match a longer path. Missing qualifiers cannot be inferred.
-  const observedTables = [...new Set(knownTables.filter(table => {
-    const name = normalizeTableName(table);
-    return name && relations.some(ref => ref === name || ref.endsWith(`.${name}`));
-  }))];
+  const observedTables = [...new Set(knownTables.filter(table =>
+    matchesRelation(table, relations, knownTables)))];
   return { observedTables, unscorableReason: null };
 }
 
@@ -515,16 +513,17 @@ export function scoreTableSelection(
     && expectedTablesAppearInText(sql, expectedTables)) {
     return { observedTables, tableSelectionPassed: null, tableSelectionUnscorableReason: unscorableReason };
   }
-  return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables) };
+  return { observedTables, tableSelectionPassed: tableSelectionPassed(expectedTables, observedTables, knownTables) };
 }
 
 export function tableSelectionPassed(
   expectedTables: string[] | undefined,
   observedTables: string[],
+  inventory: string[] = observedTables,
 ): boolean | null {
   if (!expectedTables || expectedTables.length === 0) return null;
   const observed = new Set(observedTables.map(table => table.toLowerCase()));
-  return expectedTables.every(table => observed.has(table.toLowerCase()));
+  return expectedTables.every(table => matchesRelation(table, observed, inventory));
 }
 
 export function sqlShapePassed(
