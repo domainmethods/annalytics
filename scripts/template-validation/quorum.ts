@@ -54,15 +54,16 @@ export async function agreeSql(
       return { agreed: false, reason: `Member ${index} SQL execution failed` };
     }
 
+    const trimmedSql = sql.trim();
     if (firstResult === undefined) {
       firstResult = result;
       ordered = referenceIsOrdered(sql);
-      reference = sql;
+      reference = trimmedSql;
     } else {
       if (!resultsEquivalent(firstResult, result, { ordered })) {
         return { agreed: false, reason: `Member ${index} SQL result differs from member 0` };
       }
-      if (sql.trim().length < reference.trim().length) reference = sql;
+      if (trimmedSql.length < reference.length) reference = trimmedSql;
     }
   }
   return { agreed: true, reference };

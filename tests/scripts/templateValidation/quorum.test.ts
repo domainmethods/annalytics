@@ -51,7 +51,7 @@ describe('agreeSql', () => {
 
   it('picks shortest equivalent reference by trimmed length, retaining the earliest tie', async () => {
     expect(await agreeSql(['SELECT 1 AS n', '  SELECT 1  ', 'select 1'], execute)).toEqual({
-      agreed: true, reference: '  SELECT 1  ',
+      agreed: true, reference: 'SELECT 1',
     });
   });
 
