@@ -454,6 +454,9 @@ describe('runPipeline', () => {
     expect(mockBuildEscalationBlocks).toHaveBeenCalledWith(
       expect.objectContaining({ userQuestion: 'What is paid revenue? (Refinement: last week)' }),
     );
+    expect(mockClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Anna Lytics needs help with: "What is paid revenue? (Refinement: last week)"',
+    }));
   });
 
   it('best_effort_verify escalation: execution happens, caveat shown, state saved', async () => {

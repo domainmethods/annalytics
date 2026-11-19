@@ -153,6 +153,7 @@ describe('handleFeedbackReason', () => {
     expect(state.context.userQuestion).toBe('paid unique visitors last month');
     expect(state.context.clarifiedQuestion).toBe('unique visitors last month');
     expect(JSON.stringify(client.chat.postMessage.mock.calls[0][0].blocks)).toContain('paid unique visitors last month');
+    expect(client.chat.postMessage.mock.calls[0][0].text).toBe('Anna Lytics flagged answer: "paid unique visitors last month"');
   });
 
   it('degrades gracefully when the escalation card posted but the state save fails', async () => {

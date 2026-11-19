@@ -187,7 +187,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     const userQuestion = ctx.userQuestion ?? ctx.clarifiedQuestion;
     const escalationMsg = await client.chat.postMessage({
       channel: target,
-      text: `Anna Lytics flagged answer: "${ctx.clarifiedQuestion}"`,
+      text: `Anna Lytics flagged answer: "${userQuestion}"`,
       blocks: buildEscalationBlocks({
         userQuestion,
         channelName: `<#${channel}>`,
