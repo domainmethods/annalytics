@@ -86,9 +86,12 @@ describe('buildModelLadder', () => {
     for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();
   });
 
-  it('holds thinking at the fixed anchor on every candidate (single-axis: model only)', () => {
-    const ladder = buildModelLadder();
-    for (const r of ladder) expect(r.thinkingLevel).toBe(UNIVERSAL_ANCHOR);
+  it('holds thinking at the anchor, or default where the model lacks it (single-axis: model only)', () => {
+    const levels = Object.fromEntries(buildModelLadder().map((r) => [r.rung, r.thinkingLevel]));
+    expect(levels).toEqual({
+      'flash-lite/3.1': UNIVERSAL_ANCHOR, 'flash-lite/3.5': UNIVERSAL_ANCHOR, 'flash/3': UNIVERSAL_ANCHOR,
+      'flash/3.6': UNIVERSAL_ANCHOR, 'flash/3.8': 'default', 'pro/3.1': 'default',
+    });
   });
 
   it('orders candidates cheapest-tier-first so floor-up = first-that-passes', () => {

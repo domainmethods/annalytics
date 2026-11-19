@@ -59,6 +59,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     outputPricePerMTok: 3.00,
     status: 'default-eligible',
   },
+  // No 2027 rate change is announced for this model, so this rate is also its 2027 rate.
   'flash-lite/3.5': {
     tier: 'flash-lite',
     version: '3.5',
