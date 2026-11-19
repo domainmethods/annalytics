@@ -36,23 +36,34 @@ async function main() {
     process.exit(1);
   }
 
+  const recordedHash = benchmarkRun.metadata?.corpusHash;
+  if (!recordedHash) {
+    console.error('Error: This run has no recorded corpusHash. Rerun the benchmark to record it before judging.');
+    process.exit(1);
+  }
+
   // Load the same corpus the benchmark ran with (corpus.live.json preferred when
   // present, mirroring scripts/benchmark.ts).
   const corpusPath = await resolveCorpusPath(process.cwd(), async path => existsSync(path));
-  let corpus: CorpusEntry[] = [];
+  let corpus: CorpusEntry[];
   try {
     const raw = readFileSync(corpusPath, 'utf-8');
-    if (!corpusHashMatches(raw, benchmarkRun.metadata?.corpusHash)) {
+    if (!corpusHashMatches(raw, recordedHash)) {
       console.error(
         `Error: ${corpusPath} does not match this run's recorded corpusHash. ` +
         'Judging against a different corpus would attach the wrong expectations to each result — aborting.',
       );
       process.exit(1);
     }
-    corpus = JSON.parse(raw) as CorpusEntry[];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Expected a JSON array of corpus entries.');
+    }
+    corpus = parsed;
     console.log(`Corpus file: ${corpusPath}`);
   } catch (err) {
-    console.warn(`Warning: Could not load corpus: ${(err as Error).message}. Proceeding without corpus metadata.`);
+    console.error(`Error: Could not load corpus at ${corpusPath}: ${(err as Error).message}`);
+    process.exit(1);
   }
 
   const corpusMap = new Map<string, CorpusEntry>(corpus.map(e => [e.id, e]));
