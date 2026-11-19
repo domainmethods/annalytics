@@ -5,8 +5,14 @@ export function normalizeRelation(value: string): string {
 
 /** Resolve legacy names against the complete advertised inventory before comparing. */
 export function matchesRelation(reference: string, relations: Iterable<string>, inventory: Iterable<string> = relations): boolean {
-  const ref = normalizeRelation(reference);
   const names = [...new Set([...inventory].map(normalizeRelation))];
-  const candidates = names.filter(name => name === ref || (ref.split('.').length === 2 && name.endsWith(`.${ref}`)));
-  return candidates.length === 1 && [...relations].some(name => normalizeRelation(name) === candidates[0]);
+  const resolve = (value: string): string | null => {
+    const name = normalizeRelation(value);
+    const parts = name.split('.');
+    const candidates = names.filter(candidate => candidate === name || (parts.length === 2 && candidate.endsWith(`.${name}`)));
+    if (candidates.length === 1) return candidates[0];
+    return candidates.length === 0 && parts.length === 3 && parts.every(Boolean) ? name : null;
+  };
+  const target = resolve(reference);
+  return target !== null && [...relations].some(name => resolve(name) === target);
 }

@@ -29,8 +29,7 @@ function normalizeTable(table: string): string {
 export function resolveDomain(tablesUsed: string[], domainMap: DomainMapEntry[], inventory: string[] = tablesUsed): string {
   if (tablesUsed.length === 0) return 'unclassified';
   for (const t of tablesUsed) {
-    const clean = normalizeTable(t);
-    const hit = domainMap.find((e) => matchesRelation(e.table, [t], inventory) && (normalizeTable(e.table) === clean || clean.endsWith(`.${normalizeTable(e.table)}`) || normalizeTable(e.table).endsWith(`.${clean}`)));
+    const hit = domainMap.find(e => matchesRelation(e.table, [t], inventory));
     if (hit) return hit.domain;
   }
   return tableFallbackTag(normalizeTable(tablesUsed[0]));

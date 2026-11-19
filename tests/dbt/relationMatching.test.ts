@@ -20,3 +20,14 @@ it('rejects a legacy card and expectation when another advertised project collid
   expect(resolveDomain(['q.ds.tbl'], [{ table: 'ds.tbl', domain: 'sales' }], inventory)).toBe('ds');
   expect(tableSelectionPassed(['ds.tbl'], ['q.ds.tbl'], inventory)).toBe(false);
 });
+
+it.each(['ds.tbl', 'p.ds.tbl'])('resolves historical observed names for %s', reference => {
+  expect(matchesRelation(reference, ['ds.tbl'], ['p.ds.tbl'])).toBe(true);
+  expect(tableSelectionPassed([reference], ['ds.tbl'], ['p.ds.tbl'])).toBe(true);
+  expect(resolveDomain(['ds.tbl'], [{ table: reference, domain: 'sales' }], ['p.ds.tbl'])).toBe('sales');
+});
+it('preserves exact physical identity outside the current inventory', () => {
+  expect(matchesRelation('retired.ds.tbl', ['retired.ds.tbl'], [])).toBe(true);
+  expect(matchesRelation('retired.ds.tbl', ['ds.tbl'], [])).toBe(false);
+  expect(matchesRelation('p.ds.tbl', ['ds.tbl'], ['p.ds.tbl', 'q.ds.tbl'])).toBe(false);
+});

@@ -15,7 +15,7 @@ describe('toFeedbackRecords', () => {
       ctx({ negativeFeedback: false }),
       ctx({}),                       // no thumb -> dropped
     ];
-    const records = toFeedbackRecords(docs, map, ['analytics.fct_orders']);
+    const records = toFeedbackRecords(docs, map);
     expect(records).toHaveLength(2);
     expect(records[0]).toEqual({ domain: 'revenue', negative: true, confidence: 'high' });
   });
