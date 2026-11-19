@@ -27,3 +27,15 @@ export function unwrapBigQueryScalar(val: object): string | number | boolean | b
     ? wrapped as string | number | boolean | bigint
     : undefined;
 }
+
+/** BigQuery decodes NUMERIC and BIGNUMERIC values as big.js instances. */
+export function formatBigQueryDecimal(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || !('toFixed' in value) || typeof value.toFixed !== 'function') {
+    return undefined;
+  }
+  const constructor: unknown = value.constructor;
+  if (typeof constructor !== 'function' || constructor.name !== 'Big' || Object.getPrototypeOf(value) !== constructor.prototype) {
+    return undefined;
+  }
+  return value.toFixed();
+}

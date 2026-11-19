@@ -1,3 +1,5 @@
+import { formatBigQueryDecimal, unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
+
 const MAX_TABLE_ROWS = 5;
 const MAX_CELL_CHARS = 60;
 const MAX_MESSAGE_CHARS = 3500;
@@ -45,6 +47,8 @@ function stringifyValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object') {
+    const wrapped = unwrapBigQueryScalar(value);
+    if (wrapped !== undefined) return String(wrapped);
     try {
       return JSON.stringify(value) ?? String(value);
     } catch {
@@ -55,6 +59,10 @@ function stringifyValue(value: unknown): string {
 }
 
 function renderCell(value: unknown): string {
+  // Wide BIGNUMERIC values need all their digits. The overall message limit still applies.
+  const decimal = formatBigQueryDecimal(value);
+  if (decimal !== undefined) return decimal;
+
   const oneLine = stringifyValue(value)
     .replace(/\r?\n/g, ' ')
     .replace(/\r/g, ' ')

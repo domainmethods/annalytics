@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { BigQueryDate, BigQueryTimestamp } from '@google-cloud/bigquery';
+import { bigQueryDecimalRow, BIGNUMERIC_TEXT, NUMERIC_TEXT } from '../fixtures/bigQueryDecimals.js';
 import {
   renderWhatsAppQueryAnswer,
   renderWhatsAppClarification,
@@ -11,6 +13,36 @@ import {
 } from '../../src/whatsapp/renderer.js';
 
 describe('WhatsApp renderer', () => {
+  it('unwraps SDK date and timestamp cells alongside an ordinary record', () => {
+    const text = renderWhatsAppQueryAnswer({
+      explanation: '',
+      rows: [{
+        day: new BigQueryDate('2026-06-21'),
+        updated: new BigQueryTimestamp('2026-06-21T10:00:00Z'),
+        duration: { value: 4, unit: 'hours' },
+      }],
+      columnNames: ['day', 'updated', 'duration'],
+      totalRows: 1,
+      assumptions: [],
+      traceId: 'trace-scalar',
+    });
+
+    expect(text).toContain('2026-06-21 | 2026-06-21T10:00:00.000Z | {"value":4,"unit":"hours"}');
+  });
+
+  it('shows exact SDK decimals and preserves records in the same answer', () => {
+    const text = renderWhatsAppQueryAnswer({
+      explanation: '',
+      rows: [{ ...bigQueryDecimalRow(), duration: { value: 4, unit: 'hours' } }],
+      columnNames: ['small', 'wide', 'duration'],
+      totalRows: 1,
+      assumptions: [],
+      traceId: 'trace-decimal',
+    });
+
+    expect(text).toContain(`${NUMERIC_TEXT} | ${BIGNUMERIC_TEXT} | {"value":4,"unit":"hours"}`);
+  });
+
   it('renders a compact single-value answer with trace id', () => {
     const text = renderWhatsAppQueryAnswer({
       explanation: 'Revenue was $12,345 yesterday.',
