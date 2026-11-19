@@ -177,14 +177,26 @@ export async function updateReminderTime(
   });
 }
 
-export async function getAllPendingEscalations(): Promise<EscalationState[]> {
-  const db = getDb();
-  const snapshot = await db.collection(COLLECTION)
-    .where('pipelineState', '==', 'awaiting_human')
-    .limit(50)
-    .get();
+const PENDING_SWEEP_PAGE_SIZE = 50;
 
-  return snapshot.docs.map(doc => toEscalationState(doc.data()));
+/**
+ * Every escalation awaiting a human, for the lifecycle sweep. Pages with a
+ * cursor instead of reading one fixed page: records that stay pending (for
+ * example ones just reminded) would otherwise fill that page on every tick and
+ * hide later overdue escalations from reminders and timeouts (#54). Uses the
+ * existing equality filter and default document order, so no new index. The
+ * set is bounded by the escalation timeout, which moves records out of it.
+ */
+export async function getAllPendingEscalations(): Promise<EscalationState[]> {
+  const query = getDb().collection(COLLECTION).where('pipelineState', '==', 'awaiting_human');
+  const escalations: EscalationState[] = [];
+  let page = query.limit(PENDING_SWEEP_PAGE_SIZE);
+  for (;;) {
+    const snapshot = await page.get();
+    escalations.push(...snapshot.docs.map(doc => toEscalationState(doc.data())));
+    if (snapshot.docs.length < PENDING_SWEEP_PAGE_SIZE) return escalations;
+    page = query.startAfter(snapshot.docs[snapshot.docs.length - 1]).limit(PENDING_SWEEP_PAGE_SIZE);
+  }
 }
 
 export async function timeoutEscalation(

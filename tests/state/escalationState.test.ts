@@ -9,6 +9,7 @@ import {
   resolveEscalation,
   updateReminderTime,
   hasPendingEscalation,
+  getAllPendingEscalations,
   RESOLVING_GUARD_MS,
 } from '../../src/state/escalationState.js';
 
@@ -481,5 +482,54 @@ describe('claimEscalation', () => {
     mockUpdate.mockClear();
     expect(await claimEscalation('esc-claim')).toBe(false);
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('getAllPendingEscalations', () => {
+  // A query over `total` awaiting_human docs, paged by limit/startAfter like Firestore.
+  function pagedQuery(total: number) {
+    const docs = Array.from({ length: total }, (_, i) => ({
+      id: `esc_${String(i).padStart(3, '0')}`,
+      data: () => ({
+        escalationId: `esc_${String(i).padStart(3, '0')}`,
+        pipelineState: 'awaiting_human',
+        createdAt: new Date(0),
+        expiresAt: new Date(0),
+      }),
+    }));
+    const pageFrom = (start: number) => ({
+      limit: (n: number) => ({ get: async () => ({ docs: docs.slice(start, start + n) }) }),
+    });
+    return {
+      ...pageFrom(0),
+      startAfter: vi.fn((doc: { id: string }) => pageFrom(docs.findIndex(d => d.id === doc.id) + 1)),
+    };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns escalations beyond the first page of 50 (#54)', async () => {
+    const query = pagedQuery(51);
+    mockWhere.mockReturnValue(query);
+
+    const pending = await getAllPendingEscalations();
+
+    expect(mockWhere).toHaveBeenCalledWith('pipelineState', '==', 'awaiting_human');
+    expect(pending).toHaveLength(51);
+    expect(pending.at(-1)!.escalationId).toBe('esc_050');
+    expect(pending.at(-1)!.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it('stops after a short page and handles an exact multiple of the page size', async () => {
+    const query = pagedQuery(100);
+    mockWhere.mockReturnValue(query);
+
+    expect(await getAllPendingEscalations()).toHaveLength(100);
+    expect(query.startAfter).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns nothing when no escalation is pending', async () => {
+    mockWhere.mockReturnValue(pagedQuery(0));
+    expect(await getAllPendingEscalations()).toEqual([]);
   });
 });
