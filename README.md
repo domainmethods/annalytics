@@ -429,8 +429,17 @@ scheduler in place, the worst-case timeout-notification latency roughly equals
 the sweep interval (10 minutes as configured above; the in-module 60s throttle
 can add up to a minute when an event-driven sweep collides with a scheduled
 tick). The endpoint returns the sweep counts as JSON; a `throttled: true`
-response means a recent sweep already ran — try again in a minute — not that
-nothing was pending.
+response means a recent sweep already ran (or one is still running) — try
+again in a minute — not that nothing was pending.
+
+Each sweep reads every pending escalation but performs at most 100 Slack
+actions (reminders plus timeouts), most overdue first; the response's
+`deferred` count is the due work left for the next sweep. That latency bound
+holds while fewer than about 100 escalations come due per sweep interval
+(600 an hour at 10 minutes); beyond that, raise the scheduler frequency.
+Each reminder is claimed in a Firestore transaction before it is posted, so
+overlapping sweeps or instances do not post it twice; a failed post waits one
+reminder interval instead of retrying immediately.
 
 ## Deployment
 

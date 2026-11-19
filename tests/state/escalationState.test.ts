@@ -7,13 +7,14 @@ import {
   escalationConversation,
   getEscalationById,
   resolveEscalation,
-  updateReminderTime,
+  claimReminder,
   hasPendingEscalation,
   getAllPendingEscalations,
   RESOLVING_GUARD_MS,
 } from '../../src/state/escalationState.js';
 
 let transactionState = 'awaiting_human';
+let transactionExtra: Record<string, unknown> = {};
 const mockSet = vi.fn();
 const mockUpdate = vi.fn();
 const mockDelete = vi.fn();
@@ -27,8 +28,11 @@ vi.mock('../../src/state/firestore.js', () => ({
   getDb: vi.fn(() => ({
     collection: mockCollection,
     runTransaction: async (fn: any) => fn({
-      get: async () => ({ exists: true, data: () => ({ pipelineState: transactionState }) }),
-      update: (_ref: any, data: any) => { transactionState = data.pipelineState; mockUpdate(data); },
+      get: async () => ({ exists: true, data: () => ({ pipelineState: transactionState, ...transactionExtra }) }),
+      update: (_ref: any, data: any) => {
+        if (data.pipelineState) transactionState = data.pipelineState;
+        mockUpdate(data);
+      },
     }),
   })),
 }));
@@ -384,21 +388,40 @@ describe('resolveEscalation', () => {
   });
 });
 
-describe('updateReminderTime', () => {
+describe('claimReminder (#54)', () => {
+  const MIN = 60000;
+  const dueBefore = () => new Date(Date.now() - 30 * MIN);
+
   beforeEach(() => {
     vi.clearAllMocks();
     transactionState = 'awaiting_human';
-    mockUpdate.mockResolvedValue(undefined);
+    transactionExtra = {};
   });
 
-  it('updates lastReminderAt to current time', async () => {
-    await updateReminderTime('esc-123');
-
-    expect(mockCollection).toHaveBeenCalledWith('escalation_state');
+  it('claims a due reminder and records lastReminderAt', async () => {
+    transactionExtra = { createdAt: new Date(Date.now() - 45 * MIN) };
+    expect(await claimReminder('esc-123', dueBefore())).toBe(true);
     expect(mockDoc).toHaveBeenCalledWith('esc-123');
-    expect(mockUpdate).toHaveBeenCalledWith({
-      lastReminderAt: expect.any(Date),
-    });
+    expect(mockUpdate).toHaveBeenCalledWith({ lastReminderAt: expect.any(Date) });
+  });
+
+  it('accepts Firestore Timestamps for the last reminder', async () => {
+    const at = new Date(Date.now() - 45 * MIN);
+    transactionExtra = { createdAt: new Date(Date.now() - 90 * MIN), lastReminderAt: { toDate: () => at } };
+    expect(await claimReminder('esc-123', dueBefore())).toBe(true);
+  });
+
+  it('refuses when another sweep already reminded inside this interval', async () => {
+    transactionExtra = { createdAt: new Date(Date.now() - 90 * MIN), lastReminderAt: new Date(Date.now() - 1000) };
+    expect(await claimReminder('esc-123', dueBefore())).toBe(false);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the escalation no longer awaits a human', async () => {
+    transactionState = 'resolved';
+    transactionExtra = { createdAt: new Date(Date.now() - 90 * MIN) };
+    expect(await claimReminder('esc-123', dueBefore())).toBe(false);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 

@@ -168,12 +168,28 @@ export async function resolveEscalation(
   });
 }
 
-export async function updateReminderTime(
+/**
+ * Claim the next reminder for an escalation before it is posted (#54). Inside a
+ * transaction, records the reminder only while the escalation still awaits a
+ * human and its last reminder (or creation) is older than `dueBefore`, so
+ * overlapping sweeps or instances cannot both post the same reminder. Returns
+ * false when another sweep already claimed it or the escalation moved on.
+ */
+export async function claimReminder(
   escalationId: string,
-): Promise<void> {
+  dueBefore: Date,
+): Promise<boolean> {
   const db = getDb();
-  await db.collection(COLLECTION).doc(escalationId).update({
-    lastReminderAt: new Date(),
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists) return false;
+    const data = doc.data()!;
+    if (data.pipelineState !== 'awaiting_human') return false;
+    const last = toDate((data.lastReminderAt ?? data.createdAt) as Date | FirestoreTimestamp | undefined);
+    if (!last || last >= dueBefore) return false;
+    transaction.update(ref, { lastReminderAt: new Date() });
+    return true;
   });
 }
 
