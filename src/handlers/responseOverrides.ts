@@ -33,17 +33,17 @@ async function loadContext(compoundKey: string): Promise<ResponseContext> {
 
 const CONTEXT_UNAVAILABLE_TEXT = 'Response context is unavailable. Please ask the question again.';
 
-/**
- * Tell only the clicking user that the answer's context is gone. The delivered
- * answer is left untouched: a missing context must never overwrite it.
- */
 export interface OverrideViewer {
   userId: string;
   /** Thread root of the answer message, so the notice lands in its thread. */
   threadTs?: string;
 }
 
-async function notifyContextUnavailable(
+/**
+ * Tell only the clicking user that the answer's context is gone. The delivered
+ * answer is left untouched: a missing context must never overwrite it.
+ */
+export async function notifyContextUnavailable(
   client: WebClient,
   channel: string,
   viewer: OverrideViewer | undefined,

@@ -14,7 +14,7 @@ import { recordFeedback, getResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
-import { handleTableOverride, handleSummaryOverride, handleCsvOverride, type OverrideViewer } from './handlers/responseOverrides.js';
+import { handleTableOverride, handleSummaryOverride, handleCsvOverride, notifyContextUnavailable, type OverrideViewer } from './handlers/responseOverrides.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
 import { handleClarificationCancel } from './handlers/clarificationCancel.js';
 import { toPipelineConfig, resolveEscalationTarget } from './pipeline.js';
@@ -329,16 +329,12 @@ app.action(/show_reasoning_.*/, async ({ action, ack, body, client }) => {
   if (!compoundKey) return;
 
   const ctx = await getResponseContext(compoundKey);
+  const channel = (body as any).channel?.id;
   if (!ctx) {
-    const channel = (body as any).channel?.id;
-    const user = (body as any).user?.id;
-    if (channel && user) await client.chat.postEphemeral({ channel, user,
-      text: 'Response context is unavailable. Please ask the question again to use these controls.',
-    });
+    if (channel) await notifyContextUnavailable(client, channel, overrideViewer(body));
     return;
   }
 
-  const channel = (body as any).channel?.id;
   const messageTs = (body as any).message?.ts;
   if (!channel || !messageTs) return;
 

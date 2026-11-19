@@ -5,7 +5,7 @@ import type { ResponseContext } from '../types.js';
 type FirestoreTimestamp = { toDate: () => Date };
 
 const RETENTION_DAYS = parseResponseContextRetentionDays();
-/** Serialized byte budget for persisted retrievedSchema; well under Firestore's 1 MiB document limit. */
+/** Serialized byte budget for the whole persisted response context; well under Firestore's 1 MiB document limit. */
 export const RESPONSE_CONTEXT_BYTE_BUDGET = 512 * 1024;
 
 function toDate(value: unknown): Date | null {
