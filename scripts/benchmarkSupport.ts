@@ -433,11 +433,8 @@ export function analyzeTablesInSql(
   } catch (error) {
     return { observedTables: [], unscorableReason: unscorableReasonFor(error) };
   }
-  // A short expectation can match a longer path. Missing qualifiers cannot be inferred.
-  const observedTables = [...new Set(knownTables.filter(table => {
-    const name = normalizeTableName(table);
-    return name && relations.some(ref => ref === name || ref.endsWith(`.${name}`));
-  }))];
+  const observedTables = [...new Set(knownTables.filter(table =>
+    matchesRelation(table, relations, knownTables)))];
   return { observedTables, unscorableReason: null };
 }
 

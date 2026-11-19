@@ -1,3 +1,5 @@
+import { matchesRelation } from '../src/dbt/relationMatching.js';
+import { pathToFileURL } from 'node:url';
 import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
 /**
  * node-sweep-smoke — cheap go/no-go pre-check for the per-node sizing sweep.
@@ -105,14 +107,8 @@ function nodeMetricMean(nodeId: NodeId, perEntry: PerEntry[]): number {
   return mean(perEntry.map(e => perEntryNodeMetric(nodeId, e)));
 }
 
-function normalizeTableRef(value: string | undefined): string {
-  return (value ?? '').replace(/`/g, '').trim().toLowerCase();
-}
-
-function sameTableRef(left: string, right: string): boolean {
-  const l = normalizeTableRef(left);
-  const r = normalizeTableRef(right);
-  return l === r || l.endsWith(`.${r}`) || r.endsWith(`.${l}`);
+export function sameTableRef(left: string, right: string, inventory: string[]): boolean {
+  return matchesRelation(left, [right], inventory);
 }
 
 function formatKnowledgeId(summary: KnowledgeSummary): string {
@@ -183,7 +179,7 @@ async function main() {
   ])];
   const knowledgeTableMismatches = knowledgeSummaries
     .filter(summary => summary.canonical_table)
-    .filter(summary => !knownBenchmarkTables.some(table => sameTableRef(table, summary.canonical_table)));
+    .filter(summary => !knownBenchmarkTables.some(table => sameTableRef(table, summary.canonical_table, knownBenchmarkTables)));
   if (knowledgeTableMismatches.length > 0) {
     const examples = knowledgeTableMismatches
       .slice(0, 3)
@@ -285,7 +281,7 @@ async function main() {
   console.log('docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md before launching the full sweep.');
 }
 
-main().then(() => process.exit(0)).catch(err => {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main().then(() => process.exit(0)).catch(err => {
   console.error('\nSmoke run failed:', err);
   process.exit(1);
 });
