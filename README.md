@@ -546,7 +546,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --region "$REGION" \
   --no-cpu-throttling \
   --service-account "$SERVICE_NAME@$PROJECT_ID.iam.gserviceaccount.com" \
-  --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID,GEMINI_MODEL=gemini-3.1-pro-preview,GEMINI_FLASH_MODEL=gemini-3-flash-preview,GEMINI_JUDGE_MODEL=gemini-3.1-pro-preview" \
+  --update-env-vars "GCP_PROJECT_ID=$PROJECT_ID,FILE_SEARCH_STORE_ID=$FILE_SEARCH_STORE_ID" \
   --update-secrets "SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_SIGNING_SECRET=slack-signing-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
   --port 3000 \
   --allow-unauthenticated
@@ -574,8 +574,10 @@ All configuration is via environment variables. See `.env.example` for the local
 | `SLACK_SIGNING_SECRET` | Yes | | Slack request signing secret |
 | `GEMINI_API_KEY` | Yes | | Gemini Developer API key |
 | `GCP_PROJECT_ID` | Yes | | GCP project for BigQuery and Firestore |
-| `GEMINI_MODEL` | No | `gemini-3.1-pro-preview` | SQL generation and supervisor model |
-| `GEMINI_FLASH_MODEL` | No | `gemini-3-flash-preview` | Lightweight classification and summary model |
+| `NODE_PROFILE_OVERRIDES` | No | nodeProfiles registry | Per-node tier, version and thinking level for serving generation |
+| `MODEL_ID_OVERRIDES` | No | modelConfig registry | Map tier/version pairs to exact model IDs |
+| `GEMINI_MODEL` | No | `gemini-3.1-pro-preview` | Legacy config value; benchmark metadata and direct benchmark probes; judge fallback. Ignored by serving nodes |
+| `GEMINI_FLASH_MODEL` | No | `gemini-3-flash-preview` | Legacy benchmark model-availability preflight alias; ignored by serving nodes |
 | `GEMINI_JUDGE_MODEL` | No | `GEMINI_MODEL` | Benchmark judge model |
 | `FILE_SEARCH_STORE_ID` | No for runtime, yes for sync/acceptance | | Gemini File Search store for ReferenceCards and teachings |
 | `DBT_MANIFEST_PATH` | No | `./dbt/manifest.json` | Path to dbt manifest |
@@ -612,3 +614,9 @@ infra/               Optional persistent GCP setup, not runtime deploy
 ```text
 GET /health -> 200 OK
 ```
+
+### Serving model overrides
+
+Production generation uses `generateForNode` and the registry in `src/agents/nodeProfiles.ts`. For example, `NODE_PROFILE_OVERRIDES='{"sqlGenerator":{"tier":"flash","version":"3","thinkingLevel":"low"}}'` selects the registered Flash 3 model for SQL generation. Set JSON values through your deployment environment file (Cloud Run `--env-vars-file`) to preserve commas. Re-measure quality on your domain before changing profiles. `MODEL_ID_OVERRIDES` remaps a tier/version for every node using that pair; it does not validate model availability.
+
+The legacy aliases do not select serving SQL, supervisor, classifier, or summary models. `GEMINI_MODEL` is still loaded into AppConfig/PipelineConfig, but serving generation does not consume it. `scripts/benchmark.ts` reads it for metadata and direct probes and reads `GEMINI_FLASH_MODEL` for model-availability preflight. `GEMINI_JUDGE_MODEL` selects judges in benchmark, benchmark-judge, node-sweep and node-sweep-smoke scripts, falling back to `GEMINI_MODEL`, then the default Pro ID.
