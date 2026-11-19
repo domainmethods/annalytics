@@ -485,7 +485,7 @@ const overrideConfig = {
 function overrideViewer(body: unknown): OverrideViewer | undefined {
   const userId = (body as any).user?.id;
   if (!userId) return undefined;
-  const threadTs = (body as any).message?.thread_ts;
+  const threadTs = (body as any).message?.thread_ts || (body as any).message?.ts;
   return threadTs ? { userId, threadTs } : { userId };
 }
 
