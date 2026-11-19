@@ -55,7 +55,7 @@ one axis (`thinkingLevel` was confounded with tier — never sized in isolation)
 now separates the axes:
 
 - **Stage 1 — MODEL axis.** Hold thinking at a fixed anchor (`STAGE1_ANCHOR = 'high'`),
-  evaluate **all** models (`listGemini3xModels()` — the registry, so coverage can't
+  evaluate all non-retired models (`listRegisteredModels()` — the registry, so coverage can't
   silently drop a model), pick the cheapest within ε of the best (`pickWithinEpsilon`,
   `'cost'`). Anchor is `high` on purpose — **capability-first**: give every model ample
   reasoning so the comparison reflects best-case capability, then trim.
@@ -64,7 +64,7 @@ now separates the axes:
   (`pickWithinEpsilon`, `'latency'`, 5% latency band). ~10 evals/node total.
 
 `universal-sweep.ts` (judge-free classifiers) got the same coverage fix: `buildModelLadder()`
-enumerates all 4 models via `listGemini3xModels()` at a fixed `minimal` anchor, then floor-up
+enumerates non-retired models via `listRegisteredModels()` at a fixed `minimal` anchor, then floor-up
 picks the cheapest that clears exact-match accuracy.
 
 **Residual caveat (documented, accepted):** this is greedy coordinate descent, not a full

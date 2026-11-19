@@ -33,7 +33,7 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry } from './benchmark-types.js';
-import { getJudgeModel, listGemini3xModels, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, listRegisteredModels, type ModelTier } from '../src/agents/modelConfig.js';
 import { resolveNodeModel, defaultTierForNode, type NodeId } from '../src/agents/nodeProfiles.js';
 import { assertGenerateContentModelsAvailable } from './benchmarkPreflight.js';
 import { loadLocalKnowledgeSummaries } from './benchmarkInputs.js';
@@ -270,11 +270,11 @@ async function main() {
   console.log(`Wall-clock/pass: ${(meanWall / 1000).toFixed(1)}s (mean of ${wallMs.length})`);
 
   // Full sweep size (two-stage coordinate isolation): 2 calibration + per node
-  // [Stage 1: one pass per Gemini 3.x model] + [Stage 2: one pass per thinking
+  // [Stage 1: one pass per non-retired model] + [Stage 2: one pass per thinking
   // level, minus the anchor level reused from Stage 1] + 1 combined verification.
   // THINKING_LEVELS has 5 entries (minimal/low/medium/high/default); the anchor is
   // reused → 4 new Stage-2 passes. Model count tracks the registry automatically.
-  const modelCount = listGemini3xModels().length;
+  const modelCount = listRegisteredModels().length;
   const perNodePasses = modelCount + (5 - 1);
   const estPasses = 2 + perNodePasses * SMOKE_NODES.length + 1;
   console.log(`\nFull sweep ≈ ${estPasses} passes → ~${((meanWall * estPasses) / 60000).toFixed(0)} min wall, ~${(allTokens * estPasses / 1e6).toFixed(1)}M tokens (order-of-magnitude).`);

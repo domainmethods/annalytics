@@ -9,7 +9,7 @@ import { parseDbtArtifacts } from '../src/dbt/parser.js';
 import type { KnowledgeSummary } from '../src/teachings/types.js';
 import type { TableContext } from '../src/dbt/types.js';
 import type { CorpusEntry, BenchmarkResult } from './benchmark-types.js';
-import { getJudgeModel, resolveModelId, listGemini3xModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
+import { getJudgeModel, resolveModelId, listRegisteredModels, getSupportedThinkingLevels, type ModelTier } from '../src/agents/modelConfig.js';
 import {
   resolveNodeModel,
   defaultTierForNode,
@@ -57,7 +57,7 @@ const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervi
 // separates the two axes:
 //
 //   Stage 1 (MODEL axis): hold thinking at a fixed anchor, evaluate ALL models
-//     (listGemini3xModels — the registry, not a hand list), pick the cheapest
+//     (listRegisteredModels — the registry, not a hand list), pick the cheapest
 //     within ε of the best.
 //   Stage 2 (THINKING axis): hold the winning model fixed, walk every thinking
 //     level (incl. `default`), pick the fastest within ε of the best.
@@ -96,7 +96,7 @@ function parseArgs(argv: string[]): SweepArgs {
       const value = argv[++i];
       if (value) {
         // Validate at the CLI boundary: an unknown node otherwise crashes deep in
-        // the search with a cryptic "no Gemini 3.x model for tier=undefined".
+        // the search with a cryptic "no registered Gemini model for tier=undefined".
         if (!isNodeId(value)) {
           throw new Error(`Unknown --node "${value}". Valid nodes: ${NODE_IDS.join(', ')}`);
         }
@@ -453,12 +453,12 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
     // reconstructed without re-parsing the label string.
     const profileByLabel = new Map<string, SweepProfile>();
 
-    // Stage 1 — MODEL axis. Every Gemini 3.x model at the fixed anchor thinking
-    // level (so only the model varies). listGemini3xModels() is the registry, so
+    // Stage 1 — MODEL axis. Every non-retired model at the fixed anchor thinking
+    // level (so only the model varies). listRegisteredModels() is the registry, so
     // coverage is always complete — no hand-authored subset.
     log(`  Stage 1 (model axis @ thinking=${STAGE1_ANCHOR}):`);
     const stage1: PointScore[] = [];
-    for (const model of listGemini3xModels()) {
+    for (const model of listRegisteredModels()) {
       const profile: SweepProfile = { tier: model.tier, version: model.version, thinkingLevel: STAGE1_ANCHOR };
       const label = labelOf(profile);
       profileByLabel.set(label, profile);
@@ -838,11 +838,11 @@ async function main() {
   const ai = new GoogleGenAI({ apiKey });
   const root = join(process.cwd());
 
-  const allModels = listGemini3xModels();
+  const allModels = listRegisteredModels();
   console.log(`Stage 1 models (${allModels.length}): ${allModels.map(m => `${m.tier}/${m.version}`).join(', ')}`);
   console.log(`Stage 1 thinking anchor: ${STAGE1_ANCHOR}; Stage 2 thinking levels: ${THINKING_LEVELS.join(', ')}`);
 
-  // Preflight: resolve every Gemini 3.x model id (Stage 1 touches them all) plus
+  // Preflight: resolve every non-retired model id (Stage 1 touches them all) plus
   // each node's baseline model.
   const allModelIds = allModels.map(m => resolveModelId(m.tier, m.version));
   const baselineModelIds = args.nodes.map(node => resolveNodeModel(node));

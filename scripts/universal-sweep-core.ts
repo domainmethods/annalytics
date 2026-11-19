@@ -15,7 +15,7 @@ export interface Prediction {
   predicted: string;
 }
 
-/** A candidate model point to sweep: one Gemini 3.x model at the fixed thinking
+/** A candidate model point to sweep: one registered model at the fixed thinking
  *  anchor. `rung` is a human label (e.g. "flash-lite/3.1"). */
 export interface ModelRung {
   rung: string;
@@ -46,7 +46,7 @@ export function accuracy(predictions: Prediction[]): number {
  * Floor-up pick: the CHEAPEST rung whose accuracy clears `threshold`.
  *
  * `rungs` MUST be ordered cheapest → most expensive (the cheapest-tier-first
- * order of `listGemini3xModels()`), because "cheapest that passes" is just "first
+ * order of `listRegisteredModels()`), because "cheapest that passes" is just "first
  * that passes" over that ordering. If no rung clears the threshold, fall back to the highest-accuracy
  * rung, tie-breaking to the cheapest (earliest) — and flag `metThreshold:false`
  * so the caller surfaces it as a non-confident pick rather than a clean win.
