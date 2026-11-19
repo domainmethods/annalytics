@@ -130,7 +130,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
-| `feedback_notes` | `traceId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
+| `feedback_notes` | `traceId_userId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
 | `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 | `whatsapp_event_dedupe` | event doc id | WhatsApp webhook delivery dedupe (gated prototype); `expiresAt` TTL |
 | `whatsapp_action_context` | action context id | Answer context for WhatsApp interactive controls (feedback/reasoning/SQL/format follow-ups); `expiresAt` TTL (24h) |
