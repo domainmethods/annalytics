@@ -4,6 +4,7 @@ import {
   claimEscalation,
   getEscalationByThread,
   getEscalationByEscalationThread,
+  escalationConversation,
   getEscalationById,
   resolveEscalation,
   updateReminderTime,
@@ -284,6 +285,7 @@ describe('getEscalationByEscalationThread', () => {
           data: () => ({
             escalationId: 'esc-456',
             escalationTs: '9999.0001',
+            escalationChannel: 'C_ESC',
             pipelineState: 'awaiting_human',
             createdAt: { toDate: () => createdDate },
             expiresAt: { toDate: () => futureDate },
@@ -293,7 +295,7 @@ describe('getEscalationByEscalationThread', () => {
       }),
     });
 
-    const result = await getEscalationByEscalationThread('9999.0001');
+    const result = await getEscalationByEscalationThread({ channel: 'C_ESC' }, '9999.0001');
 
     expect(result).not.toBeNull();
     expect(result!.status).toBe('pending');
@@ -301,6 +303,67 @@ describe('getEscalationByEscalationThread', () => {
     expect(result!.state.createdAt).toBeInstanceOf(Date);
     expect(result!.state.expiresAt).toBeInstanceOf(Date);
     expect(mockWhere).toHaveBeenCalledWith('escalationTs', '==', '9999.0001');
+  });
+});
+
+describe('escalation card conversation scoping', () => {
+  const card = (escalationId: string, escalationChannel?: string) => ({
+    data: () => ({
+      escalationId, escalationTs: 'same.ts', pipelineState: 'awaiting_human',
+      createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+      ...(escalationChannel === undefined ? {} : { escalationChannel }),
+    }),
+    ref: { update: vi.fn() },
+  });
+  const snap = (docs: unknown[]) => ({ get: vi.fn().mockResolvedValue({ empty: docs.length === 0, docs }) });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transactionState = 'awaiting_human';
+    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
+  });
+
+  it('does not return an escalation card from a different channel sharing the escalationTs', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-two', 'C_TWO')]));
+    expect(await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts')).toBeNull();
+    const two = await getEscalationByEscalationThread({ channel: 'C_TWO' }, 'same.ts');
+    expect(two?.state.escalationId).toBe('esc-two');
+  });
+
+  it('picks the card of the requested channel among several sharing the escalationTs', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-two', 'C_TWO'), card('esc-one', 'C_ONE')]));
+    const one = await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts');
+    expect(one?.state.escalationId).toBe('esc-one');
+  });
+
+  it('DM mode: matches a card whose escalationChannel is the analyst user id via the DM event user', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-dm', 'U_ANALYST')]));
+    const hit = await getEscalationByEscalationThread({ channel: 'D1', user: 'U_ANALYST' }, 'same.ts');
+    expect(hit?.state.escalationId).toBe('esc-dm');
+  });
+
+  it('DM mode: a different analyst user id does not match', async () => {
+    mockLimit.mockReturnValue(snap([card('esc-dm', 'U_ANALYST')]));
+    expect(await getEscalationByEscalationThread({ channel: 'D2', user: 'U_OTHER' }, 'same.ts')).toBeNull();
+  });
+
+  it('never returns a legacy card without escalationChannel', async () => {
+    mockLimit.mockReturnValue(snap([card('legacy')]));
+    expect(await getEscalationByEscalationThread({ channel: 'C_ONE' }, 'same.ts')).toBeNull();
+  });
+});
+
+describe('escalationConversation', () => {
+  it('returns only the channel for a non-DM channel', () => {
+    expect(escalationConversation('C1', 'U1')).toEqual({ channel: 'C1' });
+  });
+
+  it('includes the user id for a DM channel', () => {
+    expect(escalationConversation('D1', 'U1')).toEqual({ channel: 'D1', user: 'U1' });
+  });
+
+  it('omits the user when none is given in a DM', () => {
+    expect(escalationConversation('D1', undefined)).toEqual({ channel: 'D1' });
   });
 });
 

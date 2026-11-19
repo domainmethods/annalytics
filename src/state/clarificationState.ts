@@ -1,5 +1,5 @@
 import { getDb } from './firestore.js';
-import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
+import { findOwnedDoc } from './threadScope.js';
 
 export const CLARIFICATION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -38,13 +38,13 @@ export async function getClarificationState(
   threadTs: string,
 ): Promise<ClarificationState | null> {
   const db = getDb();
-  const snapshot = await db.collection(COLLECTION)
-    .where('threadTs', '==', threadTs)
-    .where('state', '==', 'awaiting_reply')
-    .limit(THREAD_SCOPE_SCAN_LIMIT)
-    .get();
-
-  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  const doc = await findOwnedDoc(
+    db.collection(COLLECTION)
+      .where('threadTs', '==', threadTs)
+      .where('state', '==', 'awaiting_reply'),
+    'channel',
+    channel,
+  );
   if (!doc) return null;
 
   const data = doc.data() as ClarificationState & {

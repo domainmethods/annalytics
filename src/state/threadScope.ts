@@ -1,3 +1,5 @@
+import type { Query, QueryDocumentSnapshot } from '@google-cloud/firestore';
+
 /**
  * Slack timestamps are unique only within a conversation, so thread state is
  * identified by the conversation (channel) together with the thread timestamp.
@@ -9,12 +11,8 @@ export function conversationThreadKey(channel: string, threadTs: string): string
   return `${channel}:${threadTs}`;
 }
 
-/**
- * How many same-timestamp candidates a thread lookup reads before filtering by
- * conversation. Timestamp collisions across conversations are rare, so this only
- * has to outlast a handful of foreign records; a miss is a safe "no state".
- */
-export const THREAD_SCOPE_SCAN_LIMIT = 20;
+/** Page size for {@link findOwnedDoc}'s scan over same-timestamp candidates. */
+export const THREAD_SCOPE_PAGE_SIZE = 20;
 
 /**
  * True only when a record names this conversation. Legacy records without an
@@ -22,4 +20,30 @@ export const THREAD_SCOPE_SCAN_LIMIT = 20;
  */
 export function ownedByConversation(owner: unknown, channel: string): boolean {
   return owner === channel;
+}
+
+/**
+ * First document of `query` (in its order) whose `ownerField` names the
+ * conversation. `owner` may list several equivalent identifiers for one
+ * conversation (a Slack DM is addressable by its D… id or the other user's id).
+ *
+ * Pages through every candidate rather than stopping at a fixed limit: guards
+ * (pending clarification/escalation, participation) must not miss their own
+ * conversation's state behind foreign or legacy records sharing the timestamp.
+ * Uses only the query's existing filters and ordering, so no new index.
+ */
+export async function findOwnedDoc(
+  query: Query,
+  ownerField: string,
+  owner: string | readonly string[],
+): Promise<QueryDocumentSnapshot | null> {
+  const owners: readonly string[] = typeof owner === 'string' ? [owner] : owner;
+  let page = query.limit(THREAD_SCOPE_PAGE_SIZE);
+  for (;;) {
+    const snapshot = await page.get();
+    const doc = snapshot.docs.find(d => owners.some(o => ownedByConversation(d.data()[ownerField], o)));
+    if (doc) return doc;
+    if (snapshot.docs.length < THREAD_SCOPE_PAGE_SIZE) return null;
+    page = query.startAfter(snapshot.docs[snapshot.docs.length - 1]).limit(THREAD_SCOPE_PAGE_SIZE);
+  }
 }

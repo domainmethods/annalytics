@@ -1,6 +1,6 @@
 import { LOCK_TTL_MS } from './threadLock.js';
 import { getDb } from './firestore.js';
-import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
+import { findOwnedDoc } from './threadScope.js';
 import type { EscalationState } from '../types.js';
 
 const COLLECTION = 'escalation_state';
@@ -46,25 +46,24 @@ function toEscalationState(data: Record<string, unknown>): EscalationState {
 }
 
 /**
- * `originalChannel` scopes original-thread lookups to their conversation. It is
- * omitted for escalation-thread lookups, whose timestamps all live in the one
- * escalation channel (or DM) and are therefore already unique.
+ * Pending escalation whose `field` equals `value`, scoped to the conversation
+ * named by `ownerField` (`originalChannel` for original-thread lookups,
+ * `escalationChannel` for escalation-card lookups). Timestamps are unique only
+ * within a conversation, and in DM mode escalation cards span many DMs.
  */
 async function queryPendingEscalation(
   field: string,
   value: string,
-  originalChannel?: string,
+  ownerField: 'originalChannel' | 'escalationChannel',
+  channel: string | readonly string[],
 ): Promise<EscalationLookup> {
-  const db = getDb();
-  const snapshot = await db.collection(COLLECTION)
-    .where(field, '==', value)
-    .where('pipelineState', '==', 'awaiting_human')
-    .limit(originalChannel === undefined ? 1 : THREAD_SCOPE_SCAN_LIMIT)
-    .get();
-
-  const doc = originalChannel === undefined
-    ? snapshot.docs[0]
-    : snapshot.docs.find(d => ownedByConversation(d.data().originalChannel, originalChannel));
+  const doc = await findOwnedDoc(
+    getDb().collection(COLLECTION)
+      .where(field, '==', value)
+      .where('pipelineState', '==', 'awaiting_human'),
+    ownerField,
+    channel,
+  );
   if (!doc) return null;
 
   const state = toEscalationState(doc.data());
@@ -88,15 +87,16 @@ export async function getEscalationByThread(
   channel: string,
   threadTs: string,
 ): Promise<EscalationLookup> {
-  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs, channel);
+  const awaiting = await queryPendingEscalation('originalThreadTs', threadTs, 'originalChannel', channel);
   if (awaiting) return awaiting;
 
-  const snapshot = await getDb().collection(COLLECTION)
-    .where('originalThreadTs', '==', threadTs)
-    .where('pipelineState', '==', 'resolving')
-    .limit(THREAD_SCOPE_SCAN_LIMIT)
-    .get();
-  const doc = snapshot.docs.find(d => ownedByConversation(d.data().originalChannel, channel));
+  const doc = await findOwnedDoc(
+    getDb().collection(COLLECTION)
+      .where('originalThreadTs', '==', threadTs)
+      .where('pipelineState', '==', 'resolving'),
+    'originalChannel',
+    channel,
+  );
   if (!doc) return null;
 
   const data = doc.data();
@@ -105,10 +105,29 @@ export async function getEscalationByThread(
   return { status: 'pending', state: toEscalationState(data) };
 }
 
+/**
+ * The conversation an escalation-thread event happened in. The user id is
+ * included only for DMs (D… channel ids), where it names the same conversation.
+ */
+export function escalationConversation(
+  channel: string,
+  user: string | undefined,
+): { channel: string; user?: string } {
+  return channel.startsWith('D') && user ? { channel, user } : { channel };
+}
+
+/**
+ * Pending escalation whose card is `escalationTs` in the conversation where the
+ * event happened. DM-mode cards are posted to the analyst's user id, so that is
+ * what `escalationChannel` holds; pass the event's user id alongside its D…
+ * channel id (a bot has one DM per user, so either names the conversation).
+ */
 export async function getEscalationByEscalationThread(
+  conversation: { channel: string; user?: string },
   escalationTs: string,
 ): Promise<EscalationLookup> {
-  return queryPendingEscalation('escalationTs', escalationTs);
+  const owners = conversation.user ? [conversation.channel, conversation.user] : [conversation.channel];
+  return queryPendingEscalation('escalationTs', escalationTs, 'escalationChannel', owners);
 }
 
 /**

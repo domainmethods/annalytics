@@ -1,7 +1,7 @@
 import { parseResponseContextRetentionDays } from './retentionSettings.js';
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
-import { ownedByConversation, THREAD_SCOPE_SCAN_LIMIT } from './threadScope.js';
+import { conversationThreadKey, findOwnedDoc } from './threadScope.js';
 
 type FirestoreTimestamp = { toDate: () => Date };
 
@@ -70,30 +70,47 @@ export async function saveResponseContext(ctx: ResponseContext): Promise<void> {
 }
 
 export async function botHasRepliedInThread(channel: string, threadTs: string): Promise<boolean> {
-  const snapshot = await getDb()
-    .collection('response_context')
-    .where('threadTs', '==', threadTs)
-    .limit(THREAD_SCOPE_SCAN_LIMIT)
-    .select('channel') // ownership check only
-    .get();
-  return snapshot.docs.some(d => ownedByConversation(d.data().channel, channel));
+  const doc = await findOwnedDoc(
+    getDb()
+      .collection('response_context')
+      .where('threadTs', '==', threadTs)
+      .select('channel'), // ownership check only
+    'channel',
+    channel,
+  );
+  return doc !== null;
+}
+
+/**
+ * The stored Slack answer for a button click: `compoundKey` is the button's
+ * `${threadTs}_${statusMsgTs}` value and `channel` the channel it was clicked in.
+ * Answers saved before conversation scoping live at the bare compound key and
+ * carry no owner; they stay reachable so buttons on older answers keep working.
+ */
+async function findSlackResponseContextDoc(channel: string, compoundKey: string) {
+  const collection = getDb().collection('response_context');
+  const scoped = await collection.doc(conversationThreadKey(channel, compoundKey)).get();
+  if (scoped.exists) return scoped;
+  const legacy = await collection.doc(compoundKey).get();
+  return legacy.exists && legacy.data()?.channel === undefined ? legacy : null;
 }
 
 export async function recordFeedback(
+  channel: string,
   threadTs: string,
   messageTs: string,
   feedbackType: 'positive' | 'negative',
 ): Promise<void> {
-  const db = getDb();
-  const docRef = db.collection('response_context').doc(`${threadTs}_${messageTs}`);
-
+  const compoundKey = `${threadTs}_${messageTs}`;
   try {
-    await docRef.update({
+    const doc = await findSlackResponseContextDoc(channel, compoundKey);
+    if (!doc) throw new Error('not found');
+    await doc.ref.update({
       negativeFeedback: feedbackType === 'negative',
     });
   } catch {
     // Doc may not exist if feedback is on an old/unknown message — log and skip
-    console.warn(`Failed to record feedback for ${threadTs}_${messageTs}`);
+    console.warn(`Failed to record feedback for ${compoundKey}`);
   }
 }
 
@@ -109,39 +126,59 @@ export async function recordFeedbackByResponseContextKey(
     });
 }
 
+/**
+ * WhatsApp ids are already conversation-unique (threadTs is the conversation
+ * id). Slack ids are prefixed with the channel: two channels can share both the
+ * thread and the answer timestamp.
+ */
 export function responseContextDocumentId(ctx: ResponseContext): string {
   if (ctx.surface === 'whatsapp') {
     return `${ctx.threadTs}_${encodeURIComponent(ctx.statusMsgTs)}`;
   }
-  return `${ctx.threadTs}_${ctx.statusMsgTs}`;
+  const compoundKey = `${ctx.threadTs}_${ctx.statusMsgTs}`;
+  return ctx.channel ? conversationThreadKey(ctx.channel, compoundKey) : compoundKey;
 }
 
+function liveResponseContext(data: unknown): ResponseContext | null {
+  const ctx = data as (ResponseContext & { expiresAt?: unknown }) | undefined;
+  if (!ctx || isExpiredResponseContext(ctx)) return null;
+  return ctx;
+}
+
+/** WhatsApp answer context by its stored document id. */
 export async function getResponseContext(
-  compoundKey: string,
+  documentId: string,
 ): Promise<ResponseContext | null> {
   const doc = await getDb()
     .collection('response_context')
-    .doc(compoundKey)
+    .doc(documentId)
     .get();
 
   if (!doc.exists) return null;
-  const data = doc.data() as (ResponseContext & { expiresAt?: unknown }) | undefined;
-  if (!data || isExpiredResponseContext(data)) return null;
-  return data;
+  return liveResponseContext(doc.data());
+}
+
+/** Slack answer context for a button clicked in `channel` (see {@link findSlackResponseContextDoc}). */
+export async function getSlackResponseContext(
+  channel: string,
+  compoundKey: string,
+): Promise<ResponseContext | null> {
+  const doc = await findSlackResponseContextDoc(channel, compoundKey);
+  return doc ? liveResponseContext(doc.data()) : null;
 }
 
 export async function getLatestResponseContext(
   channel: string,
   threadTs: string,
 ): Promise<ResponseContext | null> {
-  const snapshot = await getDb()
-    .collection('response_context')
-    .where('threadTs', '==', threadTs)
-    .orderBy('createdAt', 'desc')
-    .limit(THREAD_SCOPE_SCAN_LIMIT)
-    .get();
-
-  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  const doc = await findOwnedDoc(
+    getDb()
+      .collection('response_context')
+      .where('threadTs', '==', threadTs)
+      .orderBy('createdAt', 'desc'),
+    'channel',
+    channel,
+  );
   return doc ? doc.data() as ResponseContext : null;
 }
 
@@ -171,15 +208,14 @@ export async function getLatestNegativeFeedback(
   channel: string,
   threadTs: string,
 ): Promise<{ sql: string; explanation: string; tablesUsed: string[] } | null> {
-  const db = getDb();
-  const snapshot = await db.collection('response_context')
-    .where('threadTs', '==', threadTs)
-    .where('negativeFeedback', '==', true)
-    .orderBy('createdAt', 'desc')
-    .limit(THREAD_SCOPE_SCAN_LIMIT)
-    .get();
-
-  const doc = snapshot.docs.find(d => ownedByConversation(d.data().channel, channel));
+  const doc = await findOwnedDoc(
+    getDb().collection('response_context')
+      .where('threadTs', '==', threadTs)
+      .where('negativeFeedback', '==', true)
+      .orderBy('createdAt', 'desc'),
+    'channel',
+    channel,
+  );
   if (!doc) return null;
 
   const data = doc.data();

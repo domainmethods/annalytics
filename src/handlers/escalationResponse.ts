@@ -2,7 +2,12 @@ import type { WebClient } from '@slack/web-api';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
 import type { EscalationState } from '../types.js';
-import { getEscalationByEscalationThread, claimEscalation, resolveEscalation } from '../state/escalationState.js';
+import {
+  claimEscalation,
+  escalationConversation,
+  getEscalationByEscalationThread,
+  resolveEscalation,
+} from '../state/escalationState.js';
 import { buildEscalationResolvedBlocks } from '../slack/escalationBlocks.js';
 import { runPipeline } from '../pipeline.js';
 import { generateTeachingCandidate } from '../teachings/candidateGenerator.js';
@@ -30,12 +35,15 @@ export type EscalationResponseLookup =
  * Returns the escalation resume context if so, null otherwise.
  */
 export async function checkEscalationResponse(
-  event: { thread_ts?: string; text?: string; channel: string },
+  event: { thread_ts?: string; text?: string; channel: string; user?: string },
 ): Promise<EscalationResponseLookup> {
   const threadTs = event.thread_ts;
   if (!threadTs) return null;
 
-  const lookup = await getEscalationByEscalationThread(threadTs);
+  const lookup = await getEscalationByEscalationThread(
+    escalationConversation(event.channel, event.user),
+    threadTs,
+  );
   if (!lookup) return null;
   if (lookup.status === 'expired_now') return lookup;
 

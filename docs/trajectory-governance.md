@@ -530,4 +530,4 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 
 ### 2026-11-18 - Conversation-scoped thread state (#30)
 
-- Thread locks, clarifications, escalation guards and response-context lookups are now scoped to the conversation as well as the thread timestamp. WhatsApp passes its conversation id for both, and its saved response contexts now record that owner. This repairs shared state used by the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic same-timestamp, two-conversation regressions cover the defect.
+- Thread locks, clarifications, escalation guards and response-context lookups are now scoped to the conversation as well as the thread timestamp. WhatsApp passes its conversation id for both, and its saved response contexts now record that owner (WhatsApp document ids are unchanged; they were already conversation-unique). This repairs shared state used by the shipped prototype; its manual acceptance gate and scope cap remain unchanged. Synthetic same-timestamp, two-conversation regressions cover the defect.

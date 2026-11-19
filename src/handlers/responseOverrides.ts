@@ -1,7 +1,7 @@
 import type { WebClient } from '@slack/web-api';
 import type { KnownBlock, ActionsBlock } from '@slack/types';
 import { GoogleGenAI } from '@google/genai';
-import { getResponseContext } from '../state/responseContext.js';
+import { getSlackResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
@@ -25,8 +25,8 @@ function extractTraceId(err: unknown): string {
   return 'unknown';
 }
 
-async function loadContext(compoundKey: string): Promise<ResponseContext> {
-  const ctx = await getResponseContext(compoundKey);
+async function loadContext(channel: string, compoundKey: string): Promise<ResponseContext> {
+  const ctx = await getSlackResponseContext(channel, compoundKey);
   if (!ctx) throw new ResponseContextNotFoundError();
   return ctx;
 }
@@ -85,7 +85,7 @@ export async function handleTableOverride(
   viewer?: OverrideViewer,
 ): Promise<void> {
   try {
-    const ctx = await loadContext(compoundKey);
+    const ctx = await loadContext(channel, compoundKey);
     const { result } = await reExecuteSql(ctx, config);
 
     const MAX_DISPLAY_ROWS = 20;
@@ -129,7 +129,7 @@ export async function handleSummaryOverride(
 ): Promise<void> {
   try {
     // Load context before replacing the answer with a progress message.
-    const ctx = await loadContext(compoundKey);
+    const ctx = await loadContext(channel, compoundKey);
     await client.chat.update({ channel, ts: messageTs, text: 'Generating summary...' });
 
     const { result } = await reExecuteSql(ctx, config);
@@ -201,7 +201,7 @@ export async function handleCsvOverride(
   config: OverrideConfig,
 ): Promise<void> {
   try {
-    const ctx = await loadContext(compoundKey);
+    const ctx = await loadContext(channel, compoundKey);
     const { result } = await reExecuteSql(ctx, config);
 
     const header = result.columnNames.join(',');

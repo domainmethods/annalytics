@@ -8,7 +8,7 @@ vi.mock('../../src/state/responseContext.js');
 vi.mock('../../src/state/escalationState.js');
 vi.mock('../../src/state/feedbackNotes.js');
 
-import { getResponseContext } from '../../src/state/responseContext.js';
+import { getSlackResponseContext } from '../../src/state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../../src/state/escalationState.js';
 import { saveFeedbackNote } from '../../src/state/feedbackNotes.js';
 import {
@@ -19,7 +19,7 @@ import {
 import type { PipelineConfig } from '../../src/pipeline.js';
 import type { ResponseContext } from '../../src/types.js';
 
-const mockGetResponseContext = vi.mocked(getResponseContext);
+const mockGetResponseContext = vi.mocked(getSlackResponseContext);
 const mockHasPendingEscalation = vi.mocked(hasPendingEscalation);
 const mockSaveEscalationState = vi.mocked(saveEscalationState);
 const mockSaveFeedbackNote = vi.mocked(saveFeedbackNote);
@@ -86,7 +86,7 @@ describe('handleFeedbackReason', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // makeCtx() returns only the fields the handler reads; cast to satisfy the
-    // mocked getResponseContext return type (Promise<ResponseContext | null>).
+    // mocked getSlackResponseContext return type (Promise<ResponseContext | null>).
     mockGetResponseContext.mockResolvedValue(makeCtx() as unknown as ResponseContext);
     mockHasPendingEscalation.mockResolvedValue(false);
     mockSaveEscalationState.mockResolvedValue(undefined);

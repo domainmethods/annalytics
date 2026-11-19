@@ -2,7 +2,7 @@ import type { WebClient } from '@slack/web-api';
 import type { KnownBlock } from '@slack/types';
 import type { PipelineConfig } from '../pipeline.js';
 import { resolveEscalationTarget } from '../pipeline.js';
-import { getResponseContext } from '../state/responseContext.js';
+import { getSlackResponseContext } from '../state/responseContext.js';
 import { hasPendingEscalation, saveEscalationState } from '../state/escalationState.js';
 import { buildEscalationBlocks } from '../slack/escalationBlocks.js';
 import {
@@ -147,7 +147,7 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     return;
   }
 
-  const ctx = await getResponseContext(compoundKey);
+  const ctx = await getSlackResponseContext(channel, compoundKey);
   if (!ctx) {
     await respond({ replace_original: true, text: REASK_MESSAGE, thread_ts: threadTs } as any);
     return;
@@ -277,7 +277,7 @@ export async function handleOtherNoteSubmission(
 
   // ResponseContext is best-effort enrichment; a missing/evicted doc must not
   // block recording the user's note.
-  const ctx = await getResponseContext(compoundKey).catch(() => null);
+  const ctx = await getSlackResponseContext(channel, compoundKey).catch(() => null);
 
   // Firestore is not configured with ignoreUndefinedProperties, so a literal
   // `undefined` field value would reject the write. Build the note with the

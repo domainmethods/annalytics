@@ -56,14 +56,22 @@ describe('saveFeedbackNote', () => {
     expect(mockDoc).toHaveBeenCalledWith('tr1');
   });
 
-  it('falls back to threadTs_userId when traceId is absent', async () => {
+  it('falls back to channel:threadTs_userId when traceId is absent', async () => {
     await saveFeedbackNote({
       note: 'n',
       userId: 'U1',
       threadTs: 'T1',
       channel: 'C1',
     });
-    expect(mockDoc).toHaveBeenCalledWith('T1_U1');
+    expect(mockDoc).toHaveBeenCalledWith('C1:T1_U1');
+  });
+
+  it('includes the channel in the fallback doc id so two channels sharing threadTs+user do not collide', async () => {
+    await saveFeedbackNote({ note: 'n', userId: 'U1', threadTs: 'T1', channel: 'C1' });
+    await saveFeedbackNote({ note: 'n', userId: 'U1', threadTs: 'T1', channel: 'C2' });
+    const ids = mockDoc.mock.calls.map(c => (c as unknown as string[])[0]);
+    expect(ids).toEqual(['C1:T1_U1', 'C2:T1_U1']);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it('stamps a createdAt on the written doc', async () => {

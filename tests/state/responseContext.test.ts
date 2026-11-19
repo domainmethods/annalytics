@@ -30,6 +30,7 @@ import {
   getLatestResponseContext,
   getResponseContextsSince,
   responseContextDocumentId,
+  getSlackResponseContext,
 } from '../../src/state/responseContext.js';
 
 const sampleContext = () => ({
@@ -52,9 +53,9 @@ describe('saveResponseContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Re-setup chain mocks after clearAllMocks
-    mockWhere.mockReturnValue({ limit: mockLimit });
-    mockLimit.mockReturnValue({ select: mockSelect });
-    mockSelect.mockReturnValue({ get: mockGet });
+    mockWhere.mockReturnValue({ select: mockSelect });
+    mockSelect.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
   });
 
   it('bounds a large schema for both surfaces', async () => {
@@ -171,9 +172,9 @@ describe('saveResponseContext', () => {
 describe('botHasRepliedInThread', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWhere.mockReturnValue({ limit: mockLimit });
-    mockLimit.mockReturnValue({ select: mockSelect });
-    mockSelect.mockReturnValue({ get: mockGet });
+    mockWhere.mockReturnValue({ select: mockSelect });
+    mockSelect.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
   });
 
   it('returns true when response context exists for the conversation', async () => {
@@ -194,9 +195,9 @@ describe('botHasRepliedInThread', () => {
 describe('getResponseContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWhere.mockReturnValue({ limit: mockLimit });
-    mockLimit.mockReturnValue({ select: mockSelect });
-    mockSelect.mockReturnValue({ get: mockGet });
+    mockWhere.mockReturnValue({ select: mockSelect });
+    mockSelect.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
   });
 
   it('returns context when doc exists', async () => {
@@ -300,10 +301,10 @@ describe('conversation scoping', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWhere.mockReturnValue({ orderBy: mockOrderBy, limit: mockLimit });
+    mockWhere.mockReturnValue({ orderBy: mockOrderBy, select: mockSelect });
     mockOrderBy.mockReturnValue({ limit: mockLimit });
-    mockLimit.mockReturnValue({ get: mockGet, select: mockSelect });
-    mockSelect.mockReturnValue({ get: mockGet });
+    mockSelect.mockReturnValue({ limit: mockLimit });
+    mockLimit.mockReturnValue({ get: mockGet });
   });
 
   it('botHasRepliedInThread only counts replies in the same conversation', async () => {
@@ -332,6 +333,73 @@ describe('conversation scoping', () => {
   it('getLatestResponseContext never returns a legacy record without a channel', async () => {
     mockGet.mockResolvedValue({ docs: [ctx('legacy')] });
     expect(await getLatestResponseContext('C_ONE', 'same.ts')).toBeNull();
+  });
+});
+
+describe('responseContextDocumentId scoping', () => {
+  it('prefixes Slack ids with the channel when set', () => {
+    expect(responseContextDocumentId({ ...sampleContext(), channel: 'C1', threadTs: 'ts', statusMsgTs: 'status' } as any)).toBe('C1:ts_status');
+  });
+
+  it('keeps the legacy id for a Slack context without a channel', () => {
+    expect(responseContextDocumentId({ ...sampleContext(), threadTs: 'ts', statusMsgTs: 'status' } as any)).toBe('ts_status');
+  });
+
+  it('leaves WhatsApp ids unchanged even when a channel is present', () => {
+    expect(responseContextDocumentId({
+      ...sampleContext(), surface: 'whatsapp', channel: 'C1', threadTs: 'whatsapp:1', statusMsgTs: 'wamid.A',
+    } as any)).toBe('whatsapp:1_wamid.A');
+  });
+
+  it('saveResponseContext writes a Slack answer to the channel-scoped doc', async () => {
+    vi.clearAllMocks();
+    mockSet.mockResolvedValue(undefined);
+    await saveResponseContext({ ...sampleContext(), channel: 'C1' } as any);
+    expect(mockDoc).toHaveBeenCalledWith('C1:thread-1_msg-1');
+  });
+});
+
+describe('getSlackResponseContext', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDoc.mockReturnValue({ set: mockSet, get: mockDocGet });
+  });
+
+  it('returns the channel-scoped doc when present', async () => {
+    mockDocGet.mockResolvedValueOnce({ exists: true, data: () => ({ responseId: 'scoped', channel: 'C1' }) });
+    const result = await getSlackResponseContext('C1', 'ts_status');
+    expect(result?.responseId).toBe('scoped');
+    expect(mockDoc).toHaveBeenCalledTimes(1);
+    expect(mockDoc).toHaveBeenCalledWith('C1:ts_status');
+  });
+
+  it('falls back to the legacy bare-id doc when it has no channel', async () => {
+    mockDocGet
+      .mockResolvedValueOnce({ exists: false })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ responseId: 'legacy' }) });
+    const result = await getSlackResponseContext('C1', 'ts_status');
+    expect(result?.responseId).toBe('legacy');
+    expect(mockDoc).toHaveBeenNthCalledWith(2, 'ts_status');
+  });
+
+  it('returns null for a legacy-id doc that belongs to a channel', async () => {
+    mockDocGet
+      .mockResolvedValueOnce({ exists: false })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ responseId: 'other', channel: 'C2' }) });
+    expect(await getSlackResponseContext('C1', 'ts_status')).toBeNull();
+  });
+
+  it('returns null when neither doc exists', async () => {
+    mockDocGet.mockResolvedValue({ exists: false });
+    expect(await getSlackResponseContext('C1', 'ts_status')).toBeNull();
+  });
+
+  it('returns null when the scoped doc has expired', async () => {
+    mockDocGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ responseId: 'old', channel: 'C1', expiresAt: new Date(Date.now() - 60_000) }),
+    });
+    expect(await getSlackResponseContext('C1', 'ts_status')).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockUpdate = vi.fn();
+const mockDocGet = vi.fn();
 const mockDoc = vi.fn();
 const mockGet = vi.fn();
 const mockOrderBy = vi.fn();
@@ -36,13 +37,41 @@ describe('recordFeedback', () => {
     setupChain();
   });
 
-  it('sets negativeFeedback on the ResponseContext document', async () => {
+  it('sets negativeFeedback on the scoped ResponseContext document', async () => {
     mockUpdate.mockResolvedValue(undefined);
+    mockDoc.mockReturnValue({ get: mockDocGet });
+    mockDocGet.mockResolvedValue({ exists: true, data: () => ({ channel: 'C1' }), ref: { update: mockUpdate } });
 
-    await recordFeedback('thread-1', 'msg-1', 'negative');
+    await recordFeedback('C1', 'thread-1', 'msg-1', 'negative');
 
-    expect(mockDoc).toHaveBeenCalledWith('thread-1_msg-1');
+    expect(mockDoc).toHaveBeenCalledWith('C1:thread-1_msg-1');
     expect(mockUpdate).toHaveBeenCalledWith({ negativeFeedback: true });
+  });
+
+  it('falls back to the legacy bare-id doc when it has no channel', async () => {
+    mockDoc.mockReturnValue({ get: mockDocGet });
+    mockDocGet
+      .mockResolvedValueOnce({ exists: false })
+      .mockResolvedValueOnce({ exists: true, data: () => ({}), ref: { update: mockUpdate } });
+
+    await recordFeedback('C1', 'thread-1', 'msg-1', 'positive');
+
+    expect(mockDoc).toHaveBeenNthCalledWith(1, 'C1:thread-1_msg-1');
+    expect(mockDoc).toHaveBeenNthCalledWith(2, 'thread-1_msg-1');
+    expect(mockUpdate).toHaveBeenCalledWith({ negativeFeedback: false });
+  });
+
+  it('does not update a legacy-id doc owned by another channel', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockDoc.mockReturnValue({ get: mockDocGet });
+    mockDocGet
+      .mockResolvedValueOnce({ exists: false })
+      .mockResolvedValueOnce({ exists: true, data: () => ({ channel: 'C_OTHER' }), ref: { update: mockUpdate } });
+
+    await recordFeedback('C1', 'thread-1', 'msg-1', 'negative');
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('records feedback by persisted response context document key', async () => {
