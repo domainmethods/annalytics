@@ -68,7 +68,7 @@ function result(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
     sqlShapePassed: true,
     expectedClarificationConfidence: undefined,
     clarificationPassed: null,
-    latencyMs: { clarification: 1, generation: 1, validation: 0, supervisor: 0, total: 2 },
+    latencyMs: { clarification: 1, generation: 1, total: 2 },
     groundingCitations: ['reference_card:revenue-canonical-definition'],
     ...overrides,
   };
