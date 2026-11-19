@@ -1,12 +1,11 @@
 import type { WebClient } from '@slack/web-api';
 import type { KnownBlock, ActionsBlock } from '@slack/types';
-import { GoogleGenAI } from '@google/genai';
 import { getResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
-import { generateForNode } from '../agents/modelGateway.js';
+import { summarizeResults } from '../agents/summaryAgent.js';
 import { rootLogger } from '../logging.js';
 export { formatValue };
 
@@ -87,22 +86,13 @@ export async function handleSummaryOverride(
 
     const { ctx, result } = await reExecuteSql(compoundKey, config);
 
-    let summary: string;
-    try {
-      const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
-      const sampleRows = result.rows.slice(0, 50);
-      const response = await generateForNode('summaryOverride', ai, {
-        contents: [{
-          role: 'user',
-          parts: [{
-            text: `Summarize these query results in 2-3 sentences for a business user.\n\nQuestion: ${ctx.clarifiedQuestion}\nSQL: ${ctx.generatedSql}\n\nResults (${result.totalRows} total rows, showing first ${sampleRows.length}):\n${JSON.stringify(sampleRows, null, 2)}`,
-          }],
-        }],
-      });
-      summary = response.text || '';
-    } catch {
-      summary = '';
-    }
+    const summary = await summarizeResults({
+      question: ctx.clarifiedQuestion,
+      sql: ctx.generatedSql,
+      rows: result.rows,
+      totalRows: result.totalRows,
+      apiKey: config.geminiApiKey,
+    });
 
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
