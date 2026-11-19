@@ -20,6 +20,9 @@ import { rootLogger } from '../logging.js';
  * after the card already posted). Single-sourced so the user-facing wording
  * stays identical across every degrade path.
  */
+const OTHER_FORM_FAILED_MESSAGE =
+  "Sorry — I couldn't open the note form. Click *Other* again to retry.";
+
 const REASK_MESSAGE =
   "I can't pull this answer's details anymore — please re-ask and I'll take another run at it.";
 
@@ -96,23 +99,30 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
     } catch (err) {
       // trigger_id is valid for ~3s; views.open also throws on any Slack API
       // error. An uncaught rejection leaves the user with no acknowledgement.
-      // Mirror the escalate path's log-and-degrade idiom: log identifiers only,
-      // then fall through to the same record-only ack the user would have gotten
-      // without the modal — never a silent drop.
+      // Log identifiers only, then say honestly that the form didn't open and
+      // keep the reason buttons so a fresh click (new trigger_id) can retry.
+      // Nothing was saved, so never claim the note was logged.
       rootLogger.error(
         { error: (err as Error).message, channel, compoundKey },
         'feedback.other_note.modal_open_failed',
       );
-      await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+      await respond({
+        replace_original: true,
+        text: OTHER_FORM_FAILED_MESSAGE,
+        blocks: buildFeedbackReasonBlocks(compoundKey, OTHER_FORM_FAILED_MESSAGE),
+        thread_ts: earlyThreadTs,
+      } as any);
       return;
     }
   }
 
   const reason = feedbackReasonById(reasonId);
 
-  // Unknown reason id → treat as record-only.
+  // Unknown reason id → treat as record-only. The 👎 itself was already
+  // recorded on the ResponseContext before this prompt was shown; no note text
+  // exists on this path, so don't claim one was logged.
   if (!reason || reason.route === 'record') {
-    await respond({ replace_original: true, text: 'Thanks — noted. I logged this for review.', thread_ts: earlyThreadTs } as any);
+    await respond({ replace_original: true, text: 'Thanks — your 👎 is recorded.', thread_ts: earlyThreadTs } as any);
     return;
   }
 
@@ -299,7 +309,7 @@ export async function handleOtherNoteSubmission(
       { error: (err as Error).message, userId, threadTs },
       'feedback.other_note.save_failed',
     );
-    ackText = "Sorry — I couldn't save your note. Please try again in a moment.";
+    ackText = "Sorry — I couldn't save your note. Click *Other* again to reopen the form and resubmit it.";
   }
 
   await client.chat
