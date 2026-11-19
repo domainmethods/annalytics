@@ -117,7 +117,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
 
 // Cheapest tier first, so a floor-up sweep that walks this list left-to-right meets
 // the cheapest models before the expensive ones. Tier is the dominant cost lever
-// (flash-lite ≪ flash ≪ pro); version order within a tier follows the map.
+// (flash-lite ≪ flash ≪ pro); within a tier, models sort by input price.
 const TIER_RANK: Record<ModelTier, number> = { 'flash-lite': 0, 'flash': 1, 'pro': 2 };
 
 /**
