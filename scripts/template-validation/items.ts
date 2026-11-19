@@ -115,7 +115,8 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
   return JSON.parse(readFileSync(join(root, 'fixtures', filename), 'utf8'));
 }
 
-const tablePath = /(?:`[\w.*-]+`|[a-z_][\w-]*)(?:[ \t]*\.[ \t]*(?:`[\w.*-]+`|[\w*-]+))*/i;
+const sqlTablePath = /(?:`[\w.*-]+`|[a-z_][\w-]*)(?:[ \t]*\.[ \t]*(?:`[\w.*-]+`|[\w*-]+))*/i;
+const textTablePath = /(?<![\w.-])(?:`[\w.*-]+`|[a-z_][\w-]*)\.(?:`[\w.*-]+`|[a-z_]\w*)(?:\.(?:`[\w.*-]+`|[\w*]+))*|`[\w.*-]+`(?:[ \t]*\.[ \t]*`[\w.*-]+`)*/gi;
 const endFrom = /^(?:WHERE|GROUP|ORDER|LIMIT|HAVING|QUALIFY|WINDOW|UNION|INTERSECT|EXCEPT|;)$/i;
 const reservedAlias = /^(?:FROM|AS|JOIN|LEFT|RIGHT|FULL|INNER|OUTER|CROSS|ON|USING|SELECT|OFFSET|PIVOT|UNPIVOT|TABLESAMPLE|FOR)$/i;
 
@@ -123,10 +124,15 @@ function normalizeTablePath(path: string): string {
   return path.replace(/[` \t]/g, '');
 }
 
+function isAllowedTable(reference: string): boolean {
+  return reference.startsWith(TV_DATASET + '.') ||
+    reference.startsWith('bigquery-public-data.thelook_ecommerce.');
+}
+
 function collectSqlTables(text: string, tables: Set<string>, aliases: Set<string>): void {
   const tokens = text.match(new RegExp(
     /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/.source +
-      '|' + tablePath.source + '|[(),;]',
+      '|' + sqlTablePath.source + '|[(),;]',
     'gi',
   )) ?? [];
   const fromLists = [false];
@@ -162,7 +168,7 @@ function collectSqlTables(text: string, tables: Set<string>, aliases: Set<string
 
       const next = tokens[index + 1];
       const alias = /^AS$/i.test(next ?? '') ? tokens[index + 2] : next;
-      if (alias && /^`?[a-z_]\w*`?$/i.test(alias) && !reservedAlias.test(alias) && !endFrom.test(alias)) {
+      if (isAllowedTable(reference) && alias && /^`?[a-z_]\w*`?$/i.test(alias) && !reservedAlias.test(alias) && !endFrom.test(alias)) {
         aliases.add(normalizeTablePath(alias).toLowerCase());
       }
     }
@@ -178,7 +184,7 @@ export function scanTemplateSafety(text: string): string[] {
 
   // shortcut: lexical scan, use a parser if dialect-specific table syntax needs coverage
   collectSqlTables(text, tables, aliases);
-  for (const [path] of text.matchAll(new RegExp('(?<![\\w.-])' + tablePath.source, 'gi'))) {
+  for (const [path] of text.matchAll(textTablePath)) {
     const reference = normalizeTablePath(path);
     const segments = reference.split('.');
     const quoted = path.includes('`');
@@ -188,10 +194,7 @@ export function scanTemplateSafety(text: string): string[] {
     }
   }
 
-  const foreignRefs = [...tables].filter((reference) =>
-    !reference.startsWith(TV_DATASET + '.') &&
-    !reference.startsWith('bigquery-public-data.thelook_ecommerce.'),
-  );
+  const foreignRefs = [...tables].filter((reference) => !isAllowedTable(reference));
   return [
     ...emails.map((email) => `Email address: ${email}`),
     ...projects.map((project) => `GCP resource: ${project}`),

@@ -42,6 +42,7 @@ it('flags email addresses, foreign table references and GCP resource names', () 
 
 it('allows references to the template view and public source', () => {
   expect(scanTemplateSafety('tv_thelook.orders `bigquery-public-data.thelook_ecommerce.orders`')).toEqual([]);
+  expect(scanTemplateSafety('`bigquery-public-data`.`thelook_ecommerce`.orders')).toEqual([]);
 });
 
 it.each([
@@ -55,8 +56,24 @@ it.each([
   ['Use `private_dataset.customers`', 'private_dataset.customers'],
   ['Use acme-prod.analytics.orders', 'acme-prod.analytics.orders'],
   ['An undeclared x.y.z in prose', 'x.y.z'],
+  ['Pull data from the acme warehouse: acme.analytics.orders', 'acme.analytics.orders'],
+  [JSON.stringify({ text: 'Pull data from the acme warehouse: acme.analytics.orders' }), 'acme.analytics.orders'],
+  ['Join two acme tables: acme.analytics.orders', 'acme.analytics.orders'],
+  ['FROM private_dataset . customers', 'private_dataset.customers'],
+  ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
+});
+
+it.each([
+  'Use e.g. orders.',
+  'U.S. customers',
+  'Yes. No. Maybe',
+  'Version v1.2.3',
+  'Filter by `status`. Return top 10.',
+  'Check orders. `revenue` is up.',
+])('allows ordinary prose and Markdown in %s', (text) => {
+  expect(scanTemplateSafety(text)).toEqual([]);
 });
 
 it.each(['o', 'AS o'])('allows a nested field path through an alias declared with %s', (alias) => {
