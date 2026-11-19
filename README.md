@@ -449,7 +449,7 @@ The standard region is `us-west1`.
 
 The runtime writes a retention timestamp on every document in a growth-prone
 collection. A few collections are intentionally unbounded and absent from the
-manifest: `rate_limits` (bounded sliding window, overwritten in place per
+manifest: `rate_limits` (fixed one-hour window, overwritten in place per
 user), `sample_rows` (one doc per sampled table, overwritten in place on
 refresh), `teaching_candidates` and `feedback_notes` (human-drained queues), and
 `config` (singleton metadata docs). Most
