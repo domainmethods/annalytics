@@ -493,22 +493,10 @@ Corrected deployment guidance to use node profiles and model-ID overrides; docum
 - This is maintenance of the existing dbt status surface, with synthetic regression coverage only; no product tranche or client evidence is added.
 
 - PR #116 review correction: preserve dbt no-op and reused as distinct non-failure outcomes in ingestion, stored-history readback, and dbt_status formatting. Unknown and missing statuses still map conservatively to error. Regression tests cover failure-query exclusion and formatter guidance. Queries and composite indexes are unchanged.
+
 ### 2026-11-18 - dbt physical relation identity (#42, #43)
 
-- Correct existing schema and sampling inputs to use dbt database/schema/alias or relation_name. Ephemeral nodes are excluded from queryable schema; dependency node IDs remain intact for lineage.
-- INFORMATION_SCHEMA contexts retain project qualification. ReferenceCard and benchmark inputs inherit physical names from the parser; no new evaluation machinery or product tranche is introduced.
-- Synthetic offline regressions cover aliased cross-project relations and ephemeral exclusion. Deployment and production acceptance remain outside this change.
-
-PR #114 review repair: shared unambiguous relation matching preserves legacy ReferenceCard, teaching, feedback attribution and benchmark expectations. Complete normalized relation_name takes precedence over component metadata. Synthetic offline regressions cover qualification ambiguity and quoted/conflicting relations; no cloud resources or client evidence are involved.
-
-### 2026-11-18 — PR #114 complete-inventory review repair
-
-Feedback attribution and benchmark scoring now resolve legacy dataset.table names against the complete advertised inventory before comparing answer tables; cross-project ambiguity is rejected/left unattributed. Routine fast-path identity comparisons use the same matcher; SQL allowlisting resolves two-part references in the explicitly configured execution project and rejects them when that project is unavailable. Legacy compatibility requires inventory-wide uniqueness; migrate knowledge and expectations to physical three-part names. Explicit malformed relation_name values skip nodes with a warning, while absent/empty values reconstruct from components. Whitespace and identifier quotes are normalized. This repairs existing trust instruments without expanding the tranche; synthetic offline tests only.
-
-### 2026-11-18 — PR #114 historical identity follow-up
-
-Review regressions confirmed that historical two-part observed names also need inventory-wide resolution. Matching now resolves both sides, rejects ambiguous legacy observations, and preserves exact fully qualified identities for retired/external tables absent from today's inventory. Feedback callers omitting inventory retain the existing per-response fallback; the production report continues to supply the complete dbt inventory. Existing-instrument defect repair only; synthetic offline evidence.
-
-### PR #114 security review repair
-
-Separated historical identity matching from SQL authorization. Fast-path SQL references resolve in the BigQuery execution default project, never by inventory uniqueness. Reported tables and canonical cards retain inventory-wide legacy resolution. Feedback reports without dbt artifacts warn and retain only fully qualified attribution. Regression tests cover cross-project rejection, default-project acceptance, missing default rejection, and qualified SQL with legacy reported identities. Existing trust-instrument defect repair only.
+- Schema and sampling inputs now use dbt `relation_name` (normalized for whitespace and identifier quotes) or, only when it is absent/empty, database/schema/alias. A malformed non-empty `relation_name` skips the node with a warning. Ephemeral nodes are excluded from the queryable schema; dependency node IDs remain intact for lineage. INFORMATION_SCHEMA contexts retain project qualification.
+- Physical three-part names are authoritative for identity matching (ReferenceCards, teachings, feedback attribution, benchmark and node-sweep scoring, fast-path reported/canonical names). A legacy `dataset.table` resolves only when it is unique across the complete advertised physical inventory; cross-project ambiguity is rejected or left unattributed. Expectation and card labels are never inventory candidates. Feedback reports without dbt artifacts warn and keep only fully qualified attribution. Migrate knowledge and expectations to three-part names.
+- SQL authorization in the routine fast path is separate from identity matching: two-part SQL references resolve only in the BigQuery execution default project and are rejected when that project is not configured, so inventory uniqueness can never authorize a cross-project table.
+- Defect repair of existing trust instruments only; no tranche change. Synthetic offline regressions only; no cloud resources or client evidence. Deployment and production acceptance remain outside this change.
