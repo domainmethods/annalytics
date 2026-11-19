@@ -573,8 +573,11 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       qualityResult.finalConfidence,
     );
 
+    // The generator can add assumptions (currency, population, date reading)
+    // the clarifier never made; the answer and its saved context show both.
+    const answerAssumptions = mergeAssumptions(assumptions ?? [], qualityResult.sqlResult.assumptions ?? []);
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, assumptions);
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
@@ -596,7 +599,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       channel,
       statusMsgTs,
       clarifiedQuestion: resolvedQuestion,
-      assumptions,
+      assumptions: answerAssumptions,
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
@@ -756,6 +759,11 @@ export function resolveEscalationTarget(
   return null;
 }
 
+/** Combine assumption lists in order, dropping blanks and exact duplicates. */
+export function mergeAssumptions(...groups: string[][]): string[] {
+  return [...new Set(groups.flat().filter(Boolean))];
+}
+
 export function buildResponseBlocks(
   format: string,
   gen: SqlGenerationResult,
@@ -802,9 +810,14 @@ export function buildResponseBlocks(
       // No rows came back, so Table/Summary/CSV have nothing to render, explain,
       // or export (overrideButtonsForResultShape suppresses all three). Feedback
       // and the detail toggles stay — Reasoning/Show SQL answer "why no results?"
+      // The generator's assumptions are listed as the filters applied; show
+      // only the remaining ones in the assumptions line so none appears twice.
       return [
-        ...buildZeroRowBlocks(gen.assumptions),
-        ...assumptionBlocks,
+        ...buildZeroRowBlocks(gen.assumptions ?? []),
+        ...buildAssumptionBlocks(
+          (assumptions ?? []).filter((a) => !(gen.assumptions ?? []).includes(a)),
+          traceId,
+        ),
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
       ];
     default:
