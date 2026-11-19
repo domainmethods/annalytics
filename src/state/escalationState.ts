@@ -60,7 +60,7 @@ async function queryPendingEscalation(
   const state = toEscalationState(doc.data());
 
   if (state.expiresAt < new Date()) {
-    await doc.ref.update({ pipelineState: 'timed_out' });
+    if (!await timeoutEscalation(state.escalationId)) return null;
     return { status: 'expired_now', state };
   }
 
@@ -90,6 +90,21 @@ export async function getEscalationById(
   const doc = await getDb().collection(COLLECTION).doc(escalationId).get();
   if (!doc.exists) return null;
   return toEscalationState(doc.data() as Record<string, unknown>);
+}
+
+/**
+ * At-most-once delivery: never replay a claim after an interrupted Slack/BQ call.
+ * Operators recover by asking a fresh question; replay could duplicate a query.
+ */
+export async function claimEscalation(escalationId: string): Promise<boolean> {
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists || doc.data()?.pipelineState !== 'awaiting_human') return false;
+    transaction.update(ref, { pipelineState: 'resolving', claimedAt: new Date() });
+    return true;
+  });
 }
 
 export async function resolveEscalation(
@@ -122,10 +137,14 @@ export async function getAllPendingEscalations(): Promise<EscalationState[]> {
 
 export async function timeoutEscalation(
   escalationId: string,
-): Promise<void> {
+): Promise<boolean> {
   const db = getDb();
-  await db.collection(COLLECTION).doc(escalationId).update({
-    pipelineState: 'timed_out',
+  const ref = db.collection(COLLECTION).doc(escalationId);
+  return db.runTransaction(async transaction => {
+    const doc = await transaction.get(ref);
+    if (!doc.exists || doc.data()?.pipelineState !== 'awaiting_human') return false;
+    transaction.update(ref, { pipelineState: 'timed_out' });
+    return true;
   });
 }
 

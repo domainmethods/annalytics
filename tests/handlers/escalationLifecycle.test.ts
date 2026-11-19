@@ -56,7 +56,7 @@ describe('checkOverdueEscalations', () => {
     vi.clearAllMocks();
     _resetThrottle();
     mockUpdateReminder.mockResolvedValue(undefined);
-    mockTimeout.mockResolvedValue(undefined);
+    mockTimeout.mockResolvedValue(true);
     mockBuildReminder.mockReturnValue([{ type: 'section', text: { type: 'mrkdwn', text: 'reminder' } }] as any);
     mockClient.chat.postMessage.mockResolvedValue({});
   });

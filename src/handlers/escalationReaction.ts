@@ -38,8 +38,8 @@ export interface HandleEscalationReactionParams {
  * A ✅ reaction on a pending escalation card resolves the escalation as a
  * confirmation of the bot's own proposed SQL. Because the reaction carries no
  * new human-authored guidance, teaching-candidate harvesting is skipped.
- * Idempotency comes from `getEscalationByEscalationThread`, which only returns
- * states still `awaiting_human` — a second ✅ after resolution is a no-op.
+ * The shared resume handler claims the record transactionally before delivery;
+ * concurrent replies and reactions that lose the claim do nothing.
  */
 export async function handleEscalationReaction({
   event,

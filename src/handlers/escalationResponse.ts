@@ -2,7 +2,7 @@ import type { WebClient } from '@slack/web-api';
 import type { TableContext } from '../dbt/types.js';
 import type { PipelineConfig } from '../pipeline.js';
 import type { EscalationState } from '../types.js';
-import { getEscalationByEscalationThread, resolveEscalation } from '../state/escalationState.js';
+import { getEscalationByEscalationThread, claimEscalation, resolveEscalation } from '../state/escalationState.js';
 import { buildEscalationResolvedBlocks } from '../slack/escalationBlocks.js';
 import { runPipeline } from '../pipeline.js';
 import { generateTeachingCandidate } from '../teachings/candidateGenerator.js';
@@ -74,6 +74,8 @@ export async function resumeFromEscalation(
   config: PipelineConfig,
   options?: { skipTeachingCandidate?: boolean; refinementHint?: { previousSql: string } },
 ): Promise<void> {
+  if (!await claimEscalation(ctx.escalationId)) return;
+
   if (ctx.behavior === 'park_wait') {
     await runPipeline({
       question: `${ctx.context.clarifiedQuestion} (Data team guidance: ${ctx.humanGuidance})`,
