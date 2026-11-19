@@ -885,12 +885,8 @@ async function main() {
     console.warn('Warning: dbt artifacts not found. Running without schema context.');
   }
 
-  const knownBenchmarkTables = [
-    ...new Set([
-      ...tables.map(table => table.name),
-      ...corpus.flatMap(entry => entry.expectedTables ?? []),
-    ]),
-  ];
+  // No advertised schema means no inferred inventory from expectation or card labels.
+  const knownBenchmarkTables = tables.map(table => table.name);
 
   if (args.bypassClarification) {
     console.log('⚠ Clarification gate BYPASSED: every entry runs the quality loop (SQL-path node sizing mode).');

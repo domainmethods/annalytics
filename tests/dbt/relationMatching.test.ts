@@ -31,3 +31,8 @@ it('preserves exact physical identity outside the current inventory', () => {
   expect(matchesRelation('retired.ds.tbl', ['ds.tbl'], [])).toBe(false);
   expect(matchesRelation('p.ds.tbl', ['ds.tbl'], ['p.ds.tbl', 'q.ds.tbl'])).toBe(false);
 });
+
+it('deduplicates legacy inventory suffixes by physical identity', () => {
+  expect(matchesRelation('ds.tbl', ['p.ds.tbl'], ['p.ds.tbl', 'ds.tbl'])).toBe(true);
+  expect(matchesRelation('ds.tbl', ['p.ds.tbl'], ['p.ds.tbl', 'q.ds.tbl', 'ds.tbl'])).toBe(false);
+});

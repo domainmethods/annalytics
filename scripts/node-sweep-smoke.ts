@@ -173,10 +173,8 @@ async function main() {
     console.warn('Warning: dbt artifacts not found. Running without schema context (queries will fail dry-run).');
   }
 
-  const knownBenchmarkTables = [...new Set([
-    ...tables.map(t => t.name),
-    ...corpus.flatMap(e => e.expectedTables ?? []),
-  ])];
+  // No advertised schema means no inferred inventory from expectation or card labels.
+  const knownBenchmarkTables = tables.map(table => table.name);
   const knowledgeTableMismatches = knowledgeSummaries
     .filter(summary => summary.canonical_table)
     .filter(summary => !knownBenchmarkTables.some(table => sameTableRef(table, summary.canonical_table, knownBenchmarkTables)));

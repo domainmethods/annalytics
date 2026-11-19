@@ -5,7 +5,10 @@ export function normalizeRelation(value: string): string {
 
 /** Resolve legacy names against the complete advertised inventory before comparing. */
 export function matchesRelation(reference: string, relations: Iterable<string>, inventory: Iterable<string> = relations): boolean {
-  const names = [...new Set([...inventory].map(normalizeRelation))];
+  const normalized = [...new Set([...inventory].map(normalizeRelation))];
+  // A legacy suffix represents the same physical candidates, never an extra relation.
+  const names = normalized.filter(name => name.split('.').length !== 2
+    || !normalized.some(candidate => candidate.split('.').length === 3 && candidate.endsWith(`.${name}`)));
   const resolve = (value: string): string | null => {
     const name = normalizeRelation(value);
     const parts = name.split('.');
