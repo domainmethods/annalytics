@@ -26,6 +26,8 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'default';
  *  raw id — the form every sizing sweep and nodeProfiles override speaks. */
 export interface ModelCoordinate { tier: ModelTier; version: string; }
 
+/** Only `retired` is enforced: it leaves sweeps but still resolves. `candidate` and
+ *  `default-eligible` are labels; a sweep can recommend either as a default. */
 export type ModelStatus = 'candidate' | 'default-eligible' | 'retired';
 
 export interface RegisteredModel {
