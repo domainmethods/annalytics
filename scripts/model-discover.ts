@@ -1,9 +1,12 @@
+import { existsSync } from 'node:fs';
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai';
-import { listAllRegisteredModels, resolveModelId } from '../src/agents/modelConfig.js';
-import { NODE_IDS, defaultProfileForNode, type NodeId } from '../src/agents/nodeProfiles.js';
-import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from './model-discover-core.js';
+import { listAllRegisteredModels } from '../src/agents/modelConfig.js';
+import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, templateDefaultIds } from './model-discover-core.js';
 
 async function main(): Promise<void> {
+  if (existsSync('.env') && typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile('.env');
+  }
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error('GEMINI_API_KEY is required.');
@@ -20,11 +23,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const defaultIds = new Map<NodeId, string>(NODE_IDS.map(node => {
-    const { tier, version } = defaultProfileForNode(node);
-    return [node, resolveModelId(tier, version)];
-  }));
-  const diff = diffModels(liveIds, listAllRegisteredModels(), defaultIds);
+  const diff = diffModels(liveIds, listAllRegisteredModels(), templateDefaultIds());
   process.exitCode = discoveryExitCode(diff);
   if (diff.missing.length > 0) {
     console.error('Missing registered models');

@@ -1,5 +1,5 @@
-import type { RegisteredModel, ThinkingLevel } from '../src/agents/modelConfig.js';
-import type { NodeId } from '../src/agents/nodeProfiles.js';
+import { getRegisteredModel, type RegisteredModel, type ThinkingLevel } from '../src/agents/modelConfig.js';
+import { NODE_IDS, defaultProfileForNode, type NodeId } from '../src/agents/nodeProfiles.js';
 
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'] satisfies Exclude<ThinkingLevel, 'default'>[];
 
@@ -12,6 +12,15 @@ export interface ModelDiff {
   added: string[];
   missing: { id: string; usedByDefaults: NodeId[] }[];
   unchanged: string[];
+}
+
+export function templateDefaultIds(): Map<NodeId, string> {
+  return new Map(NODE_IDS.map(node => {
+    const { tier, version } = defaultProfileForNode(node);
+    const model = getRegisteredModel(tier, version);
+    if (!model) throw new Error(`No registered Gemini model for template default ${node} (${tier}/${version}).`);
+    return [node, model.id];
+  }));
 }
 
 export function diffModels(liveIds: string[], registry: RegisteredModel[], defaultIds: Map<NodeId, string>): ModelDiff {

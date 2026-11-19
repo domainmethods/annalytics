@@ -1,6 +1,6 @@
-import { expect, test } from 'vitest';
-import type { RegisteredModel } from '../../src/agents/modelConfig.js';
-import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels } from '../../scripts/model-discover-core.js';
+import { expect, test, vi } from 'vitest';
+import { listAllRegisteredModels, type RegisteredModel } from '../../src/agents/modelConfig.js';
+import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, templateDefaultIds } from '../../scripts/model-discover-core.js';
 
 test('isTextGenerationModel excludes non-text and aliases', () => {
   const excluded = [
@@ -38,6 +38,21 @@ test('diffModels flags missing models referenced by defaults', () => {
     missing: [{ id: 'gemini-3-flash-preview', usedByDefaults: ['dbtStatus'] }],
     unchanged: [retired.id],
   });
+});
+
+test('template defaults identify the missing registry model under a runtime override', () => {
+  vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ 'flash/3': 'gemini-3.8-flash' }));
+  try {
+    const registry = listAllRegisteredModels();
+    const liveIds = registry.map(({ id }) => id).filter(id => id !== 'gemini-3-flash-preview');
+    liveIds.push('gemini-3.8-flash');
+
+    const { missing } = diffModels(liveIds, registry, templateDefaultIds());
+    expect(missing[0]?.id).toBe('gemini-3-flash-preview');
+    expect(missing[0]?.usedByDefaults).toContain('dbtStatus');
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 test('discoveryExitCode signals a missing model', () => {
