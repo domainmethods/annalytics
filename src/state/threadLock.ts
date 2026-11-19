@@ -1,6 +1,6 @@
 import { getDb, FieldValue } from './firestore.js';
 
-const LOCK_TTL_MS = 300_000;
+const LOCK_TTL_MS = 300_000; // 300s — matches Cloud Run timeout
 
 export async function acquireThreadLock(threadTs: string, ownerToken: string): Promise<boolean> {
   const db = getDb();
@@ -17,8 +17,8 @@ export async function acquireThreadLock(threadTs: string, ownerToken: string): P
   });
 }
 
-export async function releaseThreadLock(threadTs: string, ownerToken?: string): Promise<void> {
-  if (!ownerToken) return;
+/** Deletes the lease only if `ownerToken` still owns it, so a late release never removes a successor's lock. */
+export async function releaseThreadLock(threadTs: string, ownerToken: string): Promise<void> {
   const db = getDb();
   const ref = db.collection('processing_threads').doc(threadTs);
   await db.runTransaction(async transaction => {
