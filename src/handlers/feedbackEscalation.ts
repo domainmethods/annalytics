@@ -118,11 +118,11 @@ export async function handleFeedbackReason(params: HandleFeedbackReasonParams): 
 
   const reason = feedbackReasonById(reasonId);
 
-  // Unknown reason id → treat as record-only. The 👎 itself was already
-  // recorded on the ResponseContext before this prompt was shown; no note text
-  // exists on this path, so don't claim one was logged.
+  // Unknown reason id → treat as record-only. Nothing is persisted here, and
+  // the earlier 👎 write (recordFeedback) swallows failures, so the ack must not
+  // claim that anything was recorded or logged.
   if (!reason || reason.route === 'record') {
-    await respond({ replace_original: true, text: 'Thanks — your 👎 is recorded.', thread_ts: earlyThreadTs } as any);
+    await respond({ replace_original: true, text: 'Thanks for the feedback.', thread_ts: earlyThreadTs } as any);
     return;
   }
 

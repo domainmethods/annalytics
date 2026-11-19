@@ -272,7 +272,7 @@ describe('handleFeedbackReason', () => {
     expect(actions.elements.map((e: any) => e.action_id)).toContain('fb_reason_other');
   });
 
-  it('acks "Other" without a triggerId as a recorded 👎, not a logged note', async () => {
+  it('acks "Other" without a triggerId neutrally, claiming nothing was saved', async () => {
     const respond = vi.fn().mockResolvedValue(undefined);
     await handleFeedbackReason({
       reasonId: 'other', compoundKey: 'T1_S1', userId: 'U1', channel: 'C1',
@@ -280,7 +280,7 @@ describe('handleFeedbackReason', () => {
     });
     expect(respond).toHaveBeenCalledWith({
       replace_original: true,
-      text: 'Thanks — your 👎 is recorded.',
+      text: 'Thanks for the feedback.',
       thread_ts: 'T1',
     });
   });
