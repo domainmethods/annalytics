@@ -99,3 +99,17 @@ it('reports the CLI version and treats a missing executable as unavailable', asy
   })).toEqual({ ok: true, version: '2.1.327' });
   expect(await checkAvailable(cfg, async () => { throw new Error('ENOENT'); })).toEqual({ ok: false });
 });
+
+it('places Codex effort options ahead of the separator protecting a hyphen-led prompt', () => {
+  const codex = loadLabelers().find(({ id }) => id === 'codex')!;
+  const argv = buildArgv(codex, { prompt: '--version', schemaPath: '/example/schema.json', schemaJson: '{}' });
+  expect(argv.slice(-4)).toEqual(['-c', 'model_reasoning_effort="ultra"', '--', '--version']);
+});
+
+it('does not probe or run the disabled Gemini CLI', async () => {
+  const gemini = loadLabelers().find(({ id }) => id === 'gemini')!;
+  const spawn = vi.fn(async () => success);
+  expect(await checkAvailable(gemini, spawn)).toEqual({ ok: false });
+  await expect(runLabeler(gemini, batch, spawn, cacheDir)).rejects.toThrow(/disabled/i);
+  expect(spawn).not.toHaveBeenCalled();
+});

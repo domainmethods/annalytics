@@ -45,6 +45,7 @@
       "--disable",
       "hooks",
       "--ephemeral",
+      "--",
       "{prompt}"
     ],
     "outputParser": "codex-jsonl",
@@ -83,6 +84,7 @@
   },
   {
     "id": "gemini",
+    "enabled": false,
     "family": "google",
     "argv": [
       "gemini",

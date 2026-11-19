@@ -8,6 +8,7 @@ import { z } from 'zod';
 const cacheSegment = z.string().regex(/^[\w-][\w.-]*$/);
 export interface LabelerConfig {
   id: string;
+  enabled?: boolean;
   family: 'anthropic' | 'openai' | 'google';
   argv: string[];
   outputParser: 'claude-json' | 'codex-jsonl' | 'agy-json' | 'gemini-json';
@@ -18,6 +19,7 @@ export interface LabelerConfig {
 
 const labelerConfigSchema = z.object({
   id: cacheSegment,
+  enabled: z.boolean().optional(),
   family: z.enum(['anthropic', 'openai', 'google']),
   argv: z.array(z.string()).min(1),
   outputParser: z.enum(['claude-json', 'codex-jsonl', 'agy-json', 'gemini-json']),
@@ -50,13 +52,13 @@ export function buildArgv(
   vars: { prompt: string; schemaPath: string; schemaJson: string },
 ): string[] {
   const tokens = { ...vars, model: cfg.model };
-  return [
-    ...cfg.argv.map((arg) => arg.replace(
-      /\{(prompt|schemaPath|schemaJson|model)\}/g,
-      (_, token: keyof typeof tokens) => tokens[token],
-    )),
-    ...cfg.effortArgs,
-  ];
+  const argv = cfg.argv.map((arg) => arg.replace(
+    /\{(prompt|schemaPath|schemaJson|model)\}/g,
+    (_, token: keyof typeof tokens) => tokens[token],
+  ));
+  const separator = cfg.argv.indexOf('--');
+  argv.splice(separator === -1 ? argv.length : separator, 0, ...cfg.effortArgs);
+  return argv;
 }
 
 function parseJson(text: unknown): unknown {
@@ -130,6 +132,7 @@ export async function runLabeler(
   spawn: SpawnFn,
   cacheDir: string,
 ): Promise<LabelerOutput & { cached: boolean }> {
+  if (cfg.enabled === false) throw new LabelerOutputError(`${cfg.id} is disabled`);
   const cachePath = join(cacheDir, cacheSegment.parse(cfg.id), cacheSegment.parse(cfg.model),
     cacheSegment.parse(batch.cacheKey) + '.json');
   const validator = z.fromJSONSchema({ ...batch.schema });
@@ -178,6 +181,7 @@ export async function checkAvailable(
   cfg: LabelerConfig,
   spawn: SpawnFn,
 ): Promise<{ ok: boolean; version?: string }> {
+  if (cfg.enabled === false) return { ok: false };
   try {
     const { stdout, code } = await spawn(cfg.argv[0], cfg.versionArgv, { cwd: tmpdir(), timeoutMs: 10_000 });
     return code === 0 ? { ok: true, version: stdout.trim() } : { ok: false };
