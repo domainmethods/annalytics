@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import type { NodeId } from '../../src/agents/nodeProfiles.js';
+import { NODE_IDS, type NodeId } from '../../src/agents/nodeProfiles.js';
 import { loadLocalKnowledgeSummaries } from '../benchmarkInputs.js';
-import { hashItemInput, ITEM_SCHEMAS, loadFixture, loadItems, scanTemplateSafety, type SqlGeneratorItem } from './items.js';
+import { hashItemFile, hashItemInput, ITEM_SCHEMAS, loadFixture, loadItems, scanTemplateSafety, type SqlGeneratorItem } from './items.js';
 import { InvalidLabelerResponseError, type LabelerConfig, type runLabeler, type SpawnFn } from './labelers.js';
 import {
   CATEGORIES, draftBatchSchema, draftItemSchema, draftPrompt, fixtureSpecs, labelBatchSchema,
@@ -12,7 +12,6 @@ import {
 } from './prompts.js';
 import { agreeClosedSet, agreeRubric, agreeSql, validateQuorum, type QueryResultLike, type QuorumKind } from './quorum.js';
 import { referenceIsOrdered, resultsEquivalent } from './resultEquivalence.js';
-import { TV_ROOT } from './warehouse.js';
 
 export interface LabelRunDeps {
   labelers: (LabelerConfig & { cliVersion?: string })[];
@@ -32,7 +31,7 @@ export interface Provenance {
   singleFamily: boolean;
   drafter: string;
   members: { id: string; family: string; cliVersion: string; requestedModel: string; reportedModels: string[]; isolation?: string }[];
-  perNode: Record<string, { drafted: number; accepted: number; quarantined: number; dropRateByCategory: Record<string, number> }>;
+  perNode: Record<string, { drafted: number; accepted: number; quarantined: number; itemsSha256: string; dropRateByCategory: Record<string, number> }>;
 }
 
 const BATCH_SIZE = 20;
@@ -59,7 +58,7 @@ function readVersion(root: string): string {
 }
 
 function createLabelClient(deps: LabelRunDeps, version: string) {
-  const cacheDir = join(deps.cacheDir ?? join(TV_ROOT, '.cache'), createHash('sha256').update(version).digest('hex'));
+  const cacheDir = join(deps.cacheDir ?? join(deps.root, '.cache'), createHash('sha256').update(version).digest('hex'));
   const reportedModels = new Map<string, Set<string>>();
   async function request<T>(
     cfg: LabelerConfig, node: NodeId, batch: number, inputs: unknown[], prompt: string, schema: z.ZodType<T>,
@@ -381,7 +380,9 @@ export async function runLabelQuorum(
 ): Promise<Provenance> {
   const version = readVersion(deps.root);
   const provenancePath = join(deps.root, 'provenance.json');
-  refuseOverwrite(provenancePath, version);
+  const nodes = [...new Set(opts.nodes)].sort((a, b) => Number(a === 'supervisor') - Number(b === 'supervisor'));
+  const partial = !NODE_IDS.every(node => nodes.includes(node));
+  if (!partial) refuseOverwrite(provenancePath, version);
   const usable = deps.labelers.filter(cfg => cfg.enabled !== false);
   const drafter = usable.find(cfg => cfg.id === opts.drafter);
   if (!drafter) throw new Error(`Drafter ${opts.drafter} is unavailable`);
@@ -391,7 +392,6 @@ export async function runLabelQuorum(
   const client = createLabelClient(deps, version);
   const perNode: Provenance['perNode'] = {};
   const outputs = new Map<string, string>();
-  const nodes = [...new Set(opts.nodes)].sort((a, b) => Number(a === 'supervisor') - Number(b === 'supervisor'));
   const retained = new Map([...new Set([...nodes, ...Object.keys(fixtureSpecs) as FixtureNode[]])].map(node => {
     const path = join(deps.root, 'items', `${node}.jsonl`);
     const items = existsSync(path) ? loadItems(node, deps.root) : [];
@@ -443,10 +443,12 @@ export async function runLabelQuorum(
     for (const [name, fixture] of Object.entries(fixtures.files)) {
       outputs.set(`fixtures/${name}.json`, JSON.stringify(fixture, null, 2) + '\n');
     }
-    outputs.set(relativePath, jsonLines(allAccepted));
+    const itemsContent = jsonLines(allAccepted);
+    outputs.set(relativePath, itemsContent);
     outputs.set(`quarantine/${node}.jsonl`, jsonLines(quarantined));
     perNode[node] = {
       drafted: drafts.length, accepted: allAccepted.length, quarantined: quarantined.length,
+      itemsSha256: hashItemFile(itemsContent),
       dropRateByCategory: Object.fromEntries(CATEGORIES.flatMap(category => {
         const drafted = drafts.filter(draft => draft.input.category === category).length;
         const dropped = quarantined.filter(({ item }) => item.category === category).length;
@@ -466,6 +468,16 @@ export async function runLabelQuorum(
     })),
   };
   outputs.set('provenance.json', JSON.stringify(provenance, null, 2) + '\n');
+
+  if (partial) {
+    const scratch = join(client.cacheDir, 'partial', [...nodes].sort().join('-'));
+    for (const [name, content] of outputs) {
+      const path = join(scratch, name);
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, content, { mode: 0o600 });
+    }
+    return provenance;
+  }
 
   // Publish provenance last. A failed write leaves the run resumable from adapter caches.
   const lock = join(deps.root, '.label-quorum-publish');

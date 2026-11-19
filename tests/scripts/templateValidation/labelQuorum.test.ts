@@ -1,10 +1,12 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '../../../scripts/template-validation/label-quorum.js';
 import * as runner from '../../../src/execution/runner.js';
+import { NODE_IDS, type NodeId } from '../../../src/agents/nodeProfiles.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
 import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
@@ -35,6 +37,11 @@ let root: string;
 let deps: LabelRunDeps;
 const run = (overrides: Partial<Parameters<typeof runLabelQuorum>[0]> = {}) =>
   runLabelQuorum({ ...options, nodes: [...options.nodes], ...overrides }, deps);
+
+function partialRoot(nodes: NodeId[] = ['slackIntake']): string {
+  const currentVersion = readFileSync(join(root, 'VERSION'), 'utf8').trim();
+  return join(deps.cacheDir!, createHash('sha256').update(currentVersion).digest('hex'), 'partial', [...nodes].sort().join('-'));
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'tv-quorum-test-'));
@@ -91,9 +98,9 @@ it('discards equivalent and invalid supervisor SQL mutations before blind labeli
       : { labels: [{ referenceSql: reference }] },
   }));
   await run({ nodes: ['supervisor', 'sqlGenerator'], targetCounts: { sqlGenerator: 1, supervisor: 2 } });
-  expect(loadItems('supervisor', root).sort((a, b) => a.candidateSql.localeCompare(b.candidateSql))).toEqual([
+  expect(loadItems('supervisor', partialRoot(['sqlGenerator', 'supervisor'])).sort((a, b) => a.candidateSql.localeCompare(b.candidateSql))).toEqual([
     expect.objectContaining({ candidateSql: reference, expectedVerdict: 'PASS' }),
-    expect.objectContaining({ candidateSql: broken, expectedVerdict: 'FAIL', mutationOf: loadItems('sqlGenerator', root)[0].id }),
+    expect.objectContaining({ candidateSql: broken, expectedVerdict: 'FAIL', mutationOf: loadItems('sqlGenerator', partialRoot(['sqlGenerator', 'supervisor']))[0].id }),
   ]);
   expect(deps.execute).toHaveBeenCalledWith('invalid SQL');
   expect(deps.execute).toHaveBeenCalledWith('SELECT  1 AS n');
@@ -115,7 +122,7 @@ it('aborts before publishing any output when an accepted item violates template 
 
 it('refuses to overwrite provenance at the same VERSION before drafting', async () => {
   writeFileSync(join(root, 'provenance.json'), JSON.stringify({ version }));
-  await expect(run()).rejects.toThrow('bump VERSION to relabel');
+  await expect(run({ nodes: NODE_IDS })).rejects.toThrow('bump VERSION to relabel');
   expect(deps.runLabeler).not.toHaveBeenCalled();
 });
 
@@ -134,7 +141,6 @@ it('resumes without spawning in the same VERSION and spawns again after a bump',
   });
   await run({ drafter: 'codex' });
   expect(deps.spawn).toHaveBeenCalledTimes(3);
-  rmSync(join(root, 'provenance.json'));
   vi.mocked(deps.spawn).mockClear();
   await run({ drafter: 'codex' });
   expect(deps.spawn).not.toHaveBeenCalled();
@@ -151,7 +157,7 @@ it('records reduced quorum and reported models for two families', async () => {
     members: labelers.map(({ id, family, model, isolation }) => ({ id, family, isolation, requestedModel: model, reportedModels: ['reported-model'] })),
     perNode: { slackIntake: { drafted: 1, accepted: 1, quarantined: 0, dropRateByCategory: { simple: 0 } } },
   });
-  expect(JSON.parse(readFileSync(join(root, 'provenance.json'), 'utf8'))).toEqual(result);
+  expect(JSON.parse(readFileSync(join(partialRoot(), 'provenance.json'), 'utf8'))).toEqual(result);
 });
 
 it('excludes an unavailable labeler before quorum validation', async () => {
@@ -167,7 +173,7 @@ it('records agreement members and counts manual seeds toward the target', async 
   mkdirSync(join(root, 'items'));
   writeFileSync(join(root, 'items', 'slackIntake.jsonl'), JSON.stringify(seed) + '\n');
   await run({ targetCounts: { slackIntake: 2 } });
-  expect(loadItems('slackIntake', root)).toEqual([
+  expect(loadItems('slackIntake', partialRoot())).toEqual([
     seed,
     expect.objectContaining({ ...draft, ...route, inputHash: hashItemInput(draft), agreement: { members: ['claude', 'codex'] } }),
   ]);
@@ -191,8 +197,8 @@ it('drafts fixture content before its dependent node and keeps only unanimous fa
   expect(calls[0][1].prompt).toMatch(/^Draft fixtures.*dbt/i);
   expect(calls[1][1].prompt).toContain(history[0].runId);
   expect(calls[2][1].prompt).toContain(history[0].runId);
-  expect(loadFixture('dbt-history-1', root)).toEqual([expect.objectContaining({ model: 'orders' })]);
-  expect(loadItems('dbtStatus', root)[0].requiredFacts).toEqual([expectedFact]);
+  expect(loadFixture('dbt-history-1', partialRoot(['dbtStatus']))).toEqual([expect.objectContaining({ model: 'orders' })]);
+  expect(loadItems('dbtStatus', partialRoot(['dbtStatus']))[0].requiredFacts).toEqual([expectedFact]);
 });
 
 it('aborts before publishing any node if a drafted fixture violates template safety', async () => {
@@ -338,8 +344,8 @@ it('reserves fixture filenames used by retained items with or without an extensi
 
   await run({ nodes: ['dbtStatus'], targetCounts: { dbtStatus: 2 } });
   expect(loadFixture('dbt-history-1', root)).toEqual(originalFixture);
-  expect(loadFixture('dbt-history-2', root)).toEqual(history);
-  expect(loadItems('dbtStatus', root)).toEqual([seed, expect.objectContaining({ runHistoryFixture: 'dbt-history-2' })]);
+  expect(loadFixture('dbt-history-2', partialRoot(['dbtStatus']))).toEqual(history);
+  expect(loadItems('dbtStatus', partialRoot(['dbtStatus']))).toEqual([seed, expect.objectContaining({ runHistoryFixture: 'dbt-history-2' })]);
 });
 
 const discrepancyContext = {
@@ -366,8 +372,8 @@ it('stores the planted discrepancy defect outside the context and checks blind l
   }));
   const discrepancy = { nodes: ['discrepancy'] as ['discrepancy'], targetCounts: { discrepancy: 2 } };
   await run(discrepancy);
-  expect(loadFixture('discrepancy-context-1', root)).toEqual(context);
-  expect(loadItems('discrepancy', root).map(item => item.defect)).toEqual(['missing filter', 'missing filter']);
+  expect(loadFixture('discrepancy-context-1', partialRoot(['discrepancy']))).toEqual(context);
+  expect(loadItems('discrepancy', partialRoot(['discrepancy'])).map(item => item.defect)).toEqual(['missing filter', 'missing filter']);
   const blindPrompts = vi.mocked(deps.runLabeler).mock.calls.filter(([, { prompt }]) => prompt.startsWith('Label'));
   expect(blindPrompts).toHaveLength(2);
   for (const [, { prompt }] of blindPrompts) {
@@ -378,8 +384,8 @@ it('stores the planted discrepancy defect outside the context and checks blind l
   writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
   diagnosed = 'wrong grain';
   await run(discrepancy);
-  expect(loadItems('discrepancy', root)).toEqual([expect.objectContaining({ contextFixture: 'discrepancy-context-2' })]);
-  expect(readFileSync(join(root, 'quarantine', 'discrepancy.jsonl'), 'utf8')).toContain('"defect":"missing filter"');
+  expect(loadItems('discrepancy', partialRoot(['discrepancy']))).toEqual([expect.objectContaining({ contextFixture: 'discrepancy-context-2' })]);
+  expect(readFileSync(join(partialRoot(['discrepancy']), 'quarantine', 'discrepancy.jsonl'), 'utf8')).toContain('"defect":"missing filter"');
 });
 
 it('detects planted defect text in any fixture field after case and whitespace normalization', () => {
@@ -412,9 +418,9 @@ it('drops a fixture that gives the answer in supervisorNotes before either blind
   const blind = prompts.filter(prompt => prompt.startsWith('Label'));
   expect(blind).toHaveLength(2);
   for (const prompt of blind) expect(prompt).not.toMatch(/missing\s+filter/i);
-  expect(existsSync(join(root, 'fixtures', 'discrepancy-context-1.json'))).toBe(false);
-  expect(loadFixture('discrepancy-context-2', root)).toEqual(discrepancyContext);
-  expect(loadItems('discrepancy', root)).toHaveLength(2);
+  expect(existsSync(join(partialRoot(['discrepancy']), 'fixtures', 'discrepancy-context-1.json'))).toBe(false);
+  expect(loadFixture('discrepancy-context-2', partialRoot(['discrepancy']))).toEqual(discrepancyContext);
+  expect(loadItems('discrepancy', partialRoot(['discrepancy']))).toHaveLength(2);
 });
 
 it('abort preserves prior discrepancy items and publishes nothing when all drafted fixtures are rejected', async () => {
@@ -571,4 +577,23 @@ it('propagates labeler setup errors before it can record quarantine', async () =
   deps.runLabeler = runLabeler;
   deps.spawn = async () => { throw new Error('Missing CLI executable'); };
   await expect(labelNode('slackIntake', [draft], deps)).rejects.toThrow('Missing CLI executable');
+});
+
+it.each([false, true])('keeps partial labels out of the root set with prior frozen provenance: %s', async olderFrozen => {
+  const original = JSON.stringify(loadItems('slackIntake')[0]) + '\n';
+  const path = join(root, 'items', 'slackIntake.jsonl');
+  mkdirSync(join(root, 'items'));
+  writeFileSync(path, original);
+  const prior = JSON.stringify({ version: 'tv-v0', perNode: {
+    slackIntake: { itemsSha256: createHash('sha256').update(original).digest('hex') },
+  } });
+  const provenancePath = join(root, 'provenance.json');
+  if (olderFrozen) writeFileSync(provenancePath, prior);
+
+  const labeled = await run({ targetCounts: { slackIntake: 2 } });
+  expect(loadItems('slackIntake', partialRoot(), labeled.perNode.slackIntake.itemsSha256)).toHaveLength(2);
+  expect(readFileSync(path, 'utf8')).toBe(original);
+  if (olderFrozen) expect(readFileSync(provenancePath, 'utf8')).toBe(prior);
+  else expect(existsSync(provenancePath)).toBe(false);
+  await expect(run({ targetCounts: { slackIntake: 2 } })).resolves.toMatchObject({ version });
 });

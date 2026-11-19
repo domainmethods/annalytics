@@ -831,21 +831,28 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   if ((selected.has('sqlGenerator') || selected.has('discrepancy')) && !process.env.GCP_PROJECT_ID) {
     throw new Error('GCP_PROJECT_ID is required for template SQL execution');
   }
+  const [version, provenanceJson] = await Promise.all([
+    readFile(join(TV_ROOT, 'VERSION'), 'utf8'),
+    readFile(join(TV_ROOT, 'provenance.json'), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      throw new Error('Template validation set is not frozen. Run npm run tv:label for all nodes.');
+    }),
+  ]);
+  const setVersion = version.trim();
+  const provenance = JSON.parse(provenanceJson) as Provenance;
+  if (provenance.version !== setVersion) throw new Error('Template provenance does not match VERSION');
   const corpora = ordered.map(node => {
-    const items = loadItems(node);
+    const digest = provenance.perNode?.[node]?.itemsSha256;
+    if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error(`Template corpus for ${node} is missing its frozen item digest`);
+    }
+    const items = loadItems(node, TV_ROOT, digest);
     if (!items.length) throw new Error(`Template corpus for ${node} is empty`);
     if (new Set(items.map(item => item.id)).size !== items.length) {
       throw new Error(`Template corpus for ${node} contains duplicate item IDs`);
     }
     return { node, items };
   });
-  const [version, provenanceJson] = await Promise.all([
-    readFile(join(TV_ROOT, 'VERSION'), 'utf8'),
-    readFile(join(TV_ROOT, 'provenance.json'), 'utf8'),
-  ]);
-  const setVersion = version.trim();
-  const provenance = JSON.parse(provenanceJson) as Provenance;
-  if (provenance.version !== setVersion) throw new Error('Template provenance does not match VERSION');
   const setHash = hashValidationSet();
   const previous = process.env.NODE_PROFILE_OVERRIDES;
   // Baselines and the SQL generator's companion supervisor use the template defaults.

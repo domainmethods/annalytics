@@ -94,11 +94,19 @@ export type SummaryOverrideItem = Item<'summaryOverride'>;
 export type MetaQuestionItem = Item<'metaQuestion'>;
 export type DiscrepancyItem = Item<'discrepancy'>;
 
-export function loadItems<N extends NodeId>(node: N, root = TV_ROOT): Item<N>[] {
+export function hashItemFile(content: Buffer | string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+export function loadItems<N extends NodeId>(node: N, root = TV_ROOT, frozenDigest?: string): Item<N>[] {
   const path = join(root, 'items', node + '.jsonl');
   const schema = ITEM_SCHEMAS[node];
   const items: Item<N>[] = [];
-  for (const [index, line] of readFileSync(path, 'utf8').split('\n').entries()) {
+  const bytes = readFileSync(path);
+  if (frozenDigest !== undefined && hashItemFile(bytes) !== frozenDigest) {
+    throw new Error(`Template corpus for ${node} does not match its frozen item digest`);
+  }
+  for (const [index, line] of bytes.toString('utf8').split('\n').entries()) {
     if (!line.trim()) continue;
     try {
       items.push(schema.parse(JSON.parse(line)) as Item<N>);

@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { main, type PerEntry } from '../../../scripts/node-sweep.js';
-import { loadItems } from '../../../scripts/template-validation/items.js';
+import { hashItemInput, loadItems } from '../../../scripts/template-validation/items.js';
 import { createTemplateRunner, loadTemplateEnv } from '../../../scripts/template-validation/runners.js';
 import { defaultProfileForNode } from '../../../src/agents/nodeProfiles.js';
 
@@ -45,7 +45,10 @@ it.each([
     const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     vi.mocked(readFile).mockImplementation(async (path, options) => {
       if (String(path).endsWith('/VERSION')) return 'test';
-      if (String(path).endsWith('/provenance.json')) return JSON.stringify({ version: 'test', members: [] });
+      if (String(path).endsWith('/provenance.json')) return JSON.stringify({
+        version: 'test', members: [],
+        perNode: Object.fromEntries(['sqlGenerator', 'supervisor'].map(node => [node, { itemsSha256: 'a'.repeat(64) }])),
+      });
       return realFs.readFile(path, options);
     });
     vi.mocked(loadItems).mockImplementation(node => [{ id: node }] as ReturnType<typeof loadItems>);
@@ -131,6 +134,46 @@ it.each([
     } finally {
       await rm(dir, { recursive: true, force: true });
       vi.mocked(readFile).mockReset();
+    }
+  },
+);
+
+it.each(['seed only', 'no node provenance', 'stale node digest'] as const)(
+  'refuses to score an unfrozen selected node (%s)',
+  async scenario => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    vi.mocked(loadTemplateEnv).mockClear().mockRejectedValue(new Error('scoring started'));
+    const root = await mkdtemp(join(tmpdir(), 'template-unfrozen-'));
+    const node = 'slackIntake';
+    try {
+      const input = { category: 'simple', text: 'Count the orders.' };
+      await mkdir(join(root, 'items'));
+      await writeFile(join(root, 'items', node + '.jsonl'), JSON.stringify({
+        ...input, id: 'seed', expectedRoute: 'analytics_pipeline', inputHash: hashItemInput(input),
+        agreement: { members: ['manual'] },
+      }) + '\n');
+      await writeFile(join(root, 'VERSION'), 'tv-v2\n');
+      if (scenario !== 'seed only') {
+        await writeFile(join(root, 'provenance.json'), JSON.stringify({
+          version: 'tv-v2', members: [], perNode: scenario === 'stale node digest' ? {
+            slackIntake: { itemsSha256: '0'.repeat(64) },
+          } : {},
+        }));
+      }
+      const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      const realItems = await vi.importActual<typeof import('../../../scripts/template-validation/items.js')>(
+        '../../../scripts/template-validation/items.js',
+      );
+      vi.mocked(readFile).mockImplementation((path, options) => realFs.readFile(join(root, String(path).split('/').at(-1)!), options));
+      vi.mocked(loadItems).mockImplementation((selected, _root, ...rest) => realItems.loadItems(selected, root, ...rest));
+
+      await expect(main(['--corpus', 'template', '--node', node], root)).rejects.toThrow(
+        scenario === 'seed only' ? /validation set is not frozen/i : /frozen.*slackIntake|slackIntake.*frozen/i,
+      );
+      expect(loadTemplateEnv).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(readFile).mockReset();
+      await rm(root, { recursive: true, force: true });
     }
   },
 );
