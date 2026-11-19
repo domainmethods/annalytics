@@ -121,6 +121,12 @@ it('includes the end of stderr when a labeler exits non-zero', async () => {
     .rejects.toThrow(expect.objectContaining({ message: expect.stringMatching(/^.{0,560}$/s) }));
 });
 
+it('names a labeler timeout and allows 20 minutes per batch', async () => {
+  const spawn = vi.fn(async () => ({ stdout: '', stderr: 'Warning: no stdin data received', code: 1, timedOut: true }));
+  await expect(runLabeler(cfg, batch, spawn, cacheDir)).rejects.toThrow(/^claude timed out after 20 minutes$/);
+  expect(spawn).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({ timeoutMs: 1_200_000 }));
+});
+
 it('reports the CLI version and treats a missing executable as unavailable', async () => {
   expect(await checkAvailable(cfg, async (cmd, args) => {
     expect(cmd).toBe('claude');

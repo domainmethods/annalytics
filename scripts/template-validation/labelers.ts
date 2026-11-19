@@ -49,7 +49,10 @@ export type SpawnFn = (
   cmd: string,
   args: string[],
   opts: { cwd: string; timeoutMs: number; outputParser: LabelerConfig['outputParser'] },
-) => Promise<{ stdout: string; stderr?: string; code: number }>;
+) => Promise<{ stdout: string; stderr?: string; code: number; timedOut?: boolean }>;
+
+// A 20-item batch at max reasoning effort can take well over 5 minutes.
+const LABEL_TIMEOUT_MS = 20 * 60_000;
 
 export function loadLabelers(path = 'benchmarks/template-validation/labelers.json'): LabelerConfig[] {
   return z.array(labelerConfigSchema).parse(JSON.parse(readFileSync(path, 'utf8')));
@@ -247,7 +250,9 @@ export async function runLabeler(
     const schemaJson = JSON.stringify(schema);
     await writeFile(schemaPath, schemaJson);
     const [cmd, ...args] = buildArgv(cfg, { prompt: batch.prompt, schemaPath, schemaJson });
-    const { stdout, stderr, code } = await spawn(cmd, args, { cwd, timeoutMs: 300_000, outputParser: cfg.outputParser });
+    const { stdout, stderr, code, timedOut } =
+      await spawn(cmd, args, { cwd, timeoutMs: LABEL_TIMEOUT_MS, outputParser: cfg.outputParser });
+    if (timedOut) throw new LabelerOutputError(`${cfg.id} timed out after ${LABEL_TIMEOUT_MS / 60_000} minutes`);
     if (code !== 0) {
       const detail = stderr?.trim().slice(-500);
       throw new LabelerOutputError(`${cfg.id} exited with code ${code}${detail ? `: ${detail}` : ''}`);

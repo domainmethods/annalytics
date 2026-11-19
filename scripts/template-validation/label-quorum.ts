@@ -120,8 +120,11 @@ async function main(): Promise<void> {
   const shell = { ...process.env };
   const spawn: SpawnFn = (cmd, args, { cwd, timeoutMs, outputParser }) => new Promise(resolve => {
     const env = Object.fromEntries([...shellEnv, ...loginEnv[outputParser]].map(key => [key, shell[key]]));
-    execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
-      resolve({ stdout, stderr, code: error ? 1 : 0 }));
+    const child = execFile(cmd, args, { cwd, env, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) =>
+      resolve({ stdout, stderr, code: error ? 1 : 0, timedOut: error?.killed === true && error.signal === 'SIGTERM' &&
+        error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }));
+    // The prompt is an argument. Close stdin so CLIs don't wait for piped input.
+    child.stdin?.end();
   });
   if (existsSync('.env') && typeof process.loadEnvFile === 'function') {
     process.loadEnvFile('.env');
