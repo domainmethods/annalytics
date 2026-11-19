@@ -59,17 +59,46 @@ const REGISTRY: Record<string, RegisteredModel> = {
     outputPricePerMTok: 3.00,
     status: 'default-eligible',
   },
+  'flash-lite/3.5': {
+    tier: 'flash-lite',
+    version: '3.5',
+    id: 'gemini-3.5-flash-lite',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 0.30,
+    outputPricePerMTok: 2.50,
+    status: 'candidate',
+  },
+  // Google routes this ID to gemini-3.6-flash, so it duplicates flash/3.6 and is not
+  // swept separately. Priced as flash/3.6.
+  // https://aistudio.google.com/docs/deprecations#gemini-3-models
   'flash/3.5': {
     tier: 'flash',
     version: '3.5',
     id: 'gemini-3.5-flash',
     thinkingLevels: ['minimal', 'low', 'medium', 'high'],
-    // TODO(price): verify billing for this ID, which Google routes to Gemini 3.6 Flash.
-    // These Gemini 3.6 Flash rates apply through 2026-12-31.
-    // https://aistudio.google.com/docs/deprecations#gemini-3-models
-    inputPricePerMTok: 0.75,
-    outputPricePerMTok: 3.75,
-    status: 'default-eligible',
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'retired',
+  },
+  // Gemini 3.6 and 3.8 Flash are $0.75/$3.75 through 2026-12-31. These are the rates
+  // from 2027-01-01, the ones a default chosen now will be billed at.
+  'flash/3.6': {
+    tier: 'flash',
+    version: '3.6',
+    id: 'gemini-3.6-flash',
+    thinkingLevels: ['minimal', 'low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'candidate',
+  },
+  'flash/3.8': {
+    tier: 'flash',
+    version: '3.8',
+    id: 'gemini-3.8-flash',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'candidate',
   },
   'pro/3.1': {
     tier: 'pro',

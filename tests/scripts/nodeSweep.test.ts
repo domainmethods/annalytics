@@ -144,7 +144,7 @@ it('nodeCost rejects an unregistered profile even without recorded usage', () =>
 
 describe('runSweep — two-stage coordinate isolation', () => {
   it('prices baseline usage at the overridden model version', async () => {
-    const overrides = JSON.stringify({ clarification: { version: '3.5' } });
+    const overrides = JSON.stringify({ clarification: { version: '3.6' } });
     process.env.NODE_PROFILE_OVERRIDES = overrides;
     const runCorpusOnce = makeRunCorpusOnce(['clarification']);
     const seenOverrides: Array<string | undefined> = [];
@@ -167,7 +167,7 @@ describe('runSweep — two-stage coordinate isolation', () => {
     });
 
     expect(seenOverrides.slice(0, 2)).toEqual([overrides, overrides]);
-    expect(result.outcomes[0].baseline.cost).toBe(4.50);
+    expect(result.outcomes[0].baseline.cost).toBe(9.00);
   });
 
   it('reports the Stage-1 thinking anchor it held fixed', async () => {
@@ -175,15 +175,15 @@ describe('runSweep — two-stage coordinate isolation', () => {
     expect(r.stage1Anchor).toBe('high');
   });
 
-  it('Stage 1 evaluates ALL FOUR Gemini 3.x models, every one at the fixed anchor (axis isolation)', async () => {
+  it('Stage 1 evaluates EVERY non-retired Gemini 3.x model, every one at the fixed anchor (axis isolation)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    expect(o.stage1).toHaveLength(4);
+    expect(o.stage1).toHaveLength(6);
     // Every Stage-1 point holds thinking at the anchor — only the model varies.
     for (const p of o.stage1) expect(parseLabel(p.label).level).toBe('high');
-    // All four distinct models appear.
+    // Every registered model appears.
     const models = o.stage1.map(p => { const x = parseLabel(p.label); return `${x.tier}/${x.version}`; });
-    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3.1']));
+    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'pro/3.1']));
   });
 
   it('Stage 2 holds the winning model fixed and walks every thinking level incl. `default` (axis isolation)', async () => {

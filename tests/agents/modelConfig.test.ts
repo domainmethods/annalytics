@@ -88,11 +88,11 @@ describe('listRegisteredModels — the sweep enumeration source of truth', () =>
     const { listRegisteredModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
     const models = listRegisteredModels();
     // The whole point of this helper: a sweep that walks it can never cover a
-    // subset. There are exactly four real 3.x coordinates today — assert all four,
+    // subset. Assert every non-retired 3.x coordinate,
     // and that each one actually resolves to a model id.
     const keys = models.map((m) => `${m.tier}/${m.version}`).sort();
     expect(keys).toEqual(
-      ['flash-lite/3.1', 'flash/3', 'flash/3.5', 'pro/3.1'].sort(),
+      ['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'pro/3.1'].sort(),
     );
     for (const m of models) {
       expect(() => resolveModelId(m.tier, m.version)).not.toThrow();
@@ -113,7 +113,7 @@ describe('listRegisteredModels — the sweep enumeration source of truth', () =>
     const a = listRegisteredModels();
     a.pop();
     (a[0] as { tier: string }).tier = 'mutated';
-    expect(listRegisteredModels()).toHaveLength(4);
+    expect(listRegisteredModels()).toHaveLength(6);
     expect(listRegisteredModels()[0].tier).not.toBe('mutated');
   });
 });
@@ -128,9 +128,9 @@ describe('getSupportedThinkingLevels — per-model thinking_level capability', (
     expect(pro).toEqual(['low', 'medium', 'high']);  // low/medium/high all Supported
   });
 
-  it('reports every Flash-family model supports all four discrete levels (incl. `minimal`)', async () => {
+  it('reports the Flash-family models that serve `minimal` support all four discrete levels', async () => {
     const { getSupportedThinkingLevels } = await import('../../src/agents/modelConfig.js');
-    for (const [tier, version] of [['flash-lite', '3.1'], ['flash', '3'], ['flash', '3.5']] as const) {
+    for (const [tier, version] of [['flash-lite', '3.1'], ['flash-lite', '3.5'], ['flash', '3'], ['flash', '3.5'], ['flash', '3.6']] as const) {
       expect(getSupportedThinkingLevels(tier, version)).toEqual(['minimal', 'low', 'medium', 'high']);
     }
   });
