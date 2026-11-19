@@ -40,7 +40,7 @@ Trajectory rule: **one high-confusion domain, 5–10 cards, before any expansion
 ## 5. Configuration
 
 - [ ] Set every variable in `.env.example` (locally) and the corresponding Cloud Run env vars / Secret Manager bindings (deploy). Only Gemini 3.x models are supported.
-- [ ] **Model sizing:** template node defaults are heuristic for 9 of 12 pipeline nodes — only the intake classifiers are measured. Read `src/agents/CLAUDE.md` before tuning, and apply install-specific tuning via `NODE_PROFILE_OVERRIDES` (the `.env.example` comment documents the measured clarification downsize as a candidate override; re-measure on a domain corpus before adopting it install-wide).
+- [ ] **Model sizing:** template node defaults are heuristic for 9 of 12 pipeline nodes — only the intake classifiers are measured. Read `src/agents/CLAUDE.md` before tuning, and apply install-specific tuning via `NODE_PROFILE_OVERRIDES` (per-node profiles) or `MODEL_ID_OVERRIDES` (shared tier/version ID map); legacy `GEMINI_MODEL` / `GEMINI_FLASH_MODEL` do not select serving models. See README “Serving model overrides”. The `.env.example` comment documents the measured clarification downsize as a candidate override; re-measure on a domain corpus before adopting it install-wide.
 - [ ] **Fast path:** leave `FAST_PATH_ENABLED=false` until your knowledge store is synced (the path is inert without it). Then pilot with `FAST_PATH_REQUIRE_SUPERVISOR=true` and review eligibility/latency results before allowing supervisor skips.
 - [ ] Review cost and safety limits for your warehouse: `COST_GATE_MAX_BYTES`, `QUERY_TIMEOUT_MS`, `MAX_RESULT_ROWS`, `RATE_LIMIT_PER_HOUR`.
 

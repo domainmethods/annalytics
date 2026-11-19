@@ -477,3 +477,7 @@ Formatted tester IDs now normalize to digits; invalid entries fail startup namin
 ### 2026-11-18 - Final execution validation (#90)
 
 The Slack and WhatsApp pipelines now run the shared L1–L4 validator on the final SQL immediately before execution, including Slack best-effort escalation. Failed validation prevents submission; Slack cost failures retain narrowing guidance. Caller review confirmed discrepancy queries and both format overrides already use that validator, while refinements and escalation resumes enter the shared Slack pipeline. This is maintenance of existing trust controls; WhatsApp's manual acceptance gate and deferred scope remain unchanged. Offline regression tests cover rejection at L3 and L4.
+
+### 2026-11-18 — Model configuration documentation (#70)
+
+Corrected deployment guidance to use node profiles and model-ID overrides; documented residual legacy script/config consumers. Documentation maintenance only; no model defaults, sizing evidence, runtime behavior, or tranche order changed.
