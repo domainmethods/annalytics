@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { NODE_IDS, type NodeId } from '../../src/agents/nodeProfiles.js';
@@ -479,25 +479,45 @@ export async function runLabelQuorum(
     return provenance;
   }
 
-  // Publish provenance last. A failed write leaves the run resumable from adapter caches.
-  const lock = join(deps.root, '.label-quorum-publish');
-  mkdirSync(lock);
-  let staging: string | undefined;
+  const publishDir = join(deps.root, '.cache', 'publish');
+  const owner = String(process.pid);
+  const staging = join(publishDir, owner);
+  mkdirSync(publishDir, { recursive: true, mode: 0o700 });
   try {
+    mkdirSync(staging, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    throw new Error('Template publish already in progress');
+  }
+  try {
+    // Claim a directory before checking peers so two writers cannot both proceed.
+    for (const entry of readdirSync(publishDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === owner || !/^[1-9]\d*$/.test(entry.name)) continue;
+      try {
+        process.kill(Number(entry.name), 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+          rmSync(join(publishDir, entry.name), { recursive: true, force: true });
+          continue;
+        }
+        if ((error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+      }
+      throw new Error('Template publish already in progress');
+    }
+
     refuseOverwrite(provenancePath, version);
     if (readVersion(deps.root) !== version) {
       throw new Error('VERSION changed during labeling');
     }
-    staging = mkdtempSync(join(deps.root, '.label-quorum-'));
     for (const [index, content] of [...outputs.values()].entries()) writeFileSync(join(staging, String(index)), content);
+    // Publish provenance last. A failed write leaves the run resumable from adapter caches.
     for (const [index, name] of [...outputs.keys()].entries()) {
       const target = join(deps.root, name);
       mkdirSync(dirname(target), { recursive: true });
       renameSync(join(staging, String(index)), target);
     }
   } finally {
-    if (staging) rmSync(staging, { recursive: true, force: true });
-    rmSync(lock, { recursive: true, force: true });
+    rmSync(staging, { recursive: true, force: true });
   }
   return provenance;
 }

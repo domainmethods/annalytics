@@ -597,3 +597,46 @@ it.each([false, true])('keeps partial labels out of the root set with prior froz
   else expect(existsSync(provenancePath)).toBe(false);
   await expect(run({ targetCounts: { slackIntake: 2 } })).resolves.toMatchObject({ version });
 });
+
+const fullLabelOptions = {
+  nodes: NODE_IDS,
+  targetCounts: { ...Object.fromEntries(NODE_IDS.map(node => [node, 0])), slackIntake: 1 },
+  allowSingleFamily: true,
+};
+
+it('resumes a full publish from cached batches after a dead writer left staged files', async () => {
+  const dead = spawnSync(process.execPath, ['-e', '']);
+  expect(dead.status).toBe(0);
+  const interrupted = join(root, '.cache', 'publish', String(dead.pid));
+  mkdirSync(interrupted, { recursive: true });
+  writeFileSync(join(interrupted, '0'), 'abandoned staged content');
+
+  deps.labelers = [labelers[0]];
+  deps.runLabeler = runLabeler;
+  deps.spawn = vi.fn(async (_cmd, args) =>
+    claude(args.some(arg => arg.startsWith('Draft')) ? { items: [draft] } : { labels: [route] }));
+  await run({ allowSingleFamily: true });
+  vi.mocked(deps.spawn).mockClear();
+
+  mkdirSync(join(root, 'items'));
+  writeFileSync(join(root, 'items', 'slackIntake.jsonl'), JSON.stringify({
+    ...draft, ...route, id: 'interrupted', inputHash: hashItemInput(draft), agreement: { members: ['claude'] },
+  }) + '\n');
+
+  const frozen = await run(fullLabelOptions);
+  expect(deps.spawn).not.toHaveBeenCalled();
+  expect(loadItems('slackIntake', root, frozen.perNode.slackIntake.itemsSha256)[0].id).not.toBe('interrupted');
+  expect(JSON.parse(readFileSync(join(root, 'provenance.json'), 'utf8'))).toEqual(frozen);
+  expect(existsSync(interrupted)).toBe(false);
+  expect(readdirSync(root).filter(name => name.startsWith('.label-quorum-'))).toEqual([]);
+});
+
+it('leaves an active publisher lock intact and still allows scratch labeling', async () => {
+  const active = join(root, '.cache', 'publish', String(process.ppid));
+  mkdirSync(active, { recursive: true });
+
+  await expect(run()).resolves.toMatchObject({ version });
+  await expect(run(fullLabelOptions)).rejects.toThrow(/publish.*in progress/i);
+  expect(existsSync(active)).toBe(true);
+  expect(existsSync(join(root, 'provenance.json'))).toBe(false);
+});
