@@ -77,6 +77,30 @@ function matchMultiset<T>(ref: T[], cand: T[], equal: (a: T, b: T) => boolean): 
   });
 }
 
+function matchUnorderedRows(ref: Value[][], cand: Value[][], equal: (a: Value[], b: Value[]) => boolean): boolean {
+  const assigned: (Value[] | undefined)[] = Array.from({ length: cand.length });
+
+  function assign(row: Value[], visited: Set<number>): boolean {
+    const free = cand.findIndex((candidate, i) => assigned[i] === undefined && equal(row, candidate));
+    if (free !== -1) {
+      assigned[free] = row;
+      return true;
+    }
+
+    // If every compatible row is taken, try moving its current match to another candidate.
+    return cand.some((candidate, i) => {
+      const current = assigned[i];
+      if (current === undefined || visited.has(i) || !equal(row, candidate)) return false;
+      visited.add(i);
+      if (!assign(current, visited)) return false;
+      assigned[i] = row;
+      return true;
+    });
+  }
+
+  return ref.every(row => assign(row, new Set()));
+}
+
 export function resultsEquivalent(
   ref: QueryResult,
   cand: QueryResult,
@@ -92,5 +116,5 @@ export function resultsEquivalent(
   const equalRows = (a: Value[], b: Value[]) => matchMultiset(a, b, (left, right) => equalValues(left, right, relTol));
   return opts.ordered
     ? refRows.every((row, i) => equalRows(row, candRows[i]))
-    : matchMultiset(refRows, candRows, equalRows);
+    : matchUnorderedRows(refRows, candRows, equalRows);
 }

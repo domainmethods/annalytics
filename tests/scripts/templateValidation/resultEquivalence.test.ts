@@ -39,6 +39,15 @@ describe('resultsEquivalent', () => {
     expect(resultsEquivalent(ref, { ...cand, rows: [{ x: 2 }, { x: 2 }, { x: 1 }] }, unordered)).toBe(false);
   });
 
+  it('finds a one-to-one match for unordered rows with overlapping tolerance', () => {
+    const ref = { columnNames: ['x'], rows: [{ x: 1000000 }, { x: 1000001.5 }] };
+    const cand = { columnNames: ['x'], rows: [{ x: 1000000.8 }, { x: 999999.5 }] };
+    const reversed = { ...cand, rows: [...cand.rows].reverse() };
+
+    expect(resultsEquivalent(ref, reversed, unordered)).toBe(true);
+    expect(resultsEquivalent(ref, cand, unordered)).toBe(true);
+  });
+
   it('requires the same column count even when both results are empty', () => {
     const empty = { columnNames: ['x'], rows: [] };
     expect(resultsEquivalent(empty, { columnNames: ['y'], rows: [] }, unordered)).toBe(true);
