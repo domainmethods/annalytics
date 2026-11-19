@@ -1,17 +1,10 @@
+import { parseResponseContextRetentionDays } from './retentionSettings.js';
 import { getDb } from './firestore.js';
 import type { ResponseContext } from '../types.js';
 
 type FirestoreTimestamp = { toDate: () => Date };
 
-/** Retention window for response_context docs. The Firestore TTL policy (see
- *  `infra/firestore.ttls.json`) targets `expiresAt` to delete expired docs.
- *  Feedback aggregation windows (getResponseContextsSince) must not exceed
- *  this retention. `scripts/backfill-retention-fields.ts` replicates this
- *  logic and must be updated in lockstep. */
-const RETENTION_DAYS = (() => {
-  const v = Number(process.env.RESPONSE_CONTEXT_RETENTION_DAYS);
-  return Number.isFinite(v) && v > 0 ? v : 90;
-})();
+const RETENTION_DAYS = parseResponseContextRetentionDays();
 
 function toDate(value: unknown): Date | null {
   if (value instanceof Date) {

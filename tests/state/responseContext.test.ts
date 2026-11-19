@@ -138,22 +138,14 @@ describe('saveResponseContext', () => {
     }
   });
 
-  it('falls back to 90 days when the env override is not a positive number', async () => {
+  it('rejects invalid retention instead of silently falling back', async () => {
     vi.stubEnv('RESPONSE_CONTEXT_RETENTION_DAYS', 'not-a-number');
     vi.resetModules();
-    try {
-      const fresh = await import('../../src/state/responseContext.js');
-      mockSet.mockResolvedValue(undefined);
-      await fresh.saveResponseContext(sampleContext());
-
-      const written = mockSet.mock.calls[0][0];
-      const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
-      expect(written.expiresAt.getTime() - written.createdAt.getTime()).toBe(ninetyDaysMs);
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
+    await expect(import('../../src/state/responseContext.js')).rejects.toThrow('RESPONSE_CONTEXT_RETENTION_DAYS');
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
+
 });
 
 describe('botHasRepliedInThread', () => {

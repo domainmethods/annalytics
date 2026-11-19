@@ -1,4 +1,5 @@
 import { normalizeWaId } from './whatsapp/waId.js';
+import { parseResponseContextRetentionDays } from './state/retentionSettings.js';
 import { getProModel } from './agents/modelConfig.js';
 
 export type WhatsAppConfig =
@@ -65,11 +66,13 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function parseEnvInt(name: string, defaultVal: number): number {
+function parseEnvInt(name: string, defaultVal: number, max = Number.MAX_SAFE_INTEGER): number {
   const val = process.env[name];
-  if (val === undefined || val === '') return defaultVal;
+  if (val === undefined || val.trim() === '') return defaultVal;
   const parsed = Number(val);
-  if (Number.isNaN(parsed)) throw new Error(`Invalid config: ${name} must be a number, got "${val}"`);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > max) {
+    throw new Error(`Invalid config: ${name} must be a positive safe integer no greater than ${max}`);
+  }
   return parsed;
 }
 
@@ -129,6 +132,7 @@ function loadWhatsAppConfig(): AppConfig['whatsapp'] {
 }
 
 export function loadConfig(): AppConfig {
+  parseResponseContextRetentionDays();
   return {
     slack: {
       botToken: requireEnv('SLACK_BOT_TOKEN'),
@@ -157,8 +161,9 @@ export function loadConfig(): AppConfig {
       mode: parseEscalationMode(process.env.ESCALATION_MODE),
       channelId: process.env.ESCALATION_CHANNEL_ID || undefined,
       analystUserId: process.env.ESCALATION_ANALYST_USER_ID || undefined,
-      reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30),
-      timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4),
+      // Cap escalation durations at one year to keep derived dates valid.
+      reminderIntervalMinutes: parseEnvInt('ESCALATION_REMINDER_MINUTES', 30, 525_600),
+      timeoutHours: parseEnvInt('ESCALATION_TIMEOUT_HOURS', 4, 8_760),
       onNegativeFeedback: parseEnvBool('ESCALATION_ON_NEGATIVE_FEEDBACK', true),
     },
     fastPath: {
@@ -167,7 +172,7 @@ export function loadConfig(): AppConfig {
       requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
     },
     whatsapp: loadWhatsAppConfig(),
-    port: parseEnvInt('PORT', 3000),
+    port: parseEnvInt('PORT', 3000, 65535),
     lifecycleSweepSecret: process.env.LIFECYCLE_SWEEP_SECRET || undefined,
   };
 }
