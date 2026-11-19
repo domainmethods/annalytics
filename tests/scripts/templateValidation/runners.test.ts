@@ -4,6 +4,7 @@ import { reviewSql } from '../../../src/agents/supervisorAgent.js';
 import { qualityLoop } from '../../../src/qualityLoop.js';
 import { executeQuery } from '../../../src/execution/runner.js';
 import { validateSql } from '../../../src/validation/pipeline.js';
+import { initBigQuery } from '../../../src/validation/dryRun.js';
 import { loadLocalKnowledgeSummaries } from '../../../scripts/benchmarkInputs.js';
 import { loadFixture } from '../../../scripts/template-validation/items.js';
 import { createTemplateRunner, loadTemplateEnv, verifyCrossPass } from '../../../scripts/template-validation/runners.js';
@@ -17,7 +18,7 @@ vi.mock('../../../src/agents/clarificationAgent.js', () => ({ classifyQuestion: 
 vi.mock('../../../src/agents/supervisorAgent.js', () => ({ reviewSql: vi.fn() }));
 vi.mock('../../../src/qualityLoop.js', () => ({ qualityLoop: vi.fn() }));
 vi.mock('../../../src/execution/runner.js', () => ({ executeQuery: vi.fn(), initBigQueryClient: vi.fn() }));
-vi.mock('../../../src/validation/dryRun.js', () => ({ initBigQuery: vi.fn() }));
+vi.mock('../../../src/validation/dryRun.js', { spy: true });
 vi.mock('../../../src/validation/pipeline.js', () => ({ validateSql: vi.fn() }));
 vi.mock('../../../scripts/benchmarkInputs.js', { spy: true });
 vi.mock('../../../scripts/template-validation/items.js', { spy: true });
@@ -39,6 +40,7 @@ const context = {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv('GCP_PROJECT_ID', 'test-project');
+  vi.mocked(initBigQuery).mockImplementation(() => {});
   vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 0 });
   vi.mocked(executeQuery).mockResolvedValue(result);
   vi.mocked(qualityLoop).mockResolvedValue({
@@ -71,7 +73,7 @@ describe('template corpus runners', () => {
     const run = await createTemplateRunner('clarification', items, env)();
     expect(run.perEntry).toMatchObject([
       { id: 'test', clarificationPassed: true, overallScore: 1, sqlGenMetric: 1 },
-      { id: 'throw', clarificationPassed: false, overallScore: 0, sqlGenMetric: 0, error: expect.any(String) },
+      { id: 'throw', clarificationPassed: false, overallScore: 0, sqlGenMetric: 0, failure: { category: 'candidate', code: 'agent-output' } },
     ]);
   });
 
@@ -93,8 +95,77 @@ describe('template corpus runners', () => {
       ? { valid: true, layer: 'all', bytesProcessed: 0 } : { valid: false, layer: 'L1', error: 'blocked' });
     const env = await loadTemplateEnv('test');
     const run = await createTemplateRunner('sqlGenerator', [{ ...base, question: 'A question', referenceSql }], env)();
-    expect(run.perEntry[0]).toMatchObject({ sqlGenMetric: 0, overallScore: 0, error: expect.stringContaining('validation') });
+    expect(run.perEntry[0]).toMatchObject({ sqlGenMetric: 0, overallScore: 0, failure: { category: 'candidate', code: 'sql-validation' } });
     expect(vi.mocked(executeQuery).mock.calls.map(([sql]) => sql)).toEqual([referenceSql]);
+  });
+
+  it('keeps equivalence credit and records exhaustion on an exhausted loop', async () => {
+    const quality = await qualityLoop({ question, tables: [], threadContext: [], apiKey: 'test' }, 'test', question, 1);
+    vi.mocked(qualityLoop).mockResolvedValue({ ...quality, verdict: 'exhausted' });
+    const env = await loadTemplateEnv('test');
+    const run = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
+    expect(run.perEntry[0]).toMatchObject({ sqlGenMetric: 1, exhausted: true });
+  });
+
+  it.each([
+    ['slackIntake', { text: question, expectedRoute: 'analytics_pipeline' }],
+    ['ambiguityClassifier', { input: { question, ambiguities: [], clarifyingQuestions: [], threadContext: [] }, expectedType: 'user_intent' }],
+  ] as const)('scores %s SDK error fallbacks zero even when the label matches', async (node, fields) => {
+    generateContent.mockRejectedValueOnce(new Error('provider at https://private.invalid'));
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner(node, [{ ...base, ...fields }], env)();
+    expect(perEntry[0]).toEqual({
+      id: 'test', clarificationPassed: false, overallScore: 0, sqlGenMetric: 0,
+      failure: { category: 'provider', code: 'model-request' },
+    });
+  });
+
+  it('credits deterministic Slack intake without calling the SDK', async () => {
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner('slackIntake', [
+      { ...base, text: 'hi', expectedRoute: 'immediate_response' },
+    ], env)();
+    expect(perEntry[0]).toMatchObject({ overallScore: 1 });
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['reference', referenceSql, 'sql-execution'],
+    ['warehouse', candidateSql, 'sql-execution'],
+  ] as const)('records a sanitized %s execution failure', async (category, failingSql, code) => {
+    vi.mocked(executeQuery).mockImplementation(async sql => {
+      if (sql === failingSql) throw new Error('private-project at https://private.invalid');
+      return result;
+    });
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
+    expect(perEntry[0]).toMatchObject({ overallScore: 0, failure: { category, code } });
+    expect(JSON.stringify(perEntry)).not.toMatch(/private-project|private\.invalid/);
+  });
+
+  it('keeps an earlier warehouse dry-run failure when the quality loop later recovers', async () => {
+    const quality = await qualityLoop({ question, tables: [], threadContext: [], apiKey: 'test' }, 'test', question, 1);
+    vi.mocked(qualityLoop).mockResolvedValue({
+      ...quality, verdict: 'fail_then_pass', validationHistory: [
+        { attempt: 0, layer: 'l3', valid: false, warehouseFailure: true, detail: 'https://private.invalid' },
+        { attempt: 1, layer: 'l3', valid: true },
+      ],
+    });
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner('sqlGenerator', [{ ...base, question, referenceSql }], env)();
+    expect(perEntry[0]).toMatchObject({ overallScore: 0, failure: { category: 'warehouse', code: 'sql-validation' } });
+    expect(JSON.stringify(perEntry)).not.toContain('private.invalid');
+  });
+
+  it('records a judge provider failure even though the rubric scorer handles rejected facts', async () => {
+    generateContent.mockResolvedValueOnce({ text: 'There was 1 order.' })
+      .mockRejectedValueOnce(new Error('https://private.invalid'));
+    const env = await loadTemplateEnv('test');
+    const { perEntry } = await createTemplateRunner('summaryOverride', [{
+      ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1,
+    }], env)();
+    expect(perEntry[0]).toMatchObject({ overallScore: 0, failure: { category: 'provider', code: 'judge-request' } });
+    expect(JSON.stringify(perEntry)).not.toContain('private.invalid');
   });
 
   it('scores the isolated supervisor verdict against the supplied label', async () => {
@@ -162,6 +233,21 @@ describe('template corpus runners', () => {
   });
 });
 
+it('reverts the supervisor for increased exhaustion at unchanged equivalence', async () => {
+  const supervisor: SweepProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
+  const run = async () => ({
+    perEntry: [
+      { id: 'a', clarificationPassed: false, overallScore: 1, sqlGenMetric: 1, exhausted: true },
+      { id: 'b', clarificationPassed: false, overallScore: 1, sqlGenMetric: 1, exhausted: false },
+    ],
+    nodeUsage: new Map(),
+  });
+  expect(await verifyCrossPass(run, { supervisor }, 1, 0.05, 0.4))
+    .toMatchObject({ revertSupervisor: true, metric: 1, exhaustionRate: 0.5 });
+  expect(await verifyCrossPass(run, { supervisor }, 1, 0.05, 0.45))
+    .toMatchObject({ revertSupervisor: false, metric: 1, exhaustionRate: 0.5 });
+});
+
 it('reverts the supervisor when the paired SQL metric drops more than epsilon and restores overrides', async () => {
   const original = '{}';
   vi.stubEnv('NODE_PROFILE_OVERRIDES', original);
@@ -171,7 +257,7 @@ it('reverts the supervisor when the paired SQL metric drops more than epsilon an
     expect(JSON.parse(process.env.NODE_PROFILE_OVERRIDES!)).toEqual(picks);
     return { perEntry: [{ id: 'test', clarificationPassed: false, overallScore: 0.8, sqlGenMetric: 0.8 }], nodeUsage: new Map() };
   });
-  expect(await verifyCrossPass(run, picks, 0.9, 0.05)).toEqual({ revertSupervisor: true, metric: 0.8 });
-  expect(await verifyCrossPass(run, picks, 0.85, 0.05)).toEqual({ revertSupervisor: false, metric: 0.8 });
+  expect(await verifyCrossPass(run, picks, 0.9, 0.05)).toMatchObject({ revertSupervisor: true, metric: 0.8 });
+  expect(await verifyCrossPass(run, picks, 0.85, 0.05)).toMatchObject({ revertSupervisor: false, metric: 0.8 });
   expect(process.env.NODE_PROFILE_OVERRIDES).toBe(original);
 });

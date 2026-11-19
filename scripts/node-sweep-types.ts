@@ -3,6 +3,15 @@ import type { ModelTier } from '../src/agents/modelConfig.js';
 
 export type { NodeId };
 
+export type SweepFailure =
+  | { category: 'provider'; code: 'model-request' | 'judge-request' }
+  | { category: 'reference' | 'warehouse' | 'candidate'; code: 'sql-validation' | 'sql-lineage' | 'sql-execution' | 'sql-result-limit' }
+  | { category: 'candidate'; code: 'agent-output' | 'classifier-fallback' };
+
+export function exhaustionRate(entries: { exhausted?: boolean }[]): number {
+  return entries.filter(entry => entry.exhausted).length / (entries.length || 1);
+}
+
 /**
  * A concrete point in the (model, thinking) search space — the thing a sweep pins
  * NODE_PROFILE_OVERRIDES to for one corpus pass. Structurally identical to a
@@ -25,4 +34,5 @@ export interface PointScore {
   e2e: number;
   p95LatencyMs: number;
   cost: number;
+  exhaustionRate?: number;
 }

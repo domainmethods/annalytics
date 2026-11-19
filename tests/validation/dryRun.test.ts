@@ -59,6 +59,18 @@ describe('dryRunValidation', () => {
     expect(result.error).toContain('missing_table');
   });
 
+  it.each([['invalidQuery', undefined], ['accessDenied', true], ['backendError', true]])(
+    'marks warehouse failures from BigQuery reason %s without marking rejected query SQL',
+    async (reason, warehouseFailure) => {
+      mockCreateQueryJob.mockRejectedValue(Object.assign(new Error('BigQuery rejected the request'), {
+        errors: [{ reason }],
+      }));
+      const result = await dryRunValidation('SELECT 1');
+      expect(result.valid).toBe(false);
+      expect(result.warehouseFailure).toBe(warehouseFailure);
+    },
+  );
+
   it('passes dryRun: true to BigQuery', async () => {
     mockCreateQueryJob.mockResolvedValue([
       { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed: '0' } } },

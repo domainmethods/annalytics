@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import type { NodeId } from '../../src/agents/nodeProfiles.js';
 import { executeQuery, initBigQueryClient } from '../../src/execution/runner.js';
-import { initBigQuery, type QueryRelationMetadata, type ReferencedTable } from '../../src/validation/dryRun.js';
+import { initBigQuery, isBigQueryQueryRejection, type QueryRelationMetadata, type ReferencedTable } from '../../src/validation/dryRun.js';
 import { validateSql } from '../../src/validation/pipeline.js';
 import { warehouseRelations } from '../benchmarkSupport.js';
 import { hasSqlFrom, ITEM_SCHEMAS, scanTemplateSafety } from './items.js';
@@ -16,6 +16,16 @@ import { TV_DATASET, TV_ROOT, TV_SOURCE_DATASET, TV_SOURCE_PROJECT, TV_TABLES } 
 
 export const TEMPLATE_MAX_BYTES = 1024 ** 3;
 const limits = { maxRows: 10_000, timeoutMs: 60_000, maxBytes: TEMPLATE_MAX_BYTES };
+
+export class TemplateSqlError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'sql-validation' | 'sql-lineage' | 'sql-execution' | 'sql-result-limit',
+    readonly warehouseFailure = false,
+  ) {
+    super(message);
+  }
+}
 
 export async function availableLabelers(labelers: LabelerConfig[], spawn: SpawnFn, report: (line: string) => void) {
   const checks = await Promise.all(labelers.map(async cfg => ({ cfg, ...await checkAvailable(cfg, spawn) })));
@@ -29,18 +39,18 @@ const templateViews = new Set(TV_TABLES.map(table => `${TV_DATASET}.${table}`));
 
 export function checkTemplateRelations(
   sql: string, projectId: string, { referencedTables = [], referencedLogicalViews = [] }: QueryRelationMetadata,
-): Error | undefined {
+): TemplateSqlError | undefined {
   let relations: string[];
   try {
     relations = warehouseRelations(sql);
   } catch {
-    return new Error('Could not resolve SQL relations for template validation');
+    return new TemplateSqlError('Could not resolve SQL relations for template validation', 'sql-lineage');
   }
   if (relations.some(relation => !templateViews.has(relation))) {
-    return new Error(`SQL must name only approved ${TV_DATASET} views`);
+    return new TemplateSqlError(`SQL must name only approved ${TV_DATASET} views`, 'sql-lineage');
   }
   if (!referencedTables.length && !referencedLogicalViews.length && hasSqlFrom(sql)) {
-    return new Error('Dry run did not report referenced tables or views for SQL with FROM');
+    return new TemplateSqlError('Dry run did not report referenced tables or views for SQL with FROM', 'sql-lineage', true);
   }
 
   const named = new Set(relations);
@@ -52,24 +62,26 @@ export function checkTemplateRelations(
     table.projectId === TV_SOURCE_PROJECT && table.datasetId === TV_SOURCE_DATASET && matchesNamedView(table);
   if (referencedLogicalViews.some(view => !isTemplateView(view)) ||
       referencedTables.some(table => !isTemplateView(table) && !isViewSource(table))) {
-    return new Error('Dry run reported a relation outside the template warehouse');
+    return new TemplateSqlError('Dry run reported a relation outside the template warehouse', 'sql-lineage');
   }
 }
 
 export async function executeTemplateSql(sql: string, projectId: string) {
   try {
-    if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new Error('Federated SQL is not allowed for template validation');
+    if (/\bEXTERNAL_QUERY\b/i.test(sql)) return new TemplateSqlError('Federated SQL is not allowed for template validation', 'sql-lineage');
     if (scanTemplateSafety(sql).length || /\bbigquery-public-data\b/i.test(sql)) {
-      return new Error(`SQL must use the ${TV_DATASET} views`);
+      return new TemplateSqlError(`SQL must use the ${TV_DATASET} views`, 'sql-lineage');
     }
     const validation = await validateSql(sql, limits.maxBytes);
-    if (!validation.valid) return new Error(`SQL failed validation at ${validation.layer}`);
+    if (!validation.valid) {
+      return new TemplateSqlError(`SQL failed validation at ${validation.layer}`, 'sql-validation', validation.warehouseFailure);
+    }
     const relationError = checkTemplateRelations(sql, projectId, validation);
     if (relationError) return relationError;
     const result = await executeQuery(sql, limits);
-    return result.truncated ? new Error('SQL exceeded the result row limit') : result;
-  } catch {
-    return new Error('Template SQL execution failed');
+    return result.truncated ? new TemplateSqlError('SQL exceeded the result row limit', 'sql-result-limit') : result;
+  } catch (error) {
+    return new TemplateSqlError('Template SQL execution failed', 'sql-execution', !isBigQueryQueryRejection(error));
   }
 }
 

@@ -92,10 +92,19 @@ function logIntakeFallback(
 export async function classifySlackIntake(
   text: string,
   apiKey: string,
-  options: { timeoutMs?: number } & IntakeLogContext = {},
+  options: { timeoutMs?: number; onFallback?: IntakeFallbackSink } & IntakeLogContext = {},
 ): Promise<SlackIntakeResult> {
   const startTime = Date.now();
   const context: IntakeLogContext = { channel: options.channel, threadTs: options.threadTs };
+  const fallback = (reason: IntakeFallbackReason, meta: { elapsedMs?: number; textLength?: number }) => {
+    logIntakeFallback(reason, { ...context, ...meta });
+    try {
+      options.onFallback?.({ reason, ...context, ...meta });
+    } catch {
+      // Keep intake fail-open when an observer throws.
+    }
+    return FALLBACK_RESULT;
+  };
 
   // Deterministic fast-path: obvious greetings and thanks are classified by a
   // pure string match, with no model call. This is what makes "hi" robust to
@@ -123,8 +132,7 @@ export async function classifySlackIntake(
   } catch (error) {
     const reason: IntakeFallbackReason =
       error instanceof IntakeTimeoutError ? 'timeout' : 'model_error';
-    logIntakeFallback(reason, { ...context, elapsedMs: Date.now() - startTime });
-    return FALLBACK_RESULT;
+    return fallback(reason, { elapsedMs: Date.now() - startTime });
   }
 
   const responseText = response.text ?? '';
@@ -133,14 +141,12 @@ export async function classifySlackIntake(
   try {
     json = JSON.parse(responseText || '{}');
   } catch {
-    logIntakeFallback('json_parse_error', { ...context, textLength: responseText.length });
-    return FALLBACK_RESULT;
+    return fallback('json_parse_error', { textLength: responseText.length });
   }
 
   const validation = SlackIntakeSchema.safeParse(json);
   if (!validation.success) {
-    logIntakeFallback('schema_validation_error', { ...context, textLength: responseText.length });
-    return FALLBACK_RESULT;
+    return fallback('schema_validation_error', { textLength: responseText.length });
   }
 
   // sanitizeResult only operates on bounded primitives, so a throw here is not
@@ -148,10 +154,9 @@ export async function classifySlackIntake(
   // on, and log it under a distinct reason rather than masking it as a model
   // failure.
   try {
-    return sanitizeResult(validation.data, context);
+    return sanitizeResult(validation.data, fallback);
   } catch {
-    logIntakeFallback('unexpected_error', { ...context, elapsedMs: Date.now() - startTime });
-    return FALLBACK_RESULT;
+    return fallback('unexpected_error', { elapsedMs: Date.now() - startTime });
   }
 }
 
@@ -233,7 +238,7 @@ Return only JSON matching the schema.`;
 
 function sanitizeResult(
   result: SlackIntakeResult,
-  context: IntakeLogContext = {},
+  fallback: (reason: IntakeFallbackReason, meta: { textLength: number }) => SlackIntakeResult,
 ): SlackIntakeResult {
   if (result.route === 'analytics_pipeline') {
     return {
@@ -245,16 +250,13 @@ function sanitizeResult(
 
   const responseText = result.responseText?.trim() ?? '';
   if (!responseText) {
-    logIntakeFallback('sanitize_empty', { ...context, textLength: 0 });
-    return FALLBACK_RESULT;
+    return fallback('sanitize_empty', { textLength: 0 });
   }
   if (responseText.length > MAX_RESPONSE_CHARS) {
-    logIntakeFallback('sanitize_oversized', { ...context, textLength: responseText.length });
-    return FALLBACK_RESULT;
+    return fallback('sanitize_oversized', { textLength: responseText.length });
   }
   if (isUnsafeResponse(responseText)) {
-    logIntakeFallback('sanitize_unsafe', { ...context, textLength: responseText.length });
-    return FALLBACK_RESULT;
+    return fallback('sanitize_unsafe', { textLength: responseText.length });
   }
 
   return {

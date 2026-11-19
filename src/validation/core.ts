@@ -15,6 +15,7 @@ export interface ValidationLayerRecord {
   valid: boolean;
   detail?: string;
   bytesProcessed?: number;
+  warehouseFailure?: true;
 }
 
 /** Build a layer record from a raw ValidationResult. */
@@ -29,6 +30,7 @@ export function toLayerRecord(
     valid: result.valid,
     detail: result.error,
     bytesProcessed: result.bytesProcessed,
+    ...(result.warehouseFailure && { warehouseFailure: true }),
   };
 }
 

@@ -14,6 +14,13 @@ export function initBigQuery(projectId?: string): void {
   bigquery = new BigQuery({ projectId });
 }
 
+export function isBigQueryQueryRejection(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'errors' in error && Array.isArray(error.errors) &&
+    error.errors.length > 0 && error.errors.every((detail: unknown) =>
+      typeof detail === 'object' && detail !== null && 'reason' in detail &&
+      (detail.reason === 'invalidQuery' || detail.reason === 'billingTierLimitExceeded'));
+}
+
 export async function dryRunValidation(sql: string): Promise<DryRunValidationResult> {
   if (!bigquery) throw new Error('BigQuery client not initialized — call initBigQuery() first');
 
@@ -45,6 +52,7 @@ export async function dryRunValidation(sql: string): Promise<DryRunValidationRes
       valid: false,
       layer: 'L3-dryrun',
       error: `Dry run failed: ${(error as Error).message}`,
+      ...(!isBigQueryQueryRejection(error) && { warehouseFailure: true }),
     };
   }
 }

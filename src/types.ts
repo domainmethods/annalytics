@@ -17,6 +17,7 @@ export interface ValidationResult {
   layer: string;              // which layer failed
   error?: string;
   bytesProcessed?: number;    // from dry run
+  warehouseFailure?: true;
 }
 
 export interface QueryResult {

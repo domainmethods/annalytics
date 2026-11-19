@@ -29,12 +29,12 @@ import {
   type TableSelectionScore,
 } from './benchmarkSupport.js';
 import { judgeSingleResult } from './benchmark-judge-core.js';
-import { type SweepProfile, type PointScore } from './node-sweep-types.js';
+import { exhaustionRate, type SweepProfile, type PointScore, type SweepFailure } from './node-sweep-types.js';
 import { pickWithinEpsilon } from './node-sweep-decision.js';
 import { computeEpsilon } from './node-sweep-calibrate.js';
 import { hashValidationSet, loadItems } from './template-validation/items.js';
 import type { Provenance } from './template-validation/labelQuorum.js';
-import { buildRefreshRows, writeRefreshReport } from './template-validation/refreshReport.js';
+import { buildRefreshRows, writeRefreshReport, type ProfileFailureCount } from './template-validation/refreshReport.js';
 import { TV_ROOT } from './template-validation/warehouse.js';
 
 // NB: env reads + validation live inside main() (not module scope) so importing
@@ -182,7 +182,8 @@ export interface PerEntry {
   clarificationPassed: boolean;
   sqlGenMetric: number;
   overallScore: number;
-  error?: string;
+  exhausted?: boolean;
+  failure?: SweepFailure;
 }
 
 export interface CorpusRunResult {
@@ -430,6 +431,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
         e2e: e2eOf(run.perEntry),
         p95LatencyMs: nodeP95(node, run.nodeUsage),
         cost: nodeCost(node, profile, run.nodeUsage),
+        ...(node === 'sqlGenerator' && { exhaustionRate: exhaustionRate(run.perEntry) }),
       };
     } catch (err) {
       log(`  [ERROR] ${label} failed: ${(err as Error).message}. Aborting sweep to avoid corrupted sizing results.`);
@@ -454,6 +456,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       e2e: e2eOf(baselineRunA.perEntry),
       p95LatencyMs: nodeP95(node, baselineRunA.nodeUsage),
       cost: nodeCost(node, getNodeProfile(node), baselineRunA.nodeUsage),
+      ...(node === 'sqlGenerator' && { exhaustionRate: exhaustionRate(baselineRunA.perEntry) }),
     };
 
     // Map every label we score back to its concrete profile so the winners can be
@@ -821,7 +824,7 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
-async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string) {
+async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string) {
   const selected = new Set(nodes);
   const ordered: NodeId[] = [
     ...[...selected].filter(node => node !== 'sqlGenerator' && node !== 'supervisor'),
@@ -854,17 +857,28 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     const env = await loadTemplateEnv(apiKey);
     const outcomes: NodeOutcome[] = [];
     const epsByNode = new Map<NodeId, number>();
+    const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
+    const blocked = new Set<NodeId>();
+    const profileOf = (node: NodeId) => `${resolveNodeModel(node)}@${getNodeProfile(node).thinkingLevel}`;
+    const recordFailures = (node: NodeId, profile: string, { perEntry }: CorpusRunResult) => {
+      for (const { failure } of perEntry) {
+        if (!failure) continue;
+        const counts = failuresByNode.get(node) ?? [];
+        const current = counts.find(entry => entry.profile === profile && entry.category === failure.category && entry.code === failure.code);
+        if (current) current.count++;
+        else counts.push({ ...failure, profile, count: 1 });
+        failuresByNode.set(node, counts);
+      }
+    };
     let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
     for (const { node, items } of corpora) {
       const runner = createTemplateRunner(node, items, env);
       const runCorpusOnce = async () => {
         const run = await runner();
-        for (const entry of run.perEntry) {
-          if (entry.error) console.warn(`  ${node}/${entry.id}: scored 0 after item failure`);
-        }
+        recordFailures(node, profileOf(node), run);
         return run;
       };
-      if (node === 'sqlGenerator') sqlRunner = runCorpusOnce;
+      if (node === 'sqlGenerator') sqlRunner = runner;
       const result = await runSweep({
         nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
       });
@@ -875,35 +889,47 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     const sqlOutcome = outcomes.find(outcome => outcome.nodeId === 'sqlGenerator');
     const supervisor = outcomes.find(outcome => outcome.nodeId === 'supervisor');
     if (sqlRunner && sqlOutcome && supervisor) {
-      const applicable = new Set(buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance)
-        .filter(row => row.applicable).map(row => row.node));
-      const cross = await verifyCrossPass(sqlRunner, {
-        sqlGenerator: applicable.has('sqlGenerator') ? sqlOutcome.chosenRung : undefined,
-        supervisor: applicable.has('supervisor') ? supervisor.chosenRung : undefined,
-      }, sqlOutcome.baseline.metric, epsByNode.get('sqlGenerator')!);
-      console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}${cross.revertSupervisor ? ' (supervisor reverted)' : ''}`);
-      if (cross.revertSupervisor) {
-        supervisor.chosen = supervisor.baseline;
-        supervisor.chosenRung = undefined;
+      const [sqlRow, supervisorRow] = buildRefreshRows([sqlOutcome, supervisor], epsByNode, provenance, failuresByNode);
+      if (supervisorRow.applicable) {
+        const sqlPick = sqlRow.applicable ? sqlOutcome.chosenRung : undefined;
+        const comparator = sqlPick ? sqlOutcome.chosen : sqlOutcome.baseline;
+        const comparatorProfile = sqlPick ? sqlRow.recommended : sqlRow.current;
+        if (sqlRow.failureCounts.some(failure => failure.profile === comparatorProfile && failure.category !== 'candidate')) {
+          blocked.add('supervisor');
+        } else {
+          const runPaired = async () => {
+            const run = await sqlRunner();
+            recordFailures('supervisor', `${profileOf('sqlGenerator')} + ${profileOf('supervisor')}`, run);
+            return run;
+          };
+          const cross = await verifyCrossPass(runPaired, { sqlGenerator: sqlPick, supervisor: supervisor.chosenRung },
+            comparator.metric, sqlRow.eps, comparator.exhaustionRate);
+          const pairedInfrastructureFailure = failuresByNode.get('supervisor')?.some(failure => failure.category !== 'candidate');
+          if (cross.revertSupervisor && !pairedInfrastructureFailure) {
+            supervisor.chosen = supervisor.baseline;
+            supervisor.chosenRung = undefined;
+          }
+          console.log(`SQL cross-pass equivalence: ${cross.metric.toFixed(3)}, exhaustion: ${cross.exhaustionRate.toFixed(3)}`);
+        }
       }
     }
 
-    const rows = buildRefreshRows(outcomes, epsByNode, provenance);
-    await writeRefreshReport(join('benchmarks', 'results'), rows, { date: runDate, setVersion, setHash, provenance });
-    console.log(`\nReport written to benchmarks/results/${runDate}-model-refresh.md and .json`);
+    const rows = buildRefreshRows(outcomes, epsByNode, provenance, failuresByNode, blocked);
+    await writeRefreshReport(resultsDir, rows, { date: runDate, setVersion, setHash, provenance });
+    console.log(`\nReport written to ${join(resultsDir, `${runDate}-model-refresh.md`)} and .json`);
   } finally {
     if (previous === undefined) delete process.env.NODE_PROFILE_OVERRIDES;
     else process.env.NODE_PROFILE_OVERRIDES = previous;
   }
 }
 
-async function main() {
+export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
   const runDate = formatDate(new Date());
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseArgs(argv);
   const apiKey = process.env.GEMINI_API_KEY;
   if (args.corpus === 'template') {
     if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
-    await runTemplateSweep(args.nodes, apiKey, runDate);
+    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir);
     return;
   }
   const projectId = process.env.GCP_PROJECT_ID;

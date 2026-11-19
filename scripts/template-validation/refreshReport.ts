@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import { resolveModelId } from '../../src/agents/modelConfig.js';
 import { defaultProfileForNode, type NodeId } from '../../src/agents/nodeProfiles.js';
 import type { NodeOutcome } from '../node-sweep.js';
+import type { SweepFailure } from '../node-sweep-types.js';
 import type { Provenance } from './labelQuorum.js';
+
+export type ProfileFailureCount = SweepFailure & { profile: string; count: number };
 
 export interface RefreshRow {
   node: NodeId;
@@ -16,6 +19,8 @@ export interface RefreshRow {
   costDelta: number;
   p95Ms: number;
   applicable: boolean;
+  applicationReason?: string;
+  failureCounts: ProfileFailureCount[];
   flatAtFloor: boolean;
   quorumMemberWinner: boolean;
 }
@@ -36,6 +41,7 @@ const signal: Record<NodeId, RefreshRow['signal']> = {
 
 export function buildRefreshRows(
   outcomes: NodeOutcome[], epsByNode: Map<NodeId, number>, provenance: Provenance,
+  failuresByNode = new Map<NodeId, ProfileFailureCount[]>(), blocked = new Set<NodeId>(),
 ): RefreshRow[] {
   const quorumModels = new Set(provenance.members.flatMap(member => [member.requestedModel, ...member.reportedModels]));
   return outcomes.map(({ nodeId: node, baseline, chosen, chosenRung, stage1, stage2 }) => {
@@ -50,10 +56,14 @@ export function buildRefreshRows(
     const metrics = [...stage1, ...stage2].map(point => point.metric);
     const max = Math.max(...metrics);
     const flatAtFloor = max - Math.min(...metrics) <= eps && max < 0.9;
+    const failureCounts = failuresByNode.get(node) ?? [];
+    const infrastructureFailure = blocked.has(node) || failureCounts.some(failure => failure.category !== 'candidate');
     return {
       node, current, recommended, currentMetric: baseline.metric, recommendedMetric: chosen.metric,
       eps, signal: signal[node], costDelta: chosen.cost - baseline.cost, p95Ms: chosen.p95LatencyMs,
-      applicable: eps <= 0.05 && !flatAtFloor && recommended !== current,
+      applicable: !infrastructureFailure && eps <= 0.05 && !flatAtFloor && recommended !== current,
+      ...(infrastructureFailure && { applicationReason: 'Infrastructure failures affected the comparison.' }),
+      failureCounts,
       flatAtFloor, quorumMemberWinner: quorumModels.has(recommendedModel),
     };
   });
@@ -68,16 +78,22 @@ export function renderRefreshReport(rows: RefreshRow[], meta: RefreshMeta): stri
   lines.push(
     `# Model refresh · ${meta.date}`, '',
     `Validation set ${meta.setVersion} · ${meta.setHash}`, '',
-    '| Node | Current | Recommended | Current metric | Recommended metric | ε | Signal | Cost Δ (USD) | p95 (ms) | Applicable | Flat at floor | Quorum member | Set version | Set hash |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Node | Current | Recommended | Current metric | Recommended metric | ε | Signal | Cost Δ (USD) | p95 (ms) | Applicable | Reason | Flat at floor | Quorum member | Set version | Set hash |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
   );
   for (const row of rows) {
     lines.push(`| ${[
       row.node, row.current, row.recommended, row.currentMetric.toFixed(3), row.recommendedMetric.toFixed(3),
-      row.eps.toFixed(4), row.signal, row.costDelta.toExponential(2), row.p95Ms, row.applicable,
+      row.eps.toFixed(4), row.signal, row.costDelta.toExponential(2), row.p95Ms, row.applicable, row.applicationReason ?? '',
       row.flatAtFloor, row.quorumMemberWinner, meta.setVersion, meta.setHash,
     ].join(' | ')} |`);
   }
+  const failureLines = rows.flatMap(row => row.failureCounts.map(({ profile, category, code, count }) =>
+    `| ${row.node} | ${profile} | ${category} / ${code} | ${count} |`));
+  if (failureLines.length) lines.push(
+    '', '## Item failures by profile', '',
+    '| Node | Profile | Category / code | Count |', '| --- | --- | --- | --- |', ...failureLines,
+  );
   return lines.join('\n') + '\n';
 }
 
