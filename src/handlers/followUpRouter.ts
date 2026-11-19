@@ -12,6 +12,7 @@ import { executeQuery } from '../execution/runner.js';
 import { reviewSql } from '../agents/supervisorAgent.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { createTraceId } from '../logging.js';
+import { formatValue } from '../slack/blocks.js';
 
 export async function routeFollowUp(
   intent: FollowUpIntent,
@@ -103,7 +104,7 @@ export async function routeFollowUp(
         });
 
         const rowSummary = result.rows.slice(0, 10)
-          .map(row => Object.entries(row).map(([k, v]) => `${k}: ${String(v)}`).join(', '))
+          .map(row => Object.entries(row).map(([k, v]) => `${k}: ${formatValue(v)}`).join(', '))
           .join('\n');
 
         await client.chat.update({
