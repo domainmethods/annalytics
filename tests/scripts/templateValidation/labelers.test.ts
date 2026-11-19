@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildArgv,
   checkAvailable,
@@ -10,6 +10,7 @@ import {
   parseLabelerOutput,
   runLabeler,
   type LabelerConfig,
+  type SpawnFn,
 } from '../../../scripts/template-validation/labelers.js';
 
 const cfg: LabelerConfig = {
@@ -143,11 +144,16 @@ it.each([
 
 it('passes a compatible Codex schema through unchanged', async () => {
   const stdout = readFileSync(new URL('../../fixtures/labeler-output/codex.txt', import.meta.url), 'utf8');
-  const result = await runLabeler(codexConfig, { ...batch, schema: closedSchema }, async (_cmd, args) => {
+  const spawn = vi.fn<SpawnFn>(async (_cmd, args) => {
     expect(JSON.parse(readFileSync(args[1], 'utf8'))).toEqual(closedSchema);
     return { stdout, code: 0 };
-  }, cacheDir);
-  expect(result).toMatchObject({ value: { answer: 'ok' }, cached: false });
+  });
+  const scopedBatch = { ...batch, schema: closedSchema };
+  await expect(runLabeler(codexConfig, scopedBatch, spawn, cacheDir))
+    .resolves.toMatchObject({ value: { answer: 'ok' }, cached: false });
+  await expect(runLabeler(codexConfig, scopedBatch, spawn, cacheDir))
+    .resolves.toMatchObject({ value: { answer: 'ok' }, cached: true });
+  expect(spawn).toHaveBeenCalledTimes(1);
 });
 
 it('loads the isolation note for each shipped labeler', () => {
@@ -199,11 +205,12 @@ it.each([
 it.each([
   { type: 'array', items: { type: 'string' } },
   { ...closedSchema, anyOf: [closedSchema] },
-])('rejects an incompatible Codex root before spawn (%j)', async (rootSchema) => {
+])('rejects an incompatible Codex root before cache reads or spawn (%j)', async (rootSchema) => {
   const spawn = vi.fn(async () => success);
-  const result = runLabeler(codexConfig, { ...batch, schema: rootSchema }, spawn, cacheDir);
-  await expect(result).rejects.toBeInstanceOf(LabelerOutputError);
-  await expect(result).rejects.toThrow(/root.*object.*anyOf/i);
+  const scopedBatch = { ...batch, schema: rootSchema };
+  await expect(runLabeler(codexConfig, scopedBatch, spawn, cacheDir)).rejects.toThrow(/root.*object.*anyOf/i);
+  mkdirSync(join(cacheDir, codexConfig.id, codexConfig.model, 'example-key.json'), { recursive: true });
+  await expect(runLabeler(codexConfig, scopedBatch, spawn, cacheDir)).rejects.toThrow(/root.*object.*anyOf/i);
   expect(spawn).not.toHaveBeenCalled();
 });
 
@@ -228,51 +235,89 @@ function formattedBatch(format: string) {
   return { ...batch, schema: { ...schema, properties: { answer: { type: 'string', format } } } };
 }
 
-it.each(['fresh', 'cached'] as const)('rejects invalid E.164 in %s labeler output', async (source) => {
-  const value = { answer: '+01234567' };
-  const spawn = vi.fn(async () => ({
-    stdout: JSON.stringify({ type: 'result', subtype: 'success', structured_output: value }),
-    code: 0,
-  }));
-  if (source === 'cached') {
-    const modelCache = join(cacheDir, cfg.id, cfg.model);
-    mkdirSync(modelCache, { recursive: true });
-    writeFileSync(join(modelCache, 'example-key.json'), JSON.stringify({ value }));
+it.each([
+  ['guid', '44631d48-0490-4afe-b7d7-a3f683cb028d'],
+  ['mac', '02:00:00:00:00:01'],
+  ['cidr', '192.0.2.0/24'],
+  ['cidr-v6', '2001:db8::/32'],
+  ['base64', 'b2s='],
+  ['base64url', 'b2s'],
+  ['e164', '+12025550123'],
+  ['jwt', 'eyJhbGciOiJIUzI1NiJ9.e30.c2ln'],
+  ['emoji', '🍎'],
+  ['nanoid', 'V1StGXR8_Z5jdHi6B-myT'],
+  ['cuid', 'cjld2cjxh0000qzrmn831i7rn'],
+  ['cuid2', 'tz4a98xxat96iws9zmbrgj3a'],
+  ['ulid', '01ARZ3NDEKTSV4RRFFQ69G5FAV'],
+  ['xid', '9m4e2mr0ui3e8a215n4g'],
+  ['ksuid', '0ujtsYcgvSTl8PAuAdqWYSMnLOv'],
+])('enforces %s on fresh and cached labeler output', async (format, answer) => {
+  const scopedBatch = formattedBatch(format);
+  const value = { answer };
+  const invalid = { answer: format === 'e164' ? '+01234567' : '!' };
+  const spawn = vi.fn<SpawnFn>();
+  for (const response of [invalid, value]) {
+    spawn.mockResolvedValueOnce({
+      stdout: JSON.stringify({ type: 'result', subtype: 'success', structured_output: response }),
+      code: 0,
+    });
   }
-  await expect(runLabeler(cfg, formattedBatch('e164'), spawn, cacheDir)).rejects.toThrow(LabelerOutputError);
-  expect(spawn).toHaveBeenCalledTimes(source === 'fresh' ? 1 : 0);
-  if (source === 'fresh') expect(readdirSync(cacheDir)).toEqual([]);
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).rejects.toThrow(/response did not match/i);
+  expect(readdirSync(cacheDir)).toEqual([]);
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value, cached: false });
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value, cached: true });
+  writeFileSync(join(cacheDir, cfg.id, cfg.model, 'example-key.json'), JSON.stringify({ value: invalid }));
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).rejects.toThrow(/response did not match/i);
+  expect(spawn).toHaveBeenCalledTimes(2);
 });
 
-it('accepts a valid E.164 number', async () => {
-  const value = { answer: '+12025550123' };
-  const stdout = JSON.stringify({ type: 'result', subtype: 'success', structured_output: value });
-  await expect(runLabeler(cfg, formattedBatch('e164'), async () => ({ stdout, code: 0 }), cacheDir))
-    .resolves.toEqual({ value, cached: false });
-});
-
-it.each(['unknown-labeler-format', 'binary', 'password'])('rejects unsupported format %s before spawn', async (format) => {
-  const spawn = vi.fn(async () => success);
-  await expect(runLabeler(cfg, formattedBatch(format), spawn, cacheDir)).rejects.toThrow(/format/i);
-  expect(spawn).not.toHaveBeenCalled();
-});
-
-it('rejects an unsupported format in an unused schema definition', async () => {
-  const unsupportedSchema = {
+const unknownFormat = { type: 'string', format: 'unknown-labeler-format' };
+const unsupportedSchemas = [
+  ['an unregistered format', formattedBatch(unknownFormat.format).schema, unknownFormat.format],
+  ['an annotation-only binary format', formattedBatch('binary').schema, 'binary'],
+  ['an annotation-only password format', formattedBatch('password').schema, 'password'],
+  ['a $ref into examples', {
     ...schema,
-    $defs: { unused: { type: 'string', format: 'unknown-labeler-format' } },
-  };
-  const spawn = vi.fn(async () => success);
-  await expect(runLabeler(cfg, { ...batch, schema: unsupportedSchema }, spawn, cacheDir))
-    .rejects.toThrow(/format.*unknown-labeler-format/i);
-  expect(spawn).not.toHaveBeenCalled();
+    properties: { answer: { $ref: '#/examples/0' } },
+    examples: [unknownFormat],
+  }, unknownFormat.format],
+  ['a $ref into $defs', {
+    ...schema,
+    properties: { answer: { $ref: '#/$defs/answer' } },
+    $defs: { answer: unknownFormat },
+  }, unknownFormat.format],
+  ['a $ref into draft-07 definitions', {
+    ...schema,
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    properties: { answer: { $ref: '#/definitions/answer' } },
+    definitions: { answer: unknownFormat },
+  }, unknownFormat.format],
+  ['a format in an allOf inside items', {
+    ...schema,
+    properties: { answer: { type: 'array', items: { allOf: [unknownFormat] } } },
+  }, unknownFormat.format],
+] as const;
+
+describe.each(['cache miss', 'unreadable cache entry'] as const)('%s', (cacheState) => {
+  it.each(unsupportedSchemas)('rejects %s before cache reads or spawn', async (_case, responseSchema, format) => {
+    if (cacheState === 'unreadable cache entry') {
+      // Reading a directory as a cache file fails before JSON parsing.
+      mkdirSync(join(cacheDir, cfg.id, cfg.model, 'example-key.json'), { recursive: true });
+    }
+    const spawn = vi.fn(async () => success);
+    const result = runLabeler(cfg, { ...batch, schema: responseSchema }, spawn, cacheDir);
+    await expect(result).rejects.toBeInstanceOf(LabelerOutputError);
+    await expect(result).rejects.toThrow(new RegExp(`format "${format}"`, 'i'));
+    expect(spawn).not.toHaveBeenCalled();
+  });
 });
 
 it('accepts a schema with overlapping named and pattern properties', async () => {
   const overlappingSchema = { ...schema, patternProperties: { '^a': { type: 'string' } } };
   const spawn = vi.fn(async () => success);
-  await expect(runLabeler(cfg, { ...batch, schema: overlappingSchema }, spawn, cacheDir))
-    .resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  const scopedBatch = { ...batch, schema: overlappingSchema };
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value: { answer: 'ok' }, cached: true });
   expect(spawn).toHaveBeenCalledTimes(1);
 });
 
@@ -280,20 +325,12 @@ it('ignores custom schema annotations and their contents', async () => {
   const annotatedSchema = {
     ...schema,
     'x-labeler-note': { format: 'documentation-only' },
+    examples: [{ format: 'documentation-only' }],
     properties: { answer: { type: 'string', reviewerNote: 'Example answer' } },
   };
   const spawn = vi.fn(async () => success);
-  await expect(runLabeler(cfg, { ...batch, schema: annotatedSchema }, spawn, cacheDir))
-    .resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  const scopedBatch = { ...batch, schema: annotatedSchema };
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value: { answer: 'ok' }, cached: false });
+  await expect(runLabeler(cfg, scopedBatch, spawn, cacheDir)).resolves.toEqual({ value: { answer: 'ok' }, cached: true });
   expect(spawn).toHaveBeenCalledTimes(1);
-});
-
-it('rejects an unknown format before reading the cache or spawning', async () => {
-  const modelCache = join(cacheDir, cfg.id, cfg.model);
-  mkdirSync(modelCache, { recursive: true });
-  writeFileSync(join(modelCache, 'example-key.json'), 'invalid JSON');
-  const spawn = vi.fn(async () => success);
-  await expect(runLabeler(cfg, formattedBatch('unknown-labeler-format'), spawn, cacheDir))
-    .rejects.toThrow(/unsupported response schema format "unknown-labeler-format"/i);
-  expect(spawn).not.toHaveBeenCalled();
 });

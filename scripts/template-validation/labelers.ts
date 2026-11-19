@@ -203,24 +203,26 @@ const zodResponseFormats = {
 };
 
 function compileResponseSchema(schema: Record<string, unknown>): ValidateFunction {
-  const options = { strict: false, ownProperties: true };
+  // Ajv throws for unknown formats in 'log' mode and only logs unknown keywords.
+  const options = { strict: false, strictSchema: 'log', logger: false, allowMatchingProperties: true, ownProperties: true } as const;
   const dialect = schema.$schema;
   const ajv = dialect === 'http://json-schema.org/draft-04/schema#' ? new AjvDraft4(options)
     : dialect === 'http://json-schema.org/draft-07/schema#' ? new Ajv(options)
       : new Ajv2020(options);
   addFormats(ajv);
+  for (const [format, definition] of Object.entries(ajv.formats)) {
+    if (definition === true) ajv.formats[format] = undefined;
+  }
   for (const [format, check] of Object.entries(zodResponseFormats)) {
     ajv.addFormat(format, (value: string) => check.safeParse(value).success);
   }
-  visitSchemaNodes(schema, (node, path) => {
-    if (!Object.hasOwn(node, 'format')) return;
-    const { format } = node;
-    // Ajv skips unused definitions and accepts true-valued formats as annotations.
-    if (typeof format !== 'string' || !Object.hasOwn(ajv.formats, format) || ajv.formats[format] === true) {
-      throw new LabelerOutputError(`Unsupported response schema format "${String(format)}" at ${path}`);
-    }
-  });
-  const validator = ajv.compile(schema);
+  let validator: ValidateFunction;
+  try {
+    validator = ajv.compile(schema);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new LabelerOutputError(`Invalid response schema: ${message}`, { cause: error });
+  }
   if ('$async' in validator && validator.$async) {
     throw new LabelerOutputError('Async response schemas are unsupported');
   }
