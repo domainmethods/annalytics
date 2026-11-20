@@ -253,6 +253,21 @@ function isAllowedChain(segments: string[]): boolean {
     TV_TABLES.some((table) => table === segments[tableIndex]);
 }
 
+/**
+ * True when the FROM at `index` is the keyword inside EXTRACT(part FROM expr): exactly one
+ * date-part name (optionally WEEK(<weekday>)) between `EXTRACT(` and the FROM. Any other
+ * FROM, including prose such as "extract (from x.y)", still starts a table list.
+ */
+function isExtractKeywordFrom(tokens: ScanToken[], index: number): boolean {
+  if (!/^FROM$/i.test(tokens[index]?.value ?? '') || tokens[index].kind !== 'name') return false;
+  let part = index - 1;
+  if (tokens[part]?.value === ')' && tokens[part - 1]?.kind === 'name' && tokens[part - 2]?.value === '(') {
+    part -= 3;
+  }
+  return tokens[part]?.kind === 'name' && tokens[part - 1]?.value === '(' &&
+    /^EXTRACT$/i.test(tokens[part - 2]?.value ?? '');
+}
+
 function collectReferences(
   text: string, references: Set<string>, serializedApostrophes = false, ordinaryQuotes = false,
 ): void {
@@ -301,9 +316,11 @@ function collectReferences(
       }
 
       if (segments.length >= 2) {
-        const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
         const standaloneNumber = !hyphenAttached && segments.every((segment) => /^\d+$/.test(segment));
         const prefix = tablePrefix || attachedPrefix;
+        // An unquoted run of digits ("from 13.0%") is a number, not a table name.
+        const bareNumber = standaloneNumber && !quoted && !prefix;
+        const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
         if ((namesTable || (segments.length >= 3 && !standaloneNumber)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));
@@ -318,11 +335,14 @@ function collectReferences(
     } else if (token.value === '(') {
       fromLists.push(tablePosition);
     } else if (token.value === ')') {
-      if (depth > 0) fromLists.pop();
-      else fromLists[0] = false;
+      if (depth > 0) {
+        fromLists.pop();
+      } else fromLists[0] = false;
       tablePosition = false;
     } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
       fromLists[depth] = false;
+      tablePosition = false;
+    } else if (isExtractKeywordFrom(tokens, index)) {
       tablePosition = false;
     } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;
