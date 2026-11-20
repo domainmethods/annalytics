@@ -137,6 +137,9 @@ it.each([
   ['FROM private_dataset . customers', 'private_dataset.customers'],
   ['FROM private_dataset .customers', 'private_dataset.customers'],
   ['FROM private_dataset. /* note */ customers', 'private_dataset.customers'],
+  ['FROM private_dataset. -- note\n customers', 'private_dataset.customers'],
+  ['FROM private_dataset. customers', 'private_dataset.customers'],
+  ['FROM private_dataset.\n  customers', 'private_dataset.customers'],
   ['FROM `private_dataset`. customers', 'private_dataset.customers'],
   ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
@@ -182,6 +185,8 @@ it.each([
   'Revenue grew from 1.25 to 3.5 million.',
   'Take the site from product_distribution_center_id. SQL:\nSELECT 1 FROM tv_thelook.orders',
   'Start from private_dataset. Then join the rest.',
+  // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.
+  'FROM private_dataset. Customers',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });

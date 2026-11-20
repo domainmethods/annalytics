@@ -315,8 +315,12 @@ function collectReferences(
         if (!next || next.kind === 'syntax') break;
         const unquotedPair = previous.kind !== 'quoted' && next.kind !== 'quoted';
         if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
-        // "from some_column. SQL:" ends a sentence; a spaced `dataset . table` still joins.
-        if (!dot.spaceBefore && next.spaceBefore && !next.commentBefore && unquotedPair) break;
+        // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
+        // whitespace (not a comment) follows, and the next word is capitalized. A spaced
+        // `dataset . table`, a wrapped `dataset.\n  table` and `dataset. table` still join.
+        // Deliberate gap: `FROM dataset. Table` (capitalized after the dot) is not flagged.
+        if (tablePosition && !dot.spaceBefore && next.spaceBefore && !next.commentBefore &&
+            unquotedPair && /^[A-Z]/.test(next.value)) break;
         segments.push(next.value);
         quoted ||= next.kind === 'quoted';
         previous = next;
