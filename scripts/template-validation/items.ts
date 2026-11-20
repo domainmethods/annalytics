@@ -319,7 +319,7 @@ function collectReferences(
 
     // EXTRACT(part FROM expr) has one FROM. A SELECT or WITH at that depth means the
     // parenthesis was never closed, so later FROMs must scan as table lists again.
-    if (extractLists[depth] && /^(?:SELECT|WITH)$/i.test(token.value)) extractLists[depth] = false;
+    if (extractLists[depth] && token.kind !== 'quoted' && /^(?:SELECT|WITH)$/i.test(token.value)) extractLists[depth] = false;
     if (token.kind === 'quoted') {
       tablePosition = false;
     } else if (token.value === '(') {
