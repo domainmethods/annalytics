@@ -136,8 +136,9 @@ it.each([
   ['Join two acme tables: acme.analytics.orders', 'acme.analytics.orders'],
   ['FROM private_dataset . customers', 'private_dataset.customers'],
   ['FROM private_dataset .customers', 'private_dataset.customers'],
-  ['FROM private_dataset. /* note */ customers', 'private_dataset.customers'],
-  ['FROM private_dataset. -- note\n customers', 'private_dataset.customers'],
+  // Capitalized after the comment, so only the comment keeps these from reading as sentence ends.
+  ['FROM private_dataset. /* note */ Customers', 'private_dataset.Customers'],
+  ['FROM private_dataset. -- note\n Customers', 'private_dataset.Customers'],
   ['FROM private_dataset. customers', 'private_dataset.customers'],
   ['FROM private_dataset.\n  customers', 'private_dataset.customers'],
   ['FROM `private_dataset`. customers', 'private_dataset.customers'],
