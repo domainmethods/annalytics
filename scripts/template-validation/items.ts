@@ -135,6 +135,8 @@ type ScanToken = {
   value: string;
   kind: 'name' | 'quoted' | 'syntax';
   spaceBefore: boolean;
+  // A comment sat in the gap before this token (a comment is not a sentence break).
+  commentBefore?: true;
   quotedHyphen?: true;
 };
 
@@ -178,6 +180,7 @@ function tokenizeReferences(
   let ambiguousApostrophe = false;
   let ambiguousTripleQuote = false;
   let spaceBefore = false;
+  let commentBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
     publicProjectToken.lastIndex = start;
@@ -192,6 +195,7 @@ function tokenizeReferences(
         value.startsWith('--') ? value.slice(2) : value.slice(1);
       collectReferences(body, references, false, ordinaryQuotes);
       spaceBefore = true;
+      commentBefore = true;
       continue;
     }
     if (value === '"' || value === "'" || value === '\\"') {
@@ -233,13 +237,15 @@ function tokenizeReferences(
             tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
             spaceBefore = false;
           }
+          commentBefore = false;
           continue;
         }
       }
     }
     const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
-    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore });
+    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore, ...(commentBefore && { commentBefore: true }) });
     spaceBefore = false;
+    commentBefore = false;
   }
   return { tokens, ambiguousApostrophe, ambiguousTripleQuote };
 }
@@ -307,8 +313,14 @@ function collectReferences(
         const dot = tokens[index + 1];
         const next = tokens[index + 2];
         if (!next || next.kind === 'syntax') break;
-        if (!tablePosition && (dot.spaceBefore || next.spaceBefore) &&
-            previous.kind !== 'quoted' && next.kind !== 'quoted') break;
+        const unquotedPair = previous.kind !== 'quoted' && next.kind !== 'quoted';
+        if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
+        // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
+        // whitespace (not a comment) follows, and the next word is capitalized. A spaced
+        // `dataset . table`, a wrapped `dataset.\n  table` and `dataset. table` still join.
+        // Deliberate gap: `FROM dataset. Table` (capitalized after the dot) is not flagged.
+        if (tablePosition && !dot.spaceBefore && next.spaceBefore && !next.commentBefore &&
+            unquotedPair && /^[A-Z]/.test(next.value)) break;
         segments.push(next.value);
         quoted ||= next.kind === 'quoted';
         previous = next;

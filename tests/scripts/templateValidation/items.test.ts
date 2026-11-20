@@ -135,6 +135,13 @@ it.each([
   [JSON.stringify({ text: 'Pull data from the acme warehouse: acme.analytics.orders' }), 'acme.analytics.orders'],
   ['Join two acme tables: acme.analytics.orders', 'acme.analytics.orders'],
   ['FROM private_dataset . customers', 'private_dataset.customers'],
+  ['FROM private_dataset .customers', 'private_dataset.customers'],
+  // Capitalized after the comment, so only the comment keeps these from reading as sentence ends.
+  ['FROM private_dataset. /* note */ Customers', 'private_dataset.Customers'],
+  ['FROM private_dataset. -- note\n Customers', 'private_dataset.Customers'],
+  ['FROM private_dataset. customers', 'private_dataset.customers'],
+  ['FROM private_dataset.\n  customers', 'private_dataset.customers'],
+  ['FROM `private_dataset`. customers', 'private_dataset.customers'],
   ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
@@ -177,6 +184,10 @@ it.each([
   'select extract(isoweek from o.created_at) from tv_thelook.orders o',
   'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
   'Revenue grew from 1.25 to 3.5 million.',
+  'Take the site from product_distribution_center_id. SQL:\nSELECT 1 FROM tv_thelook.orders',
+  'Start from private_dataset. Then join the rest.',
+  // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.
+  'FROM private_dataset. Customers',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });
