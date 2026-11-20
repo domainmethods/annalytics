@@ -355,7 +355,10 @@ function collectReferences(
         fromLists.pop();
       } else fromLists[0] = false;
       tablePosition = false;
-    } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
+    // A SELECT at this depth starts a new query, so any open FROM list has ended. WITH only
+    // ends one in table position, since `UNNEST(x) WITH OFFSET` sits inside a FROM list.
+    } else if (endFrom.test(token.value) || /^SELECT$/i.test(token.value) ||
+        (tablePosition && /^WITH$/i.test(token.value))) {
       fromLists[depth] = false;
       tablePosition = false;
     } else if (isExtractKeywordFrom(tokens, index)) {
