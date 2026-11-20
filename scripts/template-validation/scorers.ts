@@ -85,8 +85,8 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 }
 
 // dbt run statuses as a conversational answer words them.
-// A status word naming a rate ("pass rate", "error rate was 0%") reports a metric, not a status.
-const NOT_A_RATE = /(?!\s+rates?\b)/.source;
+// A status word naming a rate ("pass rate", "error-rate was 0%") reports a metric, not a status.
+const NOT_A_RATE = /(?![\s-]+rates?\b)/.source;
 const statusPattern = (words: string) => new RegExp(`\\b(?:${words})\\b${NOT_A_RATE}`, 'g');
 const STATUS_WORDS = new Map<string, RegExp>([
   ['success', statusPattern('success(?:es|ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?')],
