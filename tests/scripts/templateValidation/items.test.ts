@@ -95,6 +95,8 @@ it.each([
   ['SELECT EXTRACT(YEAR FROM u.created_at) FROM private_dataset.customers u', 'private_dataset.customers'],
   ['SELECT EXTRACT(YEAR FROM (SELECT MAX(x) FROM private_dataset.customers))', 'private_dataset.customers'],
   ['FROM `123.456`', '123.456'],
+  ['Use EXTRACT(YEAR FROM d FROM private_dataset.customers', 'private_dataset.customers'],
+  ['Use EXTRACT( then SELECT * FROM private_dataset.customers', 'private_dataset.customers'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
   ['Read warehouse-12345.45678.20261118 for the daily snapshot.', '12345.45678.20261118'],
   ['`acme-prod.analytics.orders`', 'acme-prod.analytics.orders'],
