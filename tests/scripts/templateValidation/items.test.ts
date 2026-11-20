@@ -143,6 +143,12 @@ it.each([
   ['FROM private_dataset.\n  customers', 'private_dataset.customers'],
   ['FROM `private_dataset`. customers', 'private_dataset.customers'],
   ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
+  // The IAM-permission exemption covers only an unquoted bigquery.<resource>.<verb> after "Permission".
+  ['Permission acme.analytics.orders denied', 'acme.analytics.orders'],
+  ['Permission `bigquery.tables.update` denied', 'bigquery.tables.update'],
+  ['Permission bigquery.tables.update.extra denied', 'bigquery.tables.update.extra'],
+  ['Use bigquery.tables.update for this', 'bigquery.tables.update'],
+  ['Permission denied: SELECT * FROM bigquery.tables.update', 'bigquery.tables.update'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
 });
@@ -188,6 +194,8 @@ it.each([
   'Start from private_dataset. Then join the rest.',
   // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.
   'FROM private_dataset. Customers',
+  'Access Denied: Table tv_thelook.distribution_centers: Permission bigquery.tables.update denied on table tv_thelook.distribution_centers',
+  'Missing permissions bigquery.jobs.create',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });

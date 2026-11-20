@@ -333,7 +333,10 @@ function collectReferences(
         // An unquoted run of digits ("from 13.0%") is a number, not a table name.
         const bareNumber = standaloneNumber && !quoted && !prefix;
         const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
-        if ((namesTable || (segments.length >= 3 && !standaloneNumber)) &&
+        // "Permission bigquery.tables.update denied" names an IAM permission, not a table.
+        const iamPermission = !namesTable && !prefix && segments.length === 3 && segments[0] === 'bigquery' &&
+          /^permissions?$/i.test(tokens[index - segments.length * 2 + 1]?.value ?? '');
+        if ((namesTable || (segments.length >= 3 && !standaloneNumber && !iamPermission)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));
         }
