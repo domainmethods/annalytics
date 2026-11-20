@@ -37,6 +37,7 @@ export interface NodeProfile {
 // are NOT provisional — they encode real domain knowledge: flash for classify/format,
 // pro for generate/review). Thinking scales with the openness of the reasoning —
 //   minimal → closed-set classification / structured extraction / reformatting
+//             (the three classifiers above are excepted: PROVISIONAL at low)
 //   low     → light judgment over provided context
 //   default → hard open generation & critique (let the model manage its own budget)
 // dbtStatus/chart/summaryOverride stay at flash/3 (un-measured: the universal corpus
