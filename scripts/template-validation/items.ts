@@ -306,6 +306,7 @@ function collectReferences(
         index += 2;
       }
 
+      const chainStart = index;
       const segments = [previous.value];
       let quoted = previous.kind === 'quoted';
 
@@ -335,7 +336,7 @@ function collectReferences(
         const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
         // "Permission bigquery.tables.update denied" names an IAM permission, not a table.
         const iamPermission = !namesTable && !prefix && segments.length === 3 && segments[0] === 'bigquery' &&
-          /^permissions?$/i.test(tokens[index - segments.length * 2 + 1]?.value ?? '');
+          /^permissions?$/i.test(tokens[chainStart - 1]?.value ?? '');
         if ((namesTable || (segments.length >= 3 && !standaloneNumber && !iamPermission)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));

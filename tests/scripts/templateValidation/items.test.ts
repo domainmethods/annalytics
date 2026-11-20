@@ -148,6 +148,7 @@ it.each([
   ['Permission `bigquery.tables.update` denied', 'bigquery.tables.update'],
   ['Permission bigquery.tables.update.extra denied', 'bigquery.tables.update.extra'],
   ['Use bigquery.tables.update for this', 'bigquery.tables.update'],
+  ['Permission foo-bigquery.tables.update denied', 'bigquery.tables.update'],
   ['Permission denied: SELECT * FROM bigquery.tables.update', 'bigquery.tables.update'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
