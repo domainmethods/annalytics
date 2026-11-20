@@ -217,6 +217,7 @@ it.each([
   'select extract(isoweek from o.created_at) from tv_thelook.orders o',
   'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
   'Revenue grew from 1.25 to 3.5 million.',
+  'Take the site from product_distribution_center_id. SQL:',
   'Take the site from product_distribution_center_id. SQL:\nSELECT 1 FROM tv_thelook.orders',
   'Start from private_dataset. Then join the rest.',
   // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.

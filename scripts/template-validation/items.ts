@@ -350,7 +350,7 @@ function collectReferences(
         if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
         // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
         // whitespace (not a comment) follows, and the next word is capitalized. A spaced
-        // `dataset . table`, a wrapped `dataset.\n  table` and `dataset. table` still join.
+        // `dataset . table`, a wrapped `dataset.\n  table` and a lowercase `dataset. table` still join.
         // Deliberate gap: `FROM dataset. Table` (capitalized after the dot) is not flagged.
         if (tablePosition && !dot.spaceBefore && next.spaceBefore && !next.commentBefore &&
             unquotedPair && /^[A-Z]/.test(next.value)) break;
