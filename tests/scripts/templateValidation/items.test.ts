@@ -97,6 +97,8 @@ it.each([
   ['FROM `123.456`', '123.456'],
   ['Use EXTRACT(YEAR FROM d FROM private_dataset.customers', 'private_dataset.customers'],
   ['Use EXTRACT( then SELECT * FROM private_dataset.customers', 'private_dataset.customers'],
+  ['We extract (from private_dataset.customers) the rows.', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR, MONTH FROM private_dataset.customers)', 'private_dataset.customers'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
   ['Read warehouse-12345.45678.20261118 for the daily snapshot.', '12345.45678.20261118'],
   ['`acme-prod.analytics.orders`', 'acme-prod.analytics.orders'],
@@ -171,6 +173,8 @@ it.each([
   'SELECT o.price-u.cost FROM tv_thelook.orders o JOIN tv_thelook.users u ON TRUE',
   'SELECT EXTRACT(YEAR FROM u.created_at) AS signup_year FROM tv_thelook.users u',
   'SELECT EXTRACT(DATE FROM o.created_at AT TIME ZONE "UTC") FROM tv_thelook.orders o',
+  'SELECT EXTRACT(WEEK(MONDAY) FROM o.created_at) FROM tv_thelook.orders o',
+  'select extract(isoweek from o.created_at) from tv_thelook.orders o',
   'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
   'Revenue grew from 1.25 to 3.5 million.',
 ])('allows %s', (text) => {

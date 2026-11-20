@@ -253,14 +253,27 @@ function isAllowedChain(segments: string[]): boolean {
     TV_TABLES.some((table) => table === segments[tableIndex]);
 }
 
+/**
+ * True when the FROM at `index` is the keyword inside EXTRACT(part FROM expr): exactly one
+ * date-part name (optionally WEEK(<weekday>)) between `EXTRACT(` and the FROM. Any other
+ * FROM, including prose such as "extract (from x.y)", still starts a table list.
+ */
+function isExtractKeywordFrom(tokens: ScanToken[], index: number): boolean {
+  if (!/^FROM$/i.test(tokens[index]?.value ?? '') || tokens[index].kind !== 'name') return false;
+  let part = index - 1;
+  if (tokens[part]?.value === ')' && tokens[part - 1]?.kind === 'name' && tokens[part - 2]?.value === '(') {
+    part -= 3;
+  }
+  return tokens[part]?.kind === 'name' && tokens[part - 1]?.value === '(' &&
+    /^EXTRACT$/i.test(tokens[part - 2]?.value ?? '');
+}
+
 function collectReferences(
   text: string, references: Set<string>, serializedApostrophes = false, ordinaryQuotes = false,
 ): void {
   const { tokens, ambiguousApostrophe, ambiguousTripleQuote } =
     tokenizeReferences(text, references, serializedApostrophes, ordinaryQuotes);
   const fromLists = [false];
-  // Parentheses opened by EXTRACT(, whose FROM is a keyword and never starts a table list.
-  const extractLists = [false];
   let tablePosition = false;
 
   for (let index = 0; index < tokens.length; index++) {
@@ -317,25 +330,19 @@ function collectReferences(
       }
     }
 
-    // EXTRACT(part FROM expr) has one FROM. A SELECT or WITH at that depth means the
-    // parenthesis was never closed, so later FROMs must scan as table lists again.
-    if (extractLists[depth] && token.kind !== 'quoted' && /^(?:SELECT|WITH)$/i.test(token.value)) extractLists[depth] = false;
     if (token.kind === 'quoted') {
       tablePosition = false;
     } else if (token.value === '(') {
       fromLists.push(tablePosition);
-      extractLists.push(/^EXTRACT$/i.test(tokens[index - 1]?.value ?? ''));
     } else if (token.value === ')') {
       if (depth > 0) {
         fromLists.pop();
-        extractLists.pop();
       } else fromLists[0] = false;
       tablePosition = false;
     } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
       fromLists[depth] = false;
       tablePosition = false;
-    } else if (/^FROM$/i.test(token.value) && extractLists[depth]) {
-      extractLists[depth] = false;
+    } else if (isExtractKeywordFrom(tokens, index)) {
       tablePosition = false;
     } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;
