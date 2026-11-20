@@ -92,6 +92,9 @@ it.each([
   ['Use `` `private_dataset` `` . customers for orders.', 'private_dataset.customers'],
   ['Use ``SELECT * FROM private_dataset.customers`` for orders.', 'private_dataset.customers'],
   ['Use ``SELECT*FROM(private_dataset.customers)`` for orders.', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR FROM u.created_at) FROM private_dataset.customers u', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR FROM (SELECT MAX(x) FROM private_dataset.customers))', 'private_dataset.customers'],
+  ['FROM `123.456`', '123.456'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
   ['Read warehouse-12345.45678.20261118 for the daily snapshot.', '12345.45678.20261118'],
   ['`acme-prod.analytics.orders`', 'acme-prod.analytics.orders'],
@@ -164,6 +167,10 @@ it.each([
   'bigquery-public-data.thelook_ecommerce.users',
   'BIGQUERY-public-data.thelook_ecommerce.users',
   'SELECT o.price-u.cost FROM tv_thelook.orders o JOIN tv_thelook.users u ON TRUE',
+  'SELECT EXTRACT(YEAR FROM u.created_at) AS signup_year FROM tv_thelook.users u',
+  'SELECT EXTRACT(DATE FROM o.created_at AT TIME ZONE "UTC") FROM tv_thelook.orders o',
+  'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
+  'Revenue grew from 1.25 to 3.5 million.',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });

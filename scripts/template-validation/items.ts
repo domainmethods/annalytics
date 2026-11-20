@@ -259,6 +259,8 @@ function collectReferences(
   const { tokens, ambiguousApostrophe, ambiguousTripleQuote } =
     tokenizeReferences(text, references, serializedApostrophes, ordinaryQuotes);
   const fromLists = [false];
+  // Parentheses opened by EXTRACT(, whose FROM is a keyword and never starts a table list.
+  const extractLists = [false];
   let tablePosition = false;
 
   for (let index = 0; index < tokens.length; index++) {
@@ -301,9 +303,11 @@ function collectReferences(
       }
 
       if (segments.length >= 2) {
-        const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
         const standaloneNumber = !hyphenAttached && segments.every((segment) => /^\d+$/.test(segment));
         const prefix = tablePrefix || attachedPrefix;
+        // An unquoted run of digits ("from 13.0%") is a number, not a table name.
+        const bareNumber = standaloneNumber && !quoted && !prefix;
+        const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
         if ((namesTable || (segments.length >= 3 && !standaloneNumber)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));
@@ -317,12 +321,17 @@ function collectReferences(
       tablePosition = false;
     } else if (token.value === '(') {
       fromLists.push(tablePosition);
+      extractLists.push(/^EXTRACT$/i.test(tokens[index - 1]?.value ?? ''));
     } else if (token.value === ')') {
-      if (depth > 0) fromLists.pop();
-      else fromLists[0] = false;
+      if (depth > 0) {
+        fromLists.pop();
+        extractLists.pop();
+      } else fromLists[0] = false;
       tablePosition = false;
     } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
       fromLists[depth] = false;
+      tablePosition = false;
+    } else if (/^FROM$/i.test(token.value) && extractLists[depth]) {
       tablePosition = false;
     } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;
