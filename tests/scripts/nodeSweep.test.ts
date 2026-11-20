@@ -98,6 +98,7 @@ function makeRunCorpusOnce(nodes: NodeId[], corpusSize = 12): () => Promise<Corp
       if (TIER_SENSITIVE.has(node) && eff[node].tier !== 'pro') e2eDelta -= OFF_PRO_E2E;
       if (DEFAULT_SEEKING.has(node)) {
         const def = defaultProfileForNode(node);
+        // Compared by mock token cost, so `default` (300) counts as at least `low`.
         if (eff[node].tier !== def.tier || eff[node].version !== def.version || THINK_TOKENS[eff[node].level] < THINK_TOKENS[def.thinkingLevel]) {
           e2eDelta -= OFF_DEFAULT_E2E;
         }

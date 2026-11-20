@@ -284,7 +284,7 @@ function isAllowedChain(segments: string[]): boolean {
 }
 
 /**
- * True when the FROM at `index` is the keyword inside EXTRACT(part FROM expr): exactly one
+ * True when the FROM token at `index` is the keyword inside EXTRACT(part FROM expr): exactly one
  * date-part name (optionally WEEK(<weekday>)) between `EXTRACT(` and the FROM. Any other
  * FROM, including prose such as "extract (from x.y)", still starts a table list.
  */
@@ -363,7 +363,8 @@ function collectReferences(
       if (segments.length >= 2) {
         const standaloneNumber = !hyphenAttached && segments.every((segment) => /^\d+$/.test(segment));
         const prefix = tablePrefix || attachedPrefix;
-        // An unquoted run of digits ("from 13.0%") is a number, not a table name.
+        // An unquoted run of digits ("from 13.0%") is a number, not a table name. Deliberate
+        // gap: BigQuery allows all-digit dataset names, so an unquoted `FROM 2024.01` passes.
         const bareNumber = standaloneNumber && !quoted && !prefix;
         const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
         // "Permission bigquery.tables.update denied" names an IAM permission, not a table.
@@ -383,9 +384,8 @@ function collectReferences(
     } else if (token.value === '(') {
       fromLists.push(tablePosition);
     } else if (token.value === ')') {
-      if (depth > 0) {
-        fromLists.pop();
-      } else fromLists[0] = false;
+      if (depth > 0) fromLists.pop();
+      else fromLists[0] = false;
       tablePosition = false;
     // A SELECT at this depth starts a new query, so any open FROM list has ended. WITH only
     // ends one in table position, since `UNNEST(x) WITH OFFSET` sits inside a FROM list.
