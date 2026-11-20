@@ -21,7 +21,7 @@ The codebase is healthy: typecheck clean, the test suite passing, module boundar
 | Teaching validation gates | Implemented; runs in PR CI |
 | Feedback loop (2026-06-07 plan) | Items (1) aggregation and (2) feedback-notes reader: done. Item (3) teaching impact measurement: **absent** (deferred — see Deferred Work). Item (4) side bar: only the prerequisite ambiguity classifier exists. |
 | Confidence calibration | Latest verdict (2026-06-12 post-repair acceptance run): `FAIL` — back to bucket absence (no medium-confidence results in the slice; low 3 total / 2 wrong, high 23 total / 0 wrong; low remains below `minSample=5`). The low-bucket "wrong" count is judge noise on correctly-suspended ambiguous cases (see Evidence Log). Mean judge score 4.47/5, 0/26 flagged. Side bar stays deferred per T3 #2; a future slice must produce all three buckets at sample before the side bar can activate. |
-| Node sizing | Model refresh via template validation set is active (T3 #1). The first live refresh is pending. The two classifiers retain their historical sizing tags. |
+| Node sizing | Model refresh via template validation set is active (T3 #1). The first live refresh is pending. Since 2026-11-19 the three classifiers (`slackIntake`, `followUpClassifier`, `ambiguityClassifier`) default to PROVISIONAL `flash-lite/3.5@low`, an owner judgment call on tv-v1 pilot evidence that the frozen tv-v1 sweep must confirm or revert (Evidence Log). |
 | Routine query fast path | Committed, default-off (`FAST_PATH_ENABLED=false`); inert without File Search store + knowledge summaries, so inert in the template |
 | Latency evidence slice | Not yet run (requires implementation corpus) |
 | Operational trust (Firestore retention, telemetry sink, escalation timers, ✅-reaction promise) | **Completed 2026-06-09** — all four Tranche B items shipped; acceptance criteria satisfied (Evidence Log) |
@@ -553,3 +553,12 @@ The full-path quality loop passed the clarified question to the supervisor twice
 - The first live refresh is pending. Follow the [model refresh runbook](model-refresh.md).
 - Stale-line repair: Current Decision #3 no longer calls the completed ReferenceCard repair branch the sole active tranche. It now points to second-domain selection (Current Decision #1), which the 2026-06-12 acceptance already recorded. No tranche order changes beyond T3 #1.
 - The template set measures SQL generation and supervisor review on schema-only questions and queries. Production knowledge for these nodes comes through File Search and the generator's citations.
+
+### 2026-11-19 - Classifier default (tv-v1 pilot)
+
+- **Decision (owner judgment call, not a measured pick):** the three classifier nodes, `slackIntake`, `followUpClassifier` and `ambiguityClassifier`, now default to `flash-lite/3.5` at `low` thinking. All three are tagged PROVISIONAL.
+- **Evidence:** on the draft tv-v1 pilot (2026-11-19, 40 `slackIntake` items), `flash-lite/3.5@low` scored 0.975 and the old `flash-lite/3.1@minimal` default scored 0.950. That is 39/40 vs 38/40, one item, well inside any reasonable ε. The cost is about 1.5x per call and p95 latency is about 1s. Flash 3.8 and Gemini 4 Hydrogen timed out against the 8s `INTAKE_TIMEOUT_MS`.
+- `followUpClassifier` and `ambiguityClassifier` were not measured on the pilot and follow by analogy. `followUpClassifier` gives up its MEASURED tag: it scored 1.000 at `flash-lite/3.1@minimal` in the 2026-06-08 sweep (above), and that row remains the evidence to beat. `ambiguityClassifier` was already un-sized.
+- This step comes before the runbook's step 5 (change `DEFAULTS` only from an eligible frozen-set sweep row). The project owner chose to act on the pilot signal now and size the classifiers properly afterwards.
+- **Confirms:** the frozen tv-v1 `sweep:template` run (T3 #1's first live refresh) returns `flash-lite/3.5@low` as Applicable for each classifier. The `DEFAULTS` comments then cite that set version and date as TEMPLATE-MEASURED.
+- **Reverts:** that sweep picks a cheaper point within ε for any classifier, or production intake latency or fallback telemetry regresses. That node then returns to its sweep pick, or to `flash-lite/3.1@minimal`.

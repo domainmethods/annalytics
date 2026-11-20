@@ -58,9 +58,8 @@ describe('classifySlackIntake', () => {
 
     expect(result.route).toBe('immediate_response');
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
-    // slackIntake's measured default is flash-lite/3.1 (judge-free floor-up sweep:
-    // perfect route accuracy at every rung, so the cheapest model is right-sized).
-    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.1-flash-lite');
+    // slackIntake's default is flash-lite/3.5@low (tv-v1 pilot, 2026-11-19).
+    expect(mockGenerateContent.mock.calls[0][0].model).toBe('gemini-3.5-flash-lite');
     expect(mockGenerateContent.mock.calls[0][0].config.responseMimeType).toBe('application/json');
     expect(mockGenerateContent.mock.calls[0][0].config.responseJsonSchema).toBeDefined();
   });
@@ -388,7 +387,7 @@ describe('classifySlackIntake', () => {
   });
 
   it('honors NODE_PROFILE_OVERRIDES for the slackIntake node', async () => {
-    // Override to pro/3.1 — deliberately DIFFERENT from the flash-lite/3.1 default,
+    // Override to pro/3.1 — deliberately DIFFERENT from the flash-lite/3.5 default,
     // so this proves the override path actually fires (a flash-lite override would
     // now coincide with the default and pass even if overrides were ignored).
     vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({

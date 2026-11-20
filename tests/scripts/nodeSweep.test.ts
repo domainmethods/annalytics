@@ -32,13 +32,20 @@ describe('template sweep arguments', () => {
 // Each swept node derives its baseline from the REAL default (defaultProfileForNode)
 // so "landed back on the default" is meaningful. Only sqlGenerator is TIER-SENSITIVE:
 // its metric collapses far below its ε gate off the `pro` tier (and so does e2e),
-// which is what keeps a reasoning node pinned to pro while flat nodes downsize. All
-// other nodes are FLAT — quality is independent of model/thinking — so Stage 1 takes
-// the cheapest model (flash-lite) and Stage 2 trims thinking to `minimal`.
+// which is what keeps a reasoning node pinned to pro while flat nodes downsize.
+// slackIntake is DEFAULT-SEEKING (below). All other nodes are FLAT — quality is
+// independent of model/thinking — so Stage 1 takes the cheapest model (flash-lite)
+// and Stage 2 trims thinking to `minimal`.
 
 const TIER_SENSITIVE = new Set<NodeId>(['sqlGenerator']);
+// DEFAULT-SEEKING nodes lose quality off their default's model version or below its
+// thinking level. The penalty is built in, so the search can only land back on the
+// default: it exercises the sameAsDefault → no-override guard for a default that is not
+// the cheapest point. It says nothing about real model rankings.
+const DEFAULT_SEEKING = new Set<NodeId>(['slackIntake']);
 const OFF_PRO_METRIC = 0.40; // sqlGenMetric drop off pro — dwarfs ε(metric)≈0.02
 const OFF_PRO_E2E = 0.40;    // e2e drop off pro for tier-sensitive nodes
+const OFF_DEFAULT_E2E = 0.40; // e2e drop off the default for default-seeking nodes
 const BASE_OVERALL = 4.30;
 const BASE_SQLMETRIC = 0.95;
 
@@ -82,6 +89,12 @@ function makeRunCorpusOnce(nodes: NodeId[], corpusSize = 12): () => Promise<Corp
     let e2eDelta = 0;
     for (const node of nodes) {
       if (TIER_SENSITIVE.has(node) && eff[node].tier !== 'pro') e2eDelta -= OFF_PRO_E2E;
+      if (DEFAULT_SEEKING.has(node)) {
+        const def = defaultProfileForNode(node);
+        if (eff[node].tier !== def.tier || eff[node].version !== def.version || THINK_TOKENS[eff[node].level] < THINK_TOKENS[def.thinkingLevel]) {
+          e2eDelta -= OFF_DEFAULT_E2E;
+        }
+      }
     }
     const sqlTier = eff['sqlGenerator'].tier;
     const sqlMetricDelta = sqlTier === 'pro' ? 0 : -OFF_PRO_METRIC;
@@ -253,8 +266,8 @@ describe('runSweep — two-stage coordinate isolation', () => {
   });
 
   it('keeps the DEFAULT (no change) when the search lands back on the node\'s existing default', async () => {
-    // slackIntake's default is the cheapest, fastest point (flash-lite/3.1@minimal),
-    // so the flat search reproduces it exactly → sameAsDefault → no override emitted.
+    // slackIntake is DEFAULT-SEEKING in the mock: its best point is its default
+    // (flash-lite/3.5@low), so the search reproduces it → sameAsDefault → no override.
     const r = await sweep(['slackIntake']);
     const o = r.outcomes[0];
     const def = defaultProfileForNode('slackIntake');
