@@ -149,6 +149,11 @@ it.each([
   ['Permission bigquery.tables.update.extra denied', 'bigquery.tables.update.extra'],
   ['Use bigquery.tables.update for this', 'bigquery.tables.update'],
   ['Permission foo-bigquery.tables.update denied', 'bigquery.tables.update'],
+  ['permission BigQuery.tables.update denied', 'BigQuery.tables.update'],
+  // A new SELECT ends a prose FROM list, but its own FROM list is still scanned.
+  ['Data came from different builds.\nSELECT a FROM tv_thelook.orders, private_dataset.customers', 'private_dataset.customers'],
+  // WITH OFFSET inside a FROM list does not end it.
+  ['FROM tv_thelook.orders, UNNEST(o.items) WITH OFFSET AS i, private_dataset.customers', 'private_dataset.customers'],
   ['Permission denied: SELECT * FROM bigquery.tables.update', 'bigquery.tables.update'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
@@ -197,6 +202,7 @@ it.each([
   'FROM private_dataset. Customers',
   'Access Denied: Table tv_thelook.distribution_centers: Permission bigquery.tables.update denied on table tv_thelook.distribution_centers',
   'Missing permissions bigquery.jobs.create',
+  'Flag it if the two sides came from different builds.\n\nSELECT u.traffic_source AS signup_source, e.event_type FROM tv_thelook.users u JOIN tv_thelook.events e ON e.user_id = u.id',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });
