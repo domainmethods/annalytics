@@ -326,6 +326,7 @@ it('keeps every committed item file at its frozen digest and count', () => {
   for (const node of NODE_IDS) {
     const frozen = provenance.perNode[node];
     expect(frozen, node).toBeDefined();
+    expect(frozen.itemsSha256, node).toMatch(/^[0-9a-f]{64}$/);
     expect(loadItems(node, TV_ROOT, frozen.itemsSha256), node).toHaveLength(frozen.accepted);
   }
 });
