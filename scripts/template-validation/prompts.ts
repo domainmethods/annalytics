@@ -136,7 +136,7 @@ const PLAIN_LANGUAGE_DRAFT_NODES: ReadonlySet<NodeId> = new Set(['slackIntake', 
 const plainLanguageRules =
   'Use only synthetic examples. Omit emails, project IDs and private data. ' +
   'Write in plain language as a person would type it in Slack, and do not include SQL. ' +
-  `If you name a physical table, write it as \`${TV_DATASET}.table\`. Use explicit time windows.`;
+  `If you name a physical table, write it as \`${TV_DATASET}.table\`. When a message asks for data, give the time window a person would state, and keep greetings and short follow-ups natural.`;
 
 const draftInstructions: Record<NodeId, string> = {
   slackIntake: 'Draft Slack messages covering lightweight bot interactions and requests for warehouse analytics. Include borderline messages.',

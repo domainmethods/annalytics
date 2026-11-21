@@ -32,7 +32,7 @@ describe('draftPrompt', () => {
 });
 
 describe('labelPrompt', () => {
-  it('keeps the shared template rules for message-like nodes', () => {
-    expect(labelPrompt('slackIntake', [], '')).toContain(templateRules);
+  it.each(PLAIN_LANGUAGE_NODES)('keeps the shared template rules for %s labels', (node) => {
+    expect(labelPrompt(node, [], '')).toContain(templateRules);
   });
 });
