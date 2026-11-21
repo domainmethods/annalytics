@@ -1,0 +1,194 @@
+{
+  "version": "tv-v1",
+  "createdAt": "2026-11-21T22:27:00.476Z",
+  "quorumKind": "reduced",
+  "reducedQuorum": true,
+  "singleFamily": false,
+  "drafter": "codex",
+  "perNode": {
+    "slackIntake": {
+      "drafted": 26,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "fa9a90891b5b83d7ba39106b24938978b73aed73613db5883e5bcb5f1e91abd6",
+      "dropRateByCategory": {
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
+    "followUpClassifier": {
+      "drafted": 28,
+      "accepted": 36,
+      "quarantined": 4,
+      "itemsSha256": "544c88a856cef3484f6fecaf09eae156a0e0b42ecb03bf37a284c4fda5a109a7",
+      "dropRateByCategory": {
+        "join": 0.14285714285714285,
+        "aggregate": 0,
+        "time_series": 0.16666666666666666,
+        "ambiguous": 0,
+        "edge_case": 0.3333333333333333
+      }
+    },
+    "ambiguityClassifier": {
+      "drafted": 40,
+      "accepted": 37,
+      "quarantined": 3,
+      "itemsSha256": "2609c5032e920393311104a92ded1b5d0d82bc76fd6d671d46f129d0e7dae6d9",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0.14285714285714285,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0.16666666666666666,
+        "edge_case": 0.16666666666666666
+      }
+    },
+    "clarification": {
+      "drafted": 40,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "d9b2a36485e1b6908dcf21ec191d4c559707626256cbe18b98f84a9c950bd802",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
+    "teachingCandidate": {
+      "drafted": 40,
+      "accepted": 23,
+      "quarantined": 17,
+      "itemsSha256": "dfc3eaf7bbfc5cfd199b458e5a5ae4e48a512491cd687efc66826c7a3a7bded3",
+      "dropRateByCategory": {
+        "simple": 0.42857142857142855,
+        "join": 0.2857142857142857,
+        "aggregate": 0.5714285714285714,
+        "time_series": 0.2857142857142857,
+        "ambiguous": 0.5,
+        "edge_case": 0.5
+      }
+    },
+    "sqlGenerator": {
+      "drafted": 100,
+      "accepted": 94,
+      "quarantined": 6,
+      "itemsSha256": "0b86cc2dcfcd12f2ecb86cbcc8279bdd68c29eb17db931d1b04b5d84bd2a7165",
+      "dropRateByCategory": {
+        "simple": 0.058823529411764705,
+        "join": 0,
+        "aggregate": 0.11764705882352941,
+        "time_series": 0.058823529411764705,
+        "ambiguous": 0.0625,
+        "edge_case": 0.0625
+      }
+    },
+    "dbtStatus": {
+      "drafted": 40,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "af6538d28fdbd4126fd9618bc8f058e397e8a80834ece3527a77c184681df432",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
+    "chart": {
+      "drafted": 40,
+      "accepted": 33,
+      "quarantined": 7,
+      "itemsSha256": "0de2dd90b01a7929894bde33656cb32a27468b42d290752133b094609c931179",
+      "dropRateByCategory": {
+        "simple": 0.42857142857142855,
+        "join": 0,
+        "aggregate": 0.14285714285714285,
+        "time_series": 0,
+        "ambiguous": 0.5,
+        "edge_case": 0
+      }
+    },
+    "summaryOverride": {
+      "drafted": 40,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "d74d8766f98863c20ea0551d39ed5864d1f9e314db1d4449001c91af2a21dc4d",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
+    "metaQuestion": {
+      "drafted": 40,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "f85ae5bf69931c691ba85eb47a4f9d695697d615c90f3b1a4f02145ba1e56d17",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
+    "discrepancy": {
+      "drafted": 40,
+      "accepted": 15,
+      "quarantined": 25,
+      "itemsSha256": "12ba6532feac2b5afd9cd870d6ee766c7d371347cb8f2db03b40c1ac03147bea",
+      "dropRateByCategory": {
+        "simple": 0.5714285714285714,
+        "join": 0.7142857142857143,
+        "aggregate": 0.7142857142857143,
+        "time_series": 0.5714285714285714,
+        "ambiguous": 0.5,
+        "edge_case": 0.6666666666666666
+      }
+    },
+    "supervisor": {
+      "drafted": 100,
+      "accepted": 100,
+      "quarantined": 0,
+      "itemsSha256": "25fdfd508e742e83f0da3d505d182d1c43411f512c13dfd3d235bcf4d85b32d8",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    }
+  },
+  "members": [
+    {
+      "id": "codex",
+      "family": "openai",
+      "requestedModel": "gpt-6.2-astra",
+      "cliVersion": "codex-cli 0.169.0",
+      "isolation": "Starts in a fresh temporary cwd containing only schema.json, with -s read-only and the shell_tool and unified_exec features disabled. The file-listing probe did not run a command or list files, but it called two MCP discovery tools. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+      "reportedModels": []
+    },
+    {
+      "id": "agy",
+      "family": "google",
+      "requestedModel": "gemini-4-neon-xhigh",
+      "cliVersion": "1.5.14",
+      "isolation": "Starts in a fresh temporary cwd containing only schema.json, with --mode plan. The file-listing probe ran ls, read schema.json, and wrote two planning artifacts outside the temporary cwd. The labeling workflow must abort if scanTemplateSafety finds a foreign reference in drafted items. A human reviews items before commit.",
+      "reportedModels": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-13",
+  "originalQuestion": "Why do late-evening signups show up under the following day?",
+  "clarifiedQuestion": "Count new profiles on each Los Angeles calendar day with signups in March 2025, including the daylight saving transition.",
+  "humanResponse": "Use Los Angeles time for both local midnights that bound the month and for the date assigned to each signup. A fixed UTC offset would misplace some signups when the clocks change.\n\n```sql\nSELECT DATE(created_at, 'America/Los_Angeles') AS signup_day, COUNT(*) AS signups\nFROM `tv_thelook.users`\nWHERE created_at >= TIMESTAMP(DATE '2025-03-01', 'America/Los_Angeles')\n  AND created_at < TIMESTAMP(DATE '2025-04-01', 'America/Los_Angeles')\nGROUP BY signup_day\nORDER BY signup_day\nLIMIT 31\n```",
+  "failedSql": "SELECT DATE(created_at, 'UTC') AS signup_day, COUNT(*) AS signups\nFROM `tv_thelook.users`\nWHERE created_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\nGROUP BY signup_day\nORDER BY signup_day\nLIMIT 31",
+  "supervisorNotes": null
+}

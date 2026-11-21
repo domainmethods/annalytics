@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-36",
+  "originalQuestion": "Why does the holiday preview still show 840 sessions?",
+  "clarifiedQuestion": "The reviewer approved 804 sessions for November 2025. Why does the preview show 840?",
+  "humanResponse": "The preview was displaying an older export. I refreshed it and confirmed that it shows 804 sessions.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

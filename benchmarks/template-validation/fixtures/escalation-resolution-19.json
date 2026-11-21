@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-19",
+  "originalQuestion": "The average order value looks closer to the price of a single item. How was it calculated?",
+  "clarifiedQuestion": "Find the mean merchandise total for orders placed in August 2025 UTC. Include all statuses and only orders with at least one line and a recorded selling price on every line.",
+  "humanResponse": "First sum the line prices for each eligible order. Averaging those totals gives a one-line order and a five-line order equal weight. The price-count check excludes orders with incomplete totals.\n\n```sql\nSELECT AVG(order_total) AS average_order_value\nFROM (\n  SELECT o.order_id, SUM(i.sale_price) AS order_total\n  FROM `tv_thelook.orders` AS o\n  JOIN `tv_thelook.order_items` AS i ON i.order_id = o.order_id\n  WHERE o.created_at >= TIMESTAMP '2025-08-01 00:00:00 UTC'\n    AND o.created_at < TIMESTAMP '2025-09-01 00:00:00 UTC'\n  GROUP BY o.order_id\n  HAVING COUNT(i.sale_price) = COUNT(*)\n) AS priced_orders\nORDER BY average_order_value\nLIMIT 1\n```",
+  "failedSql": "SELECT AVG(i.sale_price) AS average_order_value\nFROM `tv_thelook.orders` AS o\nJOIN `tv_thelook.order_items` AS i ON i.order_id = o.order_id\nWHERE o.created_at >= TIMESTAMP '2025-08-01 00:00:00 UTC'\n  AND o.created_at < TIMESTAMP '2025-09-01 00:00:00 UTC'\nORDER BY average_order_value\nLIMIT 1",
+  "supervisorNotes": null
+}

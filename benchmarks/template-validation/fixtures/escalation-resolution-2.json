@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-2",
+  "originalQuestion": "Why do anonymous visits all appear under an unknown traffic source?",
+  "clarifiedQuestion": "For February 2025 UTC, rank the ten recorded event sources by distinct sessions. Count a session once for each source it appeared under, including sessions without a signed-in user.",
+  "humanResponse": "The profile join loses source information when an event has no matching user. The event carries its own `traffic_source`, so a session with a recorded source can be counted directly.\n\n```sql\nSELECT traffic_source, COUNT(DISTINCT session_id) AS sessions\nFROM `tv_thelook.events`\nWHERE created_at >= TIMESTAMP '2025-02-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND traffic_source IS NOT NULL\nGROUP BY traffic_source\nORDER BY sessions DESC, traffic_source\nLIMIT 10\n```",
+  "failedSql": "SELECT u.traffic_source, COUNT(DISTINCT e.session_id) AS sessions\nFROM `tv_thelook.events` AS e\nLEFT JOIN `tv_thelook.users` AS u ON u.id = e.user_id\nWHERE e.created_at >= TIMESTAMP '2025-02-01 00:00:00 UTC'\n  AND e.created_at < TIMESTAMP '2025-03-01 00:00:00 UTC'\nGROUP BY u.traffic_source\nORDER BY sessions DESC, u.traffic_source\nLIMIT 10",
+  "supervisorNotes": "A session can contribute to two source groups. The source counts can therefore sum to more than the number of sessions."
+}

@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-11",
+  "originalQuestion": "One of the distribution centers disappeared from the November intake report.",
+  "clarifiedQuestion": "List up to 100 distribution centers in ID order with their counts of units stocked in November 2025 UTC. Include centers that received zero units.",
+  "humanResponse": "Start with the center list and put the intake dates in the join condition. That preserves a row for each center. Counting the matched inventory IDs gives an idle center a count of zero.\n\n```sql\nSELECT d.id AS center_id, d.name AS center_name, COUNT(i.id) AS units_stocked\nFROM `tv_thelook.distribution_centers` AS d\nLEFT JOIN `tv_thelook.inventory_items` AS i\n  ON i.product_distribution_center_id = d.id\n  AND i.created_at >= TIMESTAMP '2025-11-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-12-01 00:00:00 UTC'\nGROUP BY d.id, d.name\nORDER BY center_id\nLIMIT 100\n```",
+  "failedSql": "SELECT d.id AS center_id, d.name AS center_name, COUNT(i.id) AS units_stocked\nFROM `tv_thelook.distribution_centers` AS d\nLEFT JOIN `tv_thelook.inventory_items` AS i ON i.product_distribution_center_id = d.id\nWHERE i.created_at >= TIMESTAMP '2025-11-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-12-01 00:00:00 UTC'\nGROUP BY d.id, d.name\nORDER BY center_id\nLIMIT 100",
+  "supervisorNotes": null
+}

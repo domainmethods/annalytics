@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-12",
+  "originalQuestion": "The December browser report timed out. Did the reviewer get it?",
+  "clarifiedQuestion": "Confirm delivery of the top-ten browser event counts for December 2025 UTC.",
+  "humanResponse": "The retry finished. The reviewer received the ten-row export and marked it complete.",
+  "failedSql": "SELECT browser, COUNT(*) AS event_count\nFROM `tv_thelook.events`\nWHERE created_at >= TIMESTAMP '2025-12-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2026-01-01 00:00:00 UTC'\n  AND browser IS NOT NULL\nGROUP BY browser\nORDER BY event_count DESC, browser\nLIMIT 10",
+  "supervisorNotes": "The job history recorded a timeout on the first attempt."
+}

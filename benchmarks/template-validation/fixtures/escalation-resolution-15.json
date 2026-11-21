@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-15",
+  "originalQuestion": "The seven-day return rate keeps climbing weeks after delivery. What counts as a return here?",
+  "clarifiedQuestion": "For order lines delivered in March 2025 UTC, report the fraction returned between delivery and exactly seven elapsed days later, inclusive. The review covers returns through April 7 UTC.",
+  "humanResponse": "Keep every March delivery in the denominator. For the numerator, compare each line's return timestamp with its own delivery timestamp and seven-day deadline. This includes an April return when it falls inside that line's window.\n\n```sql\nSELECT SAFE_DIVIDE(\n  COUNTIF(returned_at BETWEEN delivered_at AND TIMESTAMP_ADD(delivered_at, INTERVAL 7 DAY)),\n  COUNT(*)\n) AS seven_day_return_fraction\nFROM `tv_thelook.order_items`\nWHERE delivered_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND delivered_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\nORDER BY seven_day_return_fraction\nLIMIT 1\n```",
+  "failedSql": "SELECT SAFE_DIVIDE(COUNTIF(returned_at IS NOT NULL), COUNT(*)) AS seven_day_return_fraction\nFROM `tv_thelook.order_items`\nWHERE delivered_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND delivered_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\nORDER BY seven_day_return_fraction\nLIMIT 1",
+  "supervisorNotes": "The chart expects a fraction between zero and one. An empty delivery cohort has an undefined rate."
+}

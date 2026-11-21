@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-20",
+  "originalQuestion": "Which total goes in the September exercise answer key?",
+  "clarifiedQuestion": "What final order count did the facilitator approve for the September 2025 UTC exercise after the recount?",
+  "humanResponse": "The facilitator approved 312 orders. I entered 312 in the answer key and retired the draft with 321.",
+  "failedSql": null,
+  "supervisorNotes": "The facilitator checked the revised answer key."
+}

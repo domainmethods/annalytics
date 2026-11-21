@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-7",
+  "originalQuestion": "Why did the July closing stock figure shrink when we opened it in August?",
+  "clarifiedQuestion": "Of the units stocked during July 2025 UTC, how many were still unsold immediately before August 1 at 00:00 UTC?",
+  "humanResponse": "A unit sold in August was still on hand at the July close. Include units whose sale timestamp is missing or falls at or after the cutoff.\n\n```sql\nSELECT COUNT(*) AS units_on_hand_at_close\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-08-01 00:00:00 UTC'\n  AND (sold_at IS NULL OR sold_at >= TIMESTAMP '2025-08-01 00:00:00 UTC')\nORDER BY units_on_hand_at_close\nLIMIT 1\n```",
+  "failedSql": "SELECT COUNT(*) AS units_on_hand_at_close\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-08-01 00:00:00 UTC'\n  AND sold_at IS NULL\nORDER BY units_on_hand_at_close\nLIMIT 1",
+  "supervisorNotes": "A unit sold exactly at midnight on August 1 belongs in this closing balance."
+}

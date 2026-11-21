@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-17",
+  "originalQuestion": "Why does a page viewed halfway through a visit show up as an entry event?",
+  "clarifiedQuestion": "Rank the ten most common opening event types for sessions whose sequence-number-one event occurred in June 2025 UTC. Count distinct sessions with a recorded opening type.",
+  "humanResponse": "Select events at sequence number one before grouping by type. Taking the earliest event visible inside June can mistake the continuation of a May session for a new opening.\n\n```sql\nSELECT event_type, COUNT(DISTINCT session_id) AS session_starts\nFROM `tv_thelook.events`\nWHERE created_at >= TIMESTAMP '2025-06-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND sequence_number = 1\n  AND session_id IS NOT NULL\n  AND event_type IS NOT NULL\nGROUP BY event_type\nORDER BY session_starts DESC, event_type\nLIMIT 10\n```",
+  "failedSql": "SELECT event_type, COUNT(*) AS session_starts\nFROM (\n  SELECT event_type\n  FROM `tv_thelook.events`\n  WHERE created_at >= TIMESTAMP '2025-06-01 00:00:00 UTC'\n    AND created_at < TIMESTAMP '2025-07-01 00:00:00 UTC'\n    AND session_id IS NOT NULL\n  QUALIFY ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at, sequence_number, id) = 1\n) AS first_visible_events\nWHERE event_type IS NOT NULL\nGROUP BY event_type\nORDER BY session_starts DESC, event_type\nLIMIT 10",
+  "supervisorNotes": null
+}

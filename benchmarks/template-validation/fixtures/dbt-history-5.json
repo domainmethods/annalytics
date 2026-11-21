@@ -1,0 +1,26 @@
+[
+  {
+    "model": "distribution_centers",
+    "status": "success",
+    "executionTime": 0.7,
+    "runId": "dbt-history-5",
+    "runStartedAt": "2026-10-06T02:00:00Z",
+    "errorMessage": null
+  },
+  {
+    "model": "products",
+    "status": "error",
+    "executionTime": 2.4,
+    "runId": "dbt-history-5",
+    "runStartedAt": "2026-10-06T02:00:00Z",
+    "errorMessage": "A stocked product has a negative retail price.\nSELECT DISTINCT p.id, p.retail_price\nFROM `tv_thelook.products` AS p\nJOIN `tv_thelook.inventory_items` AS i ON i.product_id = p.id\nWHERE i.created_at >= TIMESTAMP '2026-10-05 00:00:00+00'\n  AND i.created_at < TIMESTAMP '2026-10-06 00:00:00+00'\n  AND p.retail_price < 0\nORDER BY p.id, p.retail_price\nLIMIT 100"
+  },
+  {
+    "model": "inventory_items",
+    "status": "skipped",
+    "executionTime": 0,
+    "runId": "dbt-history-5",
+    "runStartedAt": "2026-10-06T02:00:00Z",
+    "errorMessage": null
+  }
+]

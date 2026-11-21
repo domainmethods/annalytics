@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-6",
+  "originalQuestion": "The May shipping chart misses orders placed in April. Can you fix it?",
+  "clarifiedQuestion": "Count orders shipped on each UTC day with shipments in May 2025, regardless of when the orders were placed.",
+  "humanResponse": "Use `shipped_at` for both the reporting window and the day on the chart. An order placed in April and shipped on May 2 then contributes to May 2.\n\n```sql\nSELECT DATE(shipped_at, 'UTC') AS ship_day, COUNT(*) AS orders_shipped\nFROM `tv_thelook.orders`\nWHERE shipped_at >= TIMESTAMP '2025-05-01 00:00:00 UTC'\n  AND shipped_at < TIMESTAMP '2025-06-01 00:00:00 UTC'\nGROUP BY ship_day\nORDER BY ship_day\nLIMIT 31\n```",
+  "failedSql": "SELECT DATE(created_at, 'UTC') AS ship_day, COUNT(*) AS orders_shipped\nFROM `tv_thelook.orders`\nWHERE created_at >= TIMESTAMP '2025-05-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-06-01 00:00:00 UTC'\n  AND shipped_at IS NOT NULL\nGROUP BY ship_day\nORDER BY ship_day\nLIMIT 31",
+  "supervisorNotes": null
+}

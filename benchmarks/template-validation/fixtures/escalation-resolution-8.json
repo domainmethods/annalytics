@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-8",
+  "originalQuestion": "Why does the August signup sheet show #### in the date column?",
+  "clarifiedQuestion": "Can the reviewer read every date in the August 2025 UTC signup export?",
+  "humanResponse": "I widened the date column in the workbook. The reviewer reopened it and confirmed that every date was visible.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

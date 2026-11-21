@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-25",
+  "originalQuestion": "Can someone fix the May returns slide?",
+  "clarifiedQuestion": "The May 2025 returns figure is approved. Can the slide owner replace the draft image with the signed-off chart?",
+  "humanResponse": "I replaced the draft image with the signed-off chart. The slide owner approved the revision.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

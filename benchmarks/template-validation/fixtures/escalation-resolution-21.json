@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-21",
+  "originalQuestion": "Why does the category report count one basket twice?",
+  "clarifiedQuestion": "For items created in January 2025 UTC, which ten categories appeared in the most distinct orders?",
+  "humanResponse": "An order with two items in one category counts once for that category. An order spanning two categories counts once in each.\n\n```sql\nSELECT p.category, COUNT(DISTINCT i.order_id) AS orders\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.products` AS p ON p.id = i.product_id\nWHERE i.created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-02-01 00:00:00 UTC'\nGROUP BY p.category\nORDER BY orders DESC, p.category ASC\nLIMIT 10\n```",
+  "failedSql": "SELECT p.category, COUNT(*) AS orders\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.products` AS p ON p.id = i.product_id\nWHERE i.created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-02-01 00:00:00 UTC'\nGROUP BY p.category\nORDER BY orders DESC, p.category ASC\nLIMIT 10",
+  "supervisorNotes": "Two items from the same category in one order exposed the overcount."
+}

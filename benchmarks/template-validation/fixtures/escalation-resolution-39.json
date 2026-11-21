@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-39",
+  "originalQuestion": "How many inventory units arrived in the first week of December?",
+  "clarifiedQuestion": "What total did the audit sheet record for December 1–7, 2025 UTC? The daily export has already been reviewed.",
+  "humanResponse": "The signed audit sheet records 312 units for the week.",
+  "failedSql": "SELECT DATE(created_at, 'UTC') AS receipt_date, COUNT(*) AS units_received\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-12-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-12-08 00:00:00 UTC'\nGROUP BY receipt_date\nORDER BY receipt_date ASC\nLIMIT 7",
+  "supervisorNotes": null
+}

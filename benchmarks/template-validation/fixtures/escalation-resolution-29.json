@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-29",
+  "originalQuestion": "The July gross margin looks too high. How was the percentage calculated?",
+  "clarifiedQuestion": "For items delivered in July 2025 UTC, what was gross margin as a percentage of sales by department? Use the inventory unit's recorded department and cost. Include items with a positive sale price and a known cost.",
+  "humanResponse": "Sum the line margins and divide by total sales within each department. Averaging the line percentages gives a low-priced item the same weight as a high-priced one.\n\n```sql\nSELECT u.product_department,\n       ROUND(100 * SAFE_DIVIDE(SUM(i.sale_price - u.cost), SUM(i.sale_price)), 2) AS margin_pct\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.inventory_items` AS u ON u.id = i.inventory_item_id\nWHERE i.delivered_at >= TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND i.delivered_at < TIMESTAMP '2025-08-01 00:00:00 UTC'\n  AND i.sale_price > 0 AND u.cost IS NOT NULL\nGROUP BY u.product_department\nORDER BY margin_pct DESC, u.product_department ASC\nLIMIT 100\n```",
+  "failedSql": "SELECT u.product_department,\n       ROUND(100 * AVG(SAFE_DIVIDE(i.sale_price - u.cost, i.sale_price)), 2) AS margin_pct\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.inventory_items` AS u ON u.id = i.inventory_item_id\nWHERE i.delivered_at >= TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND i.delivered_at < TIMESTAMP '2025-08-01 00:00:00 UTC'\n  AND i.sale_price > 0 AND u.cost IS NOT NULL\nGROUP BY u.product_department\nORDER BY margin_pct DESC, u.product_department ASC\nLIMIT 100",
+  "supervisorNotes": null
+}

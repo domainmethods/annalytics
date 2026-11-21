@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-30",
+  "originalQuestion": "Is the Saturday tile blank or zero?",
+  "clarifiedQuestion": "What count did the published sample show for order returns on August 2, 2025 UTC?",
+  "humanResponse": "The published tile showed 0 returned orders. The printed copy had cropped the numeral.",
+  "failedSql": null,
+  "supervisorNotes": "The requester accepted the published tile as the reference."
+}

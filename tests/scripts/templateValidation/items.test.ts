@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import {
   scanTemplateSafety,
 } from '../../../scripts/template-validation/items.js';
 import { TV_ROOT } from '../../../scripts/template-validation/warehouse.js';
+import { NODE_IDS } from '../../../src/agents/nodeProfiles.js';
 
 let root: string;
 
@@ -295,15 +296,13 @@ it('loads JSON fixtures by name from the supplied root', () => {
 it.each([
   ['slackIntake', 14],
   ['followUpClassifier', 12],
-] as const)('loads all %s seeds with stable hashes and manual provenance', (node, count) => {
+] as const)('keeps all %s seeds alongside labeled items with stable hashes', (node, count) => {
   const items = loadItems(node);
-  expect(items).toHaveLength(count);
-  expect(new Set(items.map((item) => item.id)).size).toBe(count);
-  for (const item of items) {
-    expect(item.source).toBe('manual');
-    expect(item.agreement).toEqual({ members: ['manual'] });
-    expect(item.inputHash).toBe(hashItemInput(item));
-  }
+  const seeds = items.filter((item) => item.source === 'manual');
+  expect(seeds).toHaveLength(count);
+  expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+  for (const item of seeds) expect(item.agreement).toEqual({ members: ['manual'] });
+  for (const item of items) expect(item.inputHash).toBe(hashItemInput(item));
   expect(scanTemplateSafety(readFileSync(join(TV_ROOT, 'items', node + '.jsonl'), 'utf8'))).toEqual([]);
 });
 
@@ -317,4 +316,26 @@ note${quote}`;
   return [['raw', quote, sql], ['serialized', quote, JSON.stringify({ sql })]];
 }))('retains FROM-list detections in %s SQL with ambiguous %s', (_format, _quote, input) => {
   expect(scanTemplateSafety(input)).toContain('Foreign table reference: private_dataset.customers');
+});
+
+it('keeps every committed item file at its frozen digest and count', () => {
+  const provenance = JSON.parse(readFileSync(join(TV_ROOT, 'provenance.json'), 'utf8')) as {
+    version: string; perNode: Record<string, { accepted: number; itemsSha256: string }>;
+  };
+  expect(provenance.version).toBe(readFileSync(join(TV_ROOT, 'VERSION'), 'utf8').trim());
+  for (const node of NODE_IDS) {
+    const frozen = provenance.perNode[node];
+    expect(frozen, node).toBeDefined();
+    expect(frozen.itemsSha256, node).toMatch(/^[0-9a-f]{64}$/);
+    expect(loadItems(node, TV_ROOT, frozen.itemsSha256), node).toHaveLength(frozen.accepted);
+  }
+});
+
+it.each(['items', 'quarantine', 'fixtures'])('keeps every committed %s file template-safe', (dir) => {
+  const files = readdirSync(join(TV_ROOT, dir), { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile());
+  expect(files.length).toBeGreaterThan(0);
+  for (const file of files) {
+    const path = join(file.parentPath, file.name);
+    expect(scanTemplateSafety(readFileSync(path, 'utf8')), path).toEqual([]);
+  }
 });

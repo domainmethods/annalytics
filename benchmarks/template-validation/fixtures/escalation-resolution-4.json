@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-4",
+  "originalQuestion": "Why doesn't the category revenue ranking reflect markdowns?",
+  "clarifiedQuestion": "Rank the ten catalog categories with the highest gross item sales for lines created in March 2025 UTC. Include all line statuses and use the recorded selling price before any return adjustment.",
+  "humanResponse": "Use the catalog join to get the category. Sum `sale_price` from the order lines so each line contributes the price recorded for that sale.\n\n```sql\nSELECT p.category, SUM(i.sale_price) AS gross_item_sales\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.products` AS p ON p.id = i.product_id\nWHERE i.created_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\n  AND p.category IS NOT NULL\nGROUP BY p.category\nORDER BY gross_item_sales DESC, p.category\nLIMIT 10\n```",
+  "failedSql": "SELECT p.category, SUM(p.retail_price) AS gross_item_sales\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.products` AS p ON p.id = i.product_id\nWHERE i.created_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\n  AND p.category IS NOT NULL\nGROUP BY p.category\nORDER BY gross_item_sales DESC, p.category\nLIMIT 10",
+  "supervisorNotes": null
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "model": "orders",
+    "status": "success",
+    "executionTime": 4.3,
+    "runId": "dbt-history-3",
+    "runStartedAt": "2026-10-04T02:00:00Z",
+    "errorMessage": null
+  },
+  {
+    "model": "order_items",
+    "status": "error",
+    "executionTime": 4.8,
+    "runId": "dbt-history-3",
+    "runStartedAt": "2026-10-04T02:00:00Z",
+    "errorMessage": "An order item has a negative sale price.\nSELECT id, sale_price\nFROM `tv_thelook.order_items`\nWHERE created_at >= TIMESTAMP '2026-10-03 00:00:00+00'\n  AND created_at < TIMESTAMP '2026-10-04 00:00:00+00'\n  AND sale_price < 0\nORDER BY id\nLIMIT 100"
+  },
+  {
+    "model": "events",
+    "status": "skipped",
+    "executionTime": 0,
+    "runId": "dbt-history-3",
+    "runStartedAt": "2026-10-04T02:00:00Z",
+    "errorMessage": null
+  }
+]

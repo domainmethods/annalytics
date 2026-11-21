@@ -36,3 +36,10 @@ describe('labelPrompt', () => {
     expect(labelPrompt(node, [], '')).toContain(templateRules);
   });
 });
+
+describe('dbtStatus draft instruction', () => {
+  it('keeps drafted questions to what run history answers', () => {
+    const prompt = draftPrompt('dbtStatus', ['join'], '', '');
+    expect(prompt).toContain('Do not ask for rows, counts or values from the tables the models build.');
+  });
+});

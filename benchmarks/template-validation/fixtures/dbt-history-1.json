@@ -1,0 +1,26 @@
+[
+  {
+    "model": "users",
+    "status": "success",
+    "executionTime": 2.8,
+    "runId": "dbt-history-1",
+    "runStartedAt": "2026-10-02T02:00:00Z",
+    "errorMessage": null
+  },
+  {
+    "model": "orders",
+    "status": "error",
+    "executionTime": 3.1,
+    "runId": "dbt-history-1",
+    "runStartedAt": "2026-10-02T02:00:00Z",
+    "errorMessage": "An order was delivered before it shipped.\nSELECT order_id\nFROM `tv_thelook.orders`\nWHERE created_at >= TIMESTAMP '2026-10-01 00:00:00+00'\n  AND created_at < TIMESTAMP '2026-10-02 00:00:00+00'\n  AND delivered_at < shipped_at\nORDER BY order_id\nLIMIT 100"
+  },
+  {
+    "model": "order_items",
+    "status": "skipped",
+    "executionTime": 0,
+    "runId": "dbt-history-1",
+    "runStartedAt": "2026-10-02T02:00:00Z",
+    "errorMessage": null
+  }
+]
