@@ -105,7 +105,9 @@ function stdoutErrorDetail(stdout: string | undefined): string | undefined {
   const text = stdout?.trim();
   if (!text) return undefined;
   try {
-    const parsed: unknown = JSON.parse(text);
+    const json: unknown = JSON.parse(text);
+    // Like parseLabelerOutput, accept an array of events and read the last one.
+    const parsed: unknown = Array.isArray(json) ? json.at(-1) : json;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const env = parsed as Record<string, unknown>;
       const parts = [

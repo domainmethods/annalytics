@@ -131,6 +131,18 @@ it('includes the errors array from a stdout envelope without a result', async ()
     .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: error_during_execution: Tool call failed; Retry exhausted' }));
 });
 
+it('reads the last event of an array-form stdout envelope', async () => {
+  const stdout = JSON.stringify([{ type: 'system' }, { type: 'result', is_error: true, api_error_status: 529, result: 'Overloaded' }]);
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: status 529: Overloaded' }));
+});
+
+it('falls back to raw stdout when the JSON envelope has no error fields', async () => {
+  const stdout = '{"type":"result","subtype":"success"}';
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: `claude exited with code 1: ${stdout}` }));
+});
+
 it('falls back to the tail of non-JSON stdout when stderr is empty', async () => {
   const stdout = 'y'.repeat(2000) + '\nfatal: something broke';
   await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
