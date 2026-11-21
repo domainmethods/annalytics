@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -328,5 +328,14 @@ it('keeps every committed item file at its frozen digest and count', () => {
     expect(frozen, node).toBeDefined();
     expect(frozen.itemsSha256, node).toMatch(/^[0-9a-f]{64}$/);
     expect(loadItems(node, TV_ROOT, frozen.itemsSha256), node).toHaveLength(frozen.accepted);
+  }
+});
+
+it.each(['items', 'quarantine', 'fixtures'])('keeps every committed %s file template-safe', (dir) => {
+  const files = readdirSync(join(TV_ROOT, dir), { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile());
+  expect(files.length).toBeGreaterThan(0);
+  for (const file of files) {
+    const path = join(file.parentPath, file.name);
+    expect(scanTemplateSafety(readFileSync(path, 'utf8')), path).toEqual([]);
   }
 });
