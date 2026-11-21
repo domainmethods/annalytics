@@ -160,6 +160,10 @@ it.each([
   // Inline code with parentheses is scanned as SQL, not skipped.
   ['Try `SELECT COUNT(*) FROM private_dataset.customers` instead', 'private_dataset.customers'],
   ['Use `acme.analytics.orders(x)` here', 'acme.analytics.orders'],
+  // A dotted path right before a parenthesis stays a quoted identifier, in or out of a FROM list.
+  ['Use `private_dataset.customers(x)` in prose', 'private_dataset.customers'],
+  ['SELECT * FROM `private_dataset.some_tvf(1)`', 'private_dataset.some_tvf'],
+  ['Call `tv_thelook.orders_fn(SELECT 1 FROM private_dataset.customers)`', 'private_dataset.customers'],
   // Without parentheses a single-backtick span is still one quoted identifier.
   ['Use `private_dataset.customers` here', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {

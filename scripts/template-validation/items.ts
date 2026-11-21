@@ -234,12 +234,18 @@ function tokenizeReferences(
         // A double-backtick span may contain SQL. Dots with padding still join identifier segments.
         // A single-backtick span with parentheses is inline code such as `COUNT(i.id)`: BigQuery
         // table paths can't contain them, so scan it as SQL rather than as one quoted identifier.
+        // (Spaces alone don't make it SQL: a spaced single-backtick body stays an identifier.)
+        const inlineSql = !doubleBackticks && /[()]/.test(body);
+        // A dotted path right before the first parenthesis, as in `dataset.table_fn(1)`, is still a
+        // quoted identifier; only the text from the parenthesis on is scanned as SQL.
+        const callee = inlineSql ? /^[^\s()]*\.[^\s()]*(?=\()/.exec(body)?.[0] : undefined;
         if ((doubleBackticks && nestedIdentifier === undefined &&
             body.split('.').some((part) => /[\s`()]/.test(part.trim()))) ||
-            (!doubleBackticks && /[()]/.test(body))) {
+            (inlineSql && callee === undefined)) {
           collectReferences(body, references, false, ordinaryQuotes);
         } else {
-          for (const [part] of (nestedIdentifier ?? body).matchAll(quotedPart)) {
+          if (callee !== undefined) collectReferences(body.slice(callee.length), references, false, ordinaryQuotes);
+          for (const [part] of (nestedIdentifier ?? callee ?? body).matchAll(quotedPart)) {
             const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
             tokens.push({ value: part.trim(), kind, spaceBefore, ...(fenceBefore && { fenceBefore: true }),
               ...(part === '-' && { quotedHyphen: true }) });
