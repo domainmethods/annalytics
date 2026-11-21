@@ -137,6 +137,8 @@ type ScanToken = {
   spaceBefore: boolean;
   // A comment sat in the gap before this token (a comment is not a sentence break).
   commentBefore?: true;
+  // A Markdown code fence sat in the gap before this token (a fence never splits a table path).
+  fenceBefore?: true;
   quotedHyphen?: true;
 };
 
@@ -181,6 +183,7 @@ function tokenizeReferences(
   let ambiguousTripleQuote = false;
   let spaceBefore = false;
   let commentBefore = false;
+  let fenceBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
     publicProjectToken.lastIndex = start;
@@ -188,6 +191,7 @@ function tokenizeReferences(
     tokenPattern.lastIndex = start + value.length;
     if (/^(?:\s|\\[nt]|`{3})/.test(value)) {
       spaceBefore = true;
+      fenceBefore ||= value.startsWith('`');
       continue;
     }
     if (/^(?:\/\*|--|#)/.test(value)) {
@@ -228,14 +232,19 @@ function tokenizeReferences(
         const doubleBackticks = span[1] === '``';
         const nestedIdentifier = doubleBackticks ? /^`([^`]*)`$/.exec(body)?.[1] : undefined;
         // A double-backtick span may contain SQL. Dots with padding still join identifier segments.
-        if (doubleBackticks && nestedIdentifier === undefined &&
-            body.split('.').some((part) => /[\s`()]/.test(part.trim()))) {
+        // A single-backtick span with parentheses is inline code such as `COUNT(i.id)`: BigQuery
+        // table paths can't contain them, so scan it as SQL rather than as one quoted identifier.
+        if ((doubleBackticks && nestedIdentifier === undefined &&
+            body.split('.').some((part) => /[\s`()]/.test(part.trim()))) ||
+            (!doubleBackticks && /[()]/.test(body))) {
           collectReferences(body, references, false, ordinaryQuotes);
         } else {
           for (const [part] of (nestedIdentifier ?? body).matchAll(quotedPart)) {
             const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
-            tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
+            tokens.push({ value: part.trim(), kind, spaceBefore, ...(fenceBefore && { fenceBefore: true }),
+              ...(part === '-' && { quotedHyphen: true }) });
             spaceBefore = false;
+            fenceBefore = false;
           }
           commentBefore = false;
           continue;
@@ -243,8 +252,10 @@ function tokenizeReferences(
       }
     }
     const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
-    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore, ...(commentBefore && { commentBefore: true }) });
+    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore, ...(commentBefore && { commentBefore: true }),
+      ...(fenceBefore && { fenceBefore: true }) });
     spaceBefore = false;
+    fenceBefore = false;
     commentBefore = false;
   }
   return { tokens, ambiguousApostrophe, ambiguousTripleQuote };
@@ -313,7 +324,7 @@ function collectReferences(
       while (tokens[index + 1]?.value === '.') {
         const dot = tokens[index + 1];
         const next = tokens[index + 2];
-        if (!next || next.kind === 'syntax') break;
+        if (!next || next.kind === 'syntax' || next.fenceBefore) break;
         const unquotedPair = previous.kind !== 'quoted' && next.kind !== 'quoted';
         if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
         // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
