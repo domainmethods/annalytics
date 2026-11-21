@@ -146,7 +146,10 @@ const draftInstructions: Record<NodeId, string> = {
   teachingCandidate: 'Choose a supplied escalation-resolution filename (without .json) for each draft. Each fixture can be used once.',
   sqlGenerator: 'Draft answerable analytics questions with enough detail to specify an equivalent result. Each question must be answerable from the documented schema alone. Avoid organization-specific definitions.',
   supervisor: 'Use the accepted generator references and the mutation prompt.',
-  dbtStatus: 'Ask about particular models, runs and times in the supplied run-history fixtures. Use the supplied fixture keys without .json.',
+  dbtStatus: 'Ask about particular models, runs and times in the supplied run-history fixtures. ' +
+    'Ask only what the run history itself answers: statuses, errors, skips, retries, start times and durations. ' +
+    'Do not ask for rows, counts or values from the tables the models build. ' +
+    'For a join slot, ask about two or more models or runs together. Use the supplied fixture keys without .json.',
   chart: 'Draft a question and a small plausible result grid. Each row is an array of scalar values in columnNames order.',
   summaryOverride: 'Draft a question, its SQL and a small plausible result grid. Each row is an array of scalar values in columnNames order. Include totalRows.',
   metaQuestion: 'Ask a follow-up about assumptions, reasoning, confidence, or the SQL in a supplied ResponseContext. The fixture already holds the SQL, so refer to it rather than pasting it. Use the supplied fixture keys without .json.',

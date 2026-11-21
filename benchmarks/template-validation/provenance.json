@@ -1,6 +1,6 @@
 {
   "version": "tv-v1",
-  "createdAt": "2026-11-21T21:12:11.834Z",
+  "createdAt": "2026-11-21T22:27:00.476Z",
   "quorumKind": "reduced",
   "reducedQuorum": true,
   "singleFamily": false,
@@ -90,12 +90,12 @@
     },
     "dbtStatus": {
       "drafted": 40,
-      "accepted": 37,
-      "quarantined": 3,
-      "itemsSha256": "c2e5321bf8f96334b0128847232cd5af7360ff14fb90c7747693b250817adcc4",
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "af6538d28fdbd4126fd9618bc8f058e397e8a80834ece3527a77c184681df432",
       "dropRateByCategory": {
         "simple": 0,
-        "join": 0.42857142857142855,
+        "join": 0,
         "aggregate": 0,
         "time_series": 0,
         "ambiguous": 0,
