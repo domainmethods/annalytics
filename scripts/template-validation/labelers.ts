@@ -110,7 +110,7 @@ function stdoutErrorDetail(stdout: string | undefined): string | undefined {
         typeof env.subtype === 'string' && env.subtype !== 'success' ? env.subtype : '',
         typeof env.result === 'string' ? env.result.trim() : '',
         Array.isArray(env.errors)
-          ? env.errors.filter((e): e is string => typeof e === 'string').join('; ').trim()
+          ? env.errors.filter((e): e is string => typeof e === 'string').map((e) => e.trim()).filter(Boolean).join('; ')
           : '',
       ].filter(Boolean);
       if (parts.length) return parts.join(': ').slice(0, 500);

@@ -126,7 +126,7 @@ it('reports the JSON error envelope on stdout when stderr is empty', async () =>
 });
 
 it('includes the errors array from a stdout envelope without a result', async () => {
-  const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Tool call failed', 'Retry exhausted'] });
+  const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Tool call failed', '  ', 'Retry exhausted'] });
   await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
     .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: error_during_execution: Tool call failed; Retry exhausted' }));
 });
