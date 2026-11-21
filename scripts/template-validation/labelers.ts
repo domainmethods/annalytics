@@ -96,6 +96,28 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+// The claude CLI in JSON mode reports failures (quota, API errors) as a JSON envelope on
+// stdout and leaves stderr empty, so a non-zero exit needs stdout to explain itself.
+function stdoutErrorDetail(stdout: string | undefined): string | undefined {
+  const text = stdout?.trim();
+  if (!text) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const env = parsed as Record<string, unknown>;
+      const parts = [
+        env.api_error_status !== undefined && env.api_error_status !== null ? `status ${String(env.api_error_status)}` : '',
+        typeof env.subtype === 'string' && env.subtype !== 'success' ? env.subtype : '',
+        typeof env.result === 'string' ? env.result.trim() : '',
+      ].filter(Boolean);
+      if (parts.length) return parts.join(': ').slice(0, 500);
+    }
+  } catch {
+    // Not JSON; fall back to the raw tail.
+  }
+  return text.slice(-500);
+}
+
 function output(value: unknown, reportedModel: unknown): LabelerOutput {
   return typeof reportedModel === 'string' && reportedModel
     ? { value, reportedModel }
@@ -254,7 +276,7 @@ export async function runLabeler(
       await spawn(cmd, args, { cwd, timeoutMs: LABEL_TIMEOUT_MS, outputParser: cfg.outputParser });
     if (timedOut) throw new LabelerOutputError(`${cfg.id} timed out after ${LABEL_TIMEOUT_MS / 60_000} minutes`);
     if (code !== 0) {
-      const detail = stderr?.trim().slice(-500);
+      const detail = stderr?.trim().slice(-500) || stdoutErrorDetail(stdout);
       throw new LabelerOutputError(`${cfg.id} exited with code ${code}${detail ? `: ${detail}` : ''}`);
     }
     try {

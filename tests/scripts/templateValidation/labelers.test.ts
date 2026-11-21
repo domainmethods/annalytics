@@ -119,6 +119,24 @@ it('includes the end of stderr when a labeler exits non-zero', async () => {
     .rejects.toThrow(expect.objectContaining({ message: `claude exited with code 1: ${stderr.slice(-500)}` }));
 });
 
+it('reports the JSON error envelope on stdout when stderr is empty', async () => {
+  const stdout = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, api_error_status: 429, result: 'Usage limit reached' });
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: status 429: Usage limit reached' }));
+});
+
+it('falls back to the tail of non-JSON stdout when stderr is empty', async () => {
+  const stdout = 'y'.repeat(2000) + '\nfatal: something broke';
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: `claude exited with code 1: ${stdout.slice(-500)}` }));
+});
+
+it('prefers stderr over stdout when both are present', async () => {
+  const stdout = JSON.stringify({ is_error: true, result: 'from stdout' });
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: 'from stderr', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: from stderr' }));
+});
+
 it('names a labeler timeout and allows 20 minutes per batch', async () => {
   const spawn = vi.fn(async () => ({ stdout: '', stderr: 'Warning: no stdin data received', code: 1, timedOut: true }));
   await expect(runLabeler(cfg, batch, spawn, cacheDir)).rejects.toThrow(/^claude timed out after 20 minutes$/);
