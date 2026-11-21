@@ -128,6 +128,8 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
 }
 
 const publicProject = 'bigquery-public-data';
+// BigQuery function namespaces: `SAFE.DIVIDE(a, b)` is a function call, not a table-valued function.
+const FUNCTION_NAMESPACES = new Set(['SAFE', 'NET', 'HLL_COUNT', 'KEYS', 'AEAD', 'DETERMINISTIC', 'ML', 'AI', 'OBJ']);
 const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
 const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
@@ -237,11 +239,16 @@ function tokenizeReferences(
         // (Spaces alone don't make it SQL: a spaced single-backtick body stays an identifier.)
         const inlineSql = !doubleBackticks && /[()]/.test(body);
         // A dotted path right before the first parenthesis, as in `dataset.table_fn(1)`, is still a
-        // quoted identifier; only the text from the parenthesis on is scanned as SQL.
-        const callee = inlineSql ? /^[\w-]+(?:\.[\w-]+)+(?=\()/.exec(body)?.[0] : undefined;
-        if ((doubleBackticks && nestedIdentifier === undefined &&
-            body.split('.').some((part) => /[\s`()]/.test(part.trim()))) ||
-            (inlineSql && callee === undefined)) {
+        // quoted identifier; only the text from the parenthesis on is scanned as SQL. A BigQuery
+        // function namespace such as `SAFE.DIVIDE(a, b)` is a call, so the whole span is SQL.
+        // Trade-off: other SQL around a two-part path (`ds.t WHERE id IN (1)`) is scanned as prose
+        // SQL, where a two-part path outside table position is not flagged.
+        const calleeMatch = inlineSql ? /^[\w-]+(?:\.[\w-]+)+(?=\()/.exec(body)?.[0] : undefined;
+        const callee = calleeMatch !== undefined &&
+          !FUNCTION_NAMESPACES.has(calleeMatch.split('.')[0].toUpperCase()) ? calleeMatch : undefined;
+        const doubleBacktickSql = doubleBackticks && nestedIdentifier === undefined &&
+          body.split('.').some((part) => /[\s`()]/.test(part.trim()));
+        if (doubleBacktickSql || (inlineSql && callee === undefined)) {
           collectReferences(body, references, false, ordinaryQuotes);
         } else {
           if (callee !== undefined) collectReferences(body.slice(callee.length), references, false, ordinaryQuotes);
