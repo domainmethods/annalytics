@@ -124,9 +124,20 @@ export const templateRules =
   `Use BigQuery SELECT SQL over the documented views, with every physical table written as \`${TV_DATASET}.table\`. ` +
   'Use explicit time windows and deterministic sorting with LIMIT. Keep query results under 10,000 rows.';
 
+/**
+ * Nodes whose drafted inputs are messages a person types. Their drafts get these rules instead of
+ * `templateRules`, whose SQL requirement otherwise leads the drafter to paste a query into every message.
+ */
+const PLAIN_LANGUAGE_DRAFT_NODES: ReadonlySet<NodeId> = new Set(['slackIntake', 'followUpClassifier', 'metaQuestion', 'chart', 'dbtStatus']);
+
+const plainLanguageRules =
+  'Use only synthetic examples. Omit emails, project IDs and private data. ' +
+  'Write in plain language as a person would type it in Slack, and do not include SQL. ' +
+  `If you name a physical table, write it as \`${TV_DATASET}.table\`. Use explicit time windows.`;
+
 const draftInstructions: Record<NodeId, string> = {
   slackIntake: 'Draft Slack messages covering lightweight bot interactions and requests for warehouse analytics. Include borderline messages.',
-  followUpClassifier: 'Draft thread histories and final replies covering new queries, refinements, questions about the prior answer and reports of conflicting figures.',
+  followUpClassifier: 'Draft thread histories and final replies covering new queries, refinements, questions about the prior answer and reports of conflicting figures. Write each assistant turn as the bot\'s short answer summary with its figures.',
   ambiguityClassifier: 'Draft ambiguous questions with ambiguity descriptions, possible clarifying questions and thread context. Include cases resolved by organization knowledge and cases that require asking the user.',
   clarification: 'Include clear, underspecified and knowledge-dependent questions. Every ambiguous-category slot should be ambiguous with the schema alone and clear when the supplied ReferenceCard is applied. Use the remaining slots for a mix of questions that should proceed and questions that should suspend.',
   teachingCandidate: 'Choose a supplied escalation-resolution filename (without .json) for each draft. Each fixture can be used once.',
@@ -135,7 +146,7 @@ const draftInstructions: Record<NodeId, string> = {
   dbtStatus: 'Ask about particular models, runs and times in the supplied run-history fixtures. Use the supplied fixture keys without .json.',
   chart: 'Draft a question and a small plausible result grid. Each row is an array of scalar values in columnNames order.',
   summaryOverride: 'Draft a question, its SQL and a small plausible result grid. Each row is an array of scalar values in columnNames order. Include totalRows.',
-  metaQuestion: 'Ask a follow-up about assumptions, reasoning, confidence, or the SQL in a supplied ResponseContext. Use the supplied fixture keys without .json.',
+  metaQuestion: 'Ask a follow-up about assumptions, reasoning, confidence, or the SQL in a supplied ResponseContext. The fixture already holds the SQL, so refer to it rather than pasting it. Use the supplied fixture keys without .json.',
   discrepancy: 'Write a user complaint that can be diagnosed from a supplied prior ResponseContext and its SQL. Use the supplied fixture keys without .json.',
 };
 
@@ -157,7 +168,7 @@ const labelInstructions: Record<NodeId, string> = {
 export function draftPrompt(node: NodeId, categories: Category[], context: string, priorInputs: string): string {
   return [
     `Draft ${categories.length} distinct ${node} item inputs, one per slot in category order ${JSON.stringify(categories)}.`,
-    templateRules, draftInstructions[node],
+    PLAIN_LANGUAGE_DRAFT_NODES.has(node) ? plainLanguageRules : templateRules, draftInstructions[node],
     'Return the input fields only. Omit proposed labels, IDs and answers.',
     context, priorInputs,
   ].filter(Boolean).join('\n\n');
