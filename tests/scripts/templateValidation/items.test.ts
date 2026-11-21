@@ -164,6 +164,7 @@ it.each([
   ['Use `private_dataset.customers(x)` in prose', 'private_dataset.customers'],
   ['SELECT * FROM `private_dataset.some_tvf(1)`', 'private_dataset.some_tvf'],
   ['Call `tv_thelook.orders_fn(SELECT 1 FROM private_dataset.customers)`', 'private_dataset.customers'],
+  ['Set `x=acme.analytics.orders(1)` here', 'acme.analytics.orders'],
   // Without parentheses a single-backtick span is still one quoted identifier.
   ['Use `private_dataset.customers` here', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
@@ -215,6 +216,8 @@ it.each([
   'Missing permissions bigquery.jobs.create',
   // A prose number before a code fence is not joined to the fence's language tag.
   'Total selling price rose from 8,400 to 9,600.\n\n```sql\nSELECT SUM(sale_price) FROM `tv_thelook.order_items`\n```',
+  // Only an identifier path before a parenthesis stays quoted; an expression is scanned as SQL.
+  'Revenue per order is `o.revenue/NULLIF(COUNT(o.id), 0)`, and `1.0*COUNT(i.id)` scales it.',
   // A fence between a name and a following dot also ends the chain.
   'Totals rose from 8,400 to 9,600\n```\n.sql files are attached',
   // Inline code naming functions is not a quoted table path.

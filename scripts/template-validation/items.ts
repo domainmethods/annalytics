@@ -238,7 +238,7 @@ function tokenizeReferences(
         const inlineSql = !doubleBackticks && /[()]/.test(body);
         // A dotted path right before the first parenthesis, as in `dataset.table_fn(1)`, is still a
         // quoted identifier; only the text from the parenthesis on is scanned as SQL.
-        const callee = inlineSql ? /^[^\s()]*\.[^\s()]*(?=\()/.exec(body)?.[0] : undefined;
+        const callee = inlineSql ? /^[\w-]+(?:\.[\w-]+)+(?=\()/.exec(body)?.[0] : undefined;
         if ((doubleBackticks && nestedIdentifier === undefined &&
             body.split('.').some((part) => /[\s`()]/.test(part.trim()))) ||
             (inlineSql && callee === undefined)) {
