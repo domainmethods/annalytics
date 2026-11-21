@@ -129,7 +129,7 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
 
 const publicProject = 'bigquery-public-data';
 // BigQuery function namespaces: `SAFE.DIVIDE(a, b)` is a function call, not a table-valued function.
-const FUNCTION_NAMESPACES = new Set(['SAFE', 'NET', 'HLL_COUNT', 'KEYS', 'AEAD', 'DETERMINISTIC', 'ML', 'AI', 'OBJ']);
+const FUNCTION_NAMESPACES = new Set(['SAFE', 'NET', 'HLL_COUNT', 'KEYS', 'AEAD', 'ML', 'AI', 'OBJ']);
 const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
 const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
