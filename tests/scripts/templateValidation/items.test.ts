@@ -155,6 +155,20 @@ it.each([
   // WITH OFFSET inside a FROM list does not end it.
   ['FROM tv_thelook.orders, UNNEST(o.items) WITH OFFSET AS i, private_dataset.customers', 'private_dataset.customers'],
   ['Permission denied: SELECT * FROM bigquery.tables.update', 'bigquery.tables.update'],
+  // A fence only ends a dot chain; a table path inside the fenced SQL is still scanned.
+  ['Totals rose from 8,400 to 9,600.\n\n```sql\nSELECT 1 FROM private_dataset.customers\n```', 'private_dataset.customers'],
+  // Inline code with parentheses is scanned as SQL, not skipped.
+  ['Try `SELECT COUNT(*) FROM private_dataset.customers` instead', 'private_dataset.customers'],
+  ['Use `acme.analytics.orders(x)` here', 'acme.analytics.orders'],
+  // A dotted path right before a parenthesis stays a quoted identifier, in or out of a FROM list.
+  ['Use `private_dataset.customers(x)` in prose', 'private_dataset.customers'],
+  ['SELECT * FROM `private_dataset.some_tvf(1)`', 'private_dataset.some_tvf'],
+  ['Call `tv_thelook.orders_fn(SELECT 1 FROM private_dataset.customers)`', 'private_dataset.customers'],
+  ['Set `x=acme.analytics.orders(1)` here', 'acme.analytics.orders'],
+  // A namespace call is still scanned as SQL, so a table inside it is flagged.
+  ['Use `SAFE.DIVIDE((SELECT COUNT(*) FROM private_dataset.customers), 2)`', 'private_dataset.customers'],
+  // Without parentheses a single-backtick span is still one quoted identifier.
+  ['Use `private_dataset.customers` here', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
 });
@@ -202,6 +216,18 @@ it.each([
   'FROM private_dataset. Customers',
   'Access Denied: Table tv_thelook.distribution_centers: Permission bigquery.tables.update denied on table tv_thelook.distribution_centers',
   'Missing permissions bigquery.jobs.create',
+  // A prose number before a code fence is not joined to the fence's language tag.
+  'Total selling price rose from 8,400 to 9,600.\n\n```sql\nSELECT SUM(sale_price) FROM `tv_thelook.order_items`\n```',
+  // A BigQuery function namespace before a parenthesis is a call, not a table-valued function.
+  'Use `SAFE.DIVIDE(a, b)` to avoid divide-by-zero, or `NET.HOST(url)`.',
+  // A fence after a name with no dot does not matter.
+  'Total was 9,600\n```sql\nSELECT 1\n```',
+  // Only an identifier path before a parenthesis stays quoted; an expression is scanned as SQL.
+  'Revenue per order is `o.revenue/NULLIF(COUNT(o.id), 0)`, and `1.0*COUNT(i.id)` scales it.',
+  // A fence between a name and a following dot also ends the chain.
+  'Totals rose from 8,400 to 9,600\n```\n.sql files are attached',
+  // Inline code naming functions is not a quoted table path.
+  'I changed `COUNT(i.id)` to `COUNT(*)`. Which row is mine counting?',
   'Flag it if the two sides came from different builds.\n\nSELECT u.traffic_source AS signup_source, e.event_type FROM tv_thelook.users u JOIN tv_thelook.events e ON e.user_id = u.id',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
