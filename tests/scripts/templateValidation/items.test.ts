@@ -10,6 +10,7 @@ import {
   scanTemplateSafety,
 } from '../../../scripts/template-validation/items.js';
 import { TV_ROOT } from '../../../scripts/template-validation/warehouse.js';
+import { NODE_IDS } from '../../../src/agents/nodeProfiles.js';
 
 let root: string;
 
@@ -315,4 +316,16 @@ note${quote}`;
   return [['raw', quote, sql], ['serialized', quote, JSON.stringify({ sql })]];
 }))('retains FROM-list detections in %s SQL with ambiguous %s', (_format, _quote, input) => {
   expect(scanTemplateSafety(input)).toContain('Foreign table reference: private_dataset.customers');
+});
+
+it('keeps every committed item file at its frozen digest and count', () => {
+  const provenance = JSON.parse(readFileSync(join(TV_ROOT, 'provenance.json'), 'utf8')) as {
+    version: string; perNode: Record<string, { accepted: number; itemsSha256: string }>;
+  };
+  expect(provenance.version).toBe(readFileSync(join(TV_ROOT, 'VERSION'), 'utf8').trim());
+  for (const node of NODE_IDS) {
+    const frozen = provenance.perNode[node];
+    expect(frozen, node).toBeDefined();
+    expect(loadItems(node, TV_ROOT, frozen.itemsSha256), node).toHaveLength(frozen.accepted);
+  }
 });
