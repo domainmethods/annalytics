@@ -125,8 +125,11 @@ export const templateRules =
   'Use explicit time windows and deterministic sorting with LIMIT. Keep query results under 10,000 rows.';
 
 /**
- * Nodes whose drafted inputs are messages a person types. Their drafts get these rules instead of
- * `templateRules`, whose SQL requirement otherwise leads the drafter to paste a query into every message.
+ * Nodes whose drafted inputs are messages a person types and whose tv-v1 drafts pasted SQL into them.
+ * Their drafts get these rules instead of `templateRules`, whose SQL requirement led the drafter to paste
+ * a query into every message. ambiguityClassifier, clarification and discrepancy also take typed text but
+ * barely leaked SQL, so they stay on `templateRules`; the labeling cache is keyed on prompt text, and
+ * switching them would redraft and relabel them.
  */
 const PLAIN_LANGUAGE_DRAFT_NODES: ReadonlySet<NodeId> = new Set(['slackIntake', 'followUpClassifier', 'metaQuestion', 'chart', 'dbtStatus']);
 

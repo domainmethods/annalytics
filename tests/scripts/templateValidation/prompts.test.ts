@@ -14,7 +14,9 @@ describe('draftPrompt', () => {
     },
   );
 
-  it.each(['sqlGenerator', 'summaryOverride', 'clarification', 'ambiguityClassifier', 'discrepancy'] as const)(
+  it.each([
+    'sqlGenerator', 'supervisor', 'summaryOverride', 'clarification', 'ambiguityClassifier', 'discrepancy', 'teachingCandidate',
+  ] as const)(
     'keeps the shared template rules for %s',
     (node) => {
       expect(draftPrompt(node, ['simple'], '', '')).toContain(templateRules);
