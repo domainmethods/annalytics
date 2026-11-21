@@ -97,6 +97,9 @@ it.each([
   ['FROM `123.456`', '123.456'],
   ['Use EXTRACT(YEAR FROM d FROM private_dataset.customers', 'private_dataset.customers'],
   ['Use EXTRACT( then SELECT * FROM private_dataset.customers', 'private_dataset.customers'],
+  // Only IS [NOT] DISTINCT FROM is a comparison; a bare DISTINCT before FROM is not.
+  ['SELECT a.x IS DISTINCT FROM b.y FROM private_dataset.customers', 'private_dataset.customers'],
+  ['SELECT DISTINCT FROM private_dataset.customers', 'private_dataset.customers'],
   ['We extract (from private_dataset.customers) the rows.', 'private_dataset.customers'],
   ['SELECT EXTRACT(YEAR, MONTH FROM private_dataset.customers)', 'private_dataset.customers'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
@@ -207,6 +210,9 @@ it.each([
   'SELECT EXTRACT(YEAR FROM u.created_at) AS signup_year FROM tv_thelook.users u',
   'SELECT EXTRACT(DATE FROM o.created_at AT TIME ZONE "UTC") FROM tv_thelook.orders o',
   'SELECT EXTRACT(WEEK(MONDAY) FROM o.created_at) FROM tv_thelook.orders o',
+  // IS [NOT] DISTINCT FROM compares two expressions; its FROM does not start a table list.
+  'SELECT 1 FROM tv_thelook.products AS sold WHERE sold.category IS DISTINCT FROM reported.category',
+  'WHERE a.x is not distinct from b.y, c.z',
   'select extract(isoweek from o.created_at) from tv_thelook.orders o',
   'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
   'Revenue grew from 1.25 to 3.5 million.',

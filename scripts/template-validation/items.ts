@@ -298,6 +298,14 @@ function isExtractKeywordFrom(tokens: ScanToken[], index: number): boolean {
     /^EXTRACT$/i.test(tokens[part - 2]?.value ?? '');
 }
 
+/** True when the FROM at `index` ends the comparison `IS [NOT] DISTINCT FROM`, which takes an expression. */
+function isDistinctKeywordFrom(tokens: ScanToken[], index: number): boolean {
+  if (!/^FROM$/i.test(tokens[index]?.value ?? '') || tokens[index].kind !== 'name') return false;
+  const word = (offset: number) => tokens[index - offset]?.kind === 'name' ? tokens[index - offset].value : '';
+  if (!/^DISTINCT$/i.test(word(1))) return false;
+  return /^IS$/i.test(word(2)) || (/^NOT$/i.test(word(2)) && /^IS$/i.test(word(3)));
+}
+
 function collectReferences(
   text: string, references: Set<string>, serializedApostrophes = false, ordinaryQuotes = false,
 ): void {
@@ -385,7 +393,7 @@ function collectReferences(
         (tablePosition && /^WITH$/i.test(token.value))) {
       fromLists[depth] = false;
       tablePosition = false;
-    } else if (isExtractKeywordFrom(tokens, index)) {
+    } else if (isExtractKeywordFrom(tokens, index) || isDistinctKeywordFrom(tokens, index)) {
       tablePosition = false;
     } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;
