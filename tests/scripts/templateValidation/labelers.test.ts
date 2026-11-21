@@ -125,6 +125,12 @@ it('reports the JSON error envelope on stdout when stderr is empty', async () =>
     .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: status 429: Usage limit reached' }));
 });
 
+it('includes the errors array from a stdout envelope without a result', async () => {
+  const stdout = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['Tool call failed', 'Retry exhausted'] });
+  await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))
+    .rejects.toThrow(expect.objectContaining({ message: 'claude exited with code 1: error_during_execution: Tool call failed; Retry exhausted' }));
+});
+
 it('falls back to the tail of non-JSON stdout when stderr is empty', async () => {
   const stdout = 'y'.repeat(2000) + '\nfatal: something broke';
   await expect(runLabeler(cfg, batch, async () => ({ stdout, stderr: '', code: 1 }), cacheDir))

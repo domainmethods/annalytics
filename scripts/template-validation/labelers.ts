@@ -109,6 +109,9 @@ function stdoutErrorDetail(stdout: string | undefined): string | undefined {
         env.api_error_status !== undefined && env.api_error_status !== null ? `status ${String(env.api_error_status)}` : '',
         typeof env.subtype === 'string' && env.subtype !== 'success' ? env.subtype : '',
         typeof env.result === 'string' ? env.result.trim() : '',
+        Array.isArray(env.errors)
+          ? env.errors.filter((e): e is string => typeof e === 'string').join('; ').trim()
+          : '',
       ].filter(Boolean);
       if (parts.length) return parts.join(': ').slice(0, 500);
     }
