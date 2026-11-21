@@ -211,6 +211,8 @@ it.each([
   'Missing permissions bigquery.jobs.create',
   // A prose number before a code fence is not joined to the fence's language tag.
   'Total selling price rose from 8,400 to 9,600.\n\n```sql\nSELECT SUM(sale_price) FROM `tv_thelook.order_items`\n```',
+  // A fence between a name and a following dot also ends the chain.
+  'Totals rose from 8,400 to 9,600\n```\n.sql files are attached',
   // Inline code naming functions is not a quoted table path.
   'I changed `COUNT(i.id)` to `COUNT(*)`. Which row is mine counting?',
   'Flag it if the two sides came from different builds.\n\nSELECT u.traffic_source AS signup_source, e.event_type FROM tv_thelook.users u JOIN tv_thelook.events e ON e.user_id = u.id',

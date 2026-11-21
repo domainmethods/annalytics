@@ -324,7 +324,7 @@ function collectReferences(
       while (tokens[index + 1]?.value === '.') {
         const dot = tokens[index + 1];
         const next = tokens[index + 2];
-        if (!next || next.kind === 'syntax' || next.fenceBefore) break;
+        if (!next || next.kind === 'syntax' || dot.fenceBefore || next.fenceBefore) break;
         const unquotedPair = previous.kind !== 'quoted' && next.kind !== 'quoted';
         if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
         // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
