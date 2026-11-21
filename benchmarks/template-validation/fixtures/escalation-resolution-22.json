@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-22",
+  "originalQuestion": "What number did we sign off for February shipments?",
+  "clarifiedQuestion": "What February 2025 shipped-order total appears in the signed-off sample report?",
+  "humanResponse": "The signed-off report shows 184 shipped orders.",
+  "failedSql": null,
+  "supervisorNotes": "The requester needed the value from the archived report."
+}

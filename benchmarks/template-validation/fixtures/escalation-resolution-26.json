@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-26",
+  "originalQuestion": "Why does our February closing stock change when we rerun it?",
+  "clarifiedQuestion": "Of units stocked in January or February 2025 UTC, how many in each recorded product category were on hand immediately before March 1 UTC?",
+  "humanResponse": "Count a unit if its sale timestamp is missing or falls on or after March 1. A unit sold in March was still on hand at the February close.\n\n```sql\nSELECT product_category, COUNT(*) AS units_on_hand\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND (sold_at IS NULL OR sold_at >= TIMESTAMP '2025-03-01 00:00:00 UTC')\nGROUP BY product_category\nORDER BY units_on_hand DESC, product_category ASC\nLIMIT 1000\n```",
+  "failedSql": "SELECT product_category, COUNT(*) AS units_on_hand\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND sold_at IS NULL\nGROUP BY product_category\nORDER BY units_on_hand DESC, product_category ASC\nLIMIT 1000",
+  "supervisorNotes": null
+}

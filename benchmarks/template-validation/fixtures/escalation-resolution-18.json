@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-18",
+  "originalQuestion": "Was the tie on the July brand leaderboard a typo?",
+  "clarifiedQuestion": "Did the approved July 2025 UTC practice leaderboard show both leading brands at 26 units?",
+  "humanResponse": "Yes. I checked the approved leaderboard. Both brands finished at 26 units.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

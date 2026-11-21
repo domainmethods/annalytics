@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-5",
+  "originalQuestion": "Where is the second April inventory report?",
+  "clarifiedQuestion": "Did the two requests for the April 2025 UTC inventory summary call for separate deliverables?",
+  "humanResponse": "Both requests were for the same summary. The requester accepted the copy in the April review packet and closed the duplicate.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

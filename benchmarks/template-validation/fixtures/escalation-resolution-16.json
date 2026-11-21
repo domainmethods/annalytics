@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-16",
+  "originalQuestion": "Did the empty May returns card mean zero, or was the number missing?",
+  "clarifiedQuestion": "What did the reviewer intend the blank card to communicate in the May 2025 training handout?",
+  "humanResponse": "The reviewer had withheld the figure pending sign-off. The handout now says “Awaiting review” where the blank appeared.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

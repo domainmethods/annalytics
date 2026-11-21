@@ -295,15 +295,13 @@ it('loads JSON fixtures by name from the supplied root', () => {
 it.each([
   ['slackIntake', 14],
   ['followUpClassifier', 12],
-] as const)('loads all %s seeds with stable hashes and manual provenance', (node, count) => {
+] as const)('keeps all %s seeds alongside labeled items with stable hashes', (node, count) => {
   const items = loadItems(node);
-  expect(items).toHaveLength(count);
-  expect(new Set(items.map((item) => item.id)).size).toBe(count);
-  for (const item of items) {
-    expect(item.source).toBe('manual');
-    expect(item.agreement).toEqual({ members: ['manual'] });
-    expect(item.inputHash).toBe(hashItemInput(item));
-  }
+  const seeds = items.filter((item) => item.source === 'manual');
+  expect(seeds).toHaveLength(count);
+  expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+  for (const item of seeds) expect(item.agreement).toEqual({ members: ['manual'] });
+  for (const item of items) expect(item.inputHash).toBe(hashItemInput(item));
   expect(scanTemplateSafety(readFileSync(join(TV_ROOT, 'items', node + '.jsonl'), 'utf8'))).toEqual([]);
 });
 

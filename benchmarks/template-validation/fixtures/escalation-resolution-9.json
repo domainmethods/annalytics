@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-9",
+  "originalQuestion": "Does someone who ordered five times count five times in the repeat-buyer total?",
+  "clarifiedQuestion": "How many distinct customers placed at least two orders during September 2025 UTC? Include every order status.",
+  "humanResponse": "First group September orders by customer and keep customers with at least two orders. Each remaining row represents one repeat buyer, including buyers who placed five orders.\n\n```sql\nSELECT COUNT(*) AS repeat_buyers\nFROM (\n  SELECT user_id\n  FROM `tv_thelook.orders`\n  WHERE created_at >= TIMESTAMP '2025-09-01 00:00:00 UTC'\n    AND created_at < TIMESTAMP '2025-10-01 00:00:00 UTC'\n    AND user_id IS NOT NULL\n  GROUP BY user_id\n  HAVING COUNT(*) >= 2\n) AS repeat_customers\nORDER BY repeat_buyers\nLIMIT 1\n```",
+  "failedSql": null,
+  "supervisorNotes": "Two purchases qualify only when both fall within the reporting month."
+}

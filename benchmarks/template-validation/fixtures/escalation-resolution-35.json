@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-35",
+  "originalQuestion": "Did units stocked late in October sell more slowly?",
+  "clarifiedQuestion": "For each UTC stock date in October 2025, what percentage of units sold within their first 168 hours? Count sales at stocking time and exclude sales at exactly 168 hours.",
+  "humanResponse": "Give every unit its full 168-hour window, including units stocked on October 31. Keep unsold units in the denominator.\n\n```sql\nSELECT DATE(created_at, 'UTC') AS stock_date,\n       ROUND(100 * SAFE_DIVIDE(\n         COUNTIF(sold_at >= created_at AND sold_at < TIMESTAMP_ADD(created_at, INTERVAL 168 HOUR)),\n         COUNT(*)\n       ), 2) AS sold_within_168h_pct\nFROM `tv_thelook.inventory_items`\nWHERE created_at >= TIMESTAMP '2025-10-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-11-01 00:00:00 UTC'\nGROUP BY stock_date\nORDER BY stock_date ASC\nLIMIT 31\n```",
+  "failedSql": null,
+  "supervisorNotes": "A unit stocked on October 31 and sold on November 2 qualifies."
+}

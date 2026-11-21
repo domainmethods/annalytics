@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-3",
+  "originalQuestion": "Should the returns slide say 48 or 84?",
+  "clarifiedQuestion": "Which total did the reviewer approve for the June 2025 UTC returns slide in the training deck?",
+  "humanResponse": "Use 84. The reviewer signed off on that figure in the final proof.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

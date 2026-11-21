@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-40",
+  "originalQuestion": "Why did a category tied for third disappear from the returns ranking?",
+  "clarifiedQuestion": "For items returned in December 2025 UTC, list the categories with the three highest distinct return counts. Include every category tied at a qualifying count.",
+  "humanResponse": "Rank the category counts with DENSE_RANK. Use the category name only to order the final display so tied counts receive the same rank.\n\n```sql\nWITH counts AS (\n  SELECT p.category, COUNT(*) AS returned_items\n  FROM `tv_thelook.order_items` AS i\n  JOIN `tv_thelook.products` AS p ON p.id = i.product_id\n  WHERE i.returned_at >= TIMESTAMP '2025-12-01 00:00:00 UTC'\n    AND i.returned_at < TIMESTAMP '2026-01-01 00:00:00 UTC'\n  GROUP BY p.category\n)\nSELECT category, returned_items, DENSE_RANK() OVER (ORDER BY returned_items DESC) AS count_rank\nFROM counts\nQUALIFY count_rank <= 3\nORDER BY returned_items DESC, category ASC\nLIMIT 9999\n```",
+  "failedSql": "SELECT p.category, COUNT(*) AS returned_items\nFROM `tv_thelook.order_items` AS i\nJOIN `tv_thelook.products` AS p ON p.id = i.product_id\nWHERE i.returned_at >= TIMESTAMP '2025-12-01 00:00:00 UTC'\n  AND i.returned_at < TIMESTAMP '2026-01-01 00:00:00 UTC'\nGROUP BY p.category\nORDER BY returned_items DESC, p.category ASC\nLIMIT 3",
+  "supervisorNotes": "The review case had category counts of 9, 7, 4, and 4. All four categories qualified."
+}

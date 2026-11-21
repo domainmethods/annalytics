@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-32",
+  "originalQuestion": "What was the September ad spend?",
+  "clarifiedQuestion": "What amount did the campaign owner approve for the September 2025 sample spend report?",
+  "humanResponse": "The campaign owner confirmed the approved amount was $2,400.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

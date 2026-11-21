@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-27",
+  "originalQuestion": "Why does one visit appear under two traffic sources?",
+  "clarifiedQuestion": "Assign sessions that started in June 2025 UTC to the traffic source on their first event. How many sessions started under each source?",
+  "humanResponse": "Use the event at sequence position 1 for both the session start time and its source. Later events can carry another source.\n\n```sql\nSELECT traffic_source, COUNT(DISTINCT session_id) AS sessions\nFROM `tv_thelook.events`\nWHERE created_at >= TIMESTAMP '2025-06-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND sequence_number = 1\n  AND session_id IS NOT NULL\nGROUP BY traffic_source\nORDER BY sessions DESC, traffic_source ASC\nLIMIT 100\n```",
+  "failedSql": "SELECT traffic_source, COUNT(DISTINCT session_id) AS sessions\nFROM `tv_thelook.events`\nWHERE created_at >= TIMESTAMP '2025-06-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-07-01 00:00:00 UTC'\n  AND session_id IS NOT NULL\nGROUP BY traffic_source\nORDER BY sessions DESC, traffic_source ASC\nLIMIT 100",
+  "supervisorNotes": "The sample included a visit whose source changed on the second event."
+}

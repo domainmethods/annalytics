@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-28",
+  "originalQuestion": "Which browser led the spring sample?",
+  "clarifiedQuestion": "Which browser was listed first in the approved March–May 2025 event-volume table?",
+  "humanResponse": "Chrome was first in the approved table.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

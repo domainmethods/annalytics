@@ -9,7 +9,7 @@ This document records the current development trajectory for Anna Lytics. Read *
 
 Update this document whenever a major product direction, feature deferral, benchmark result, or adversarial audit changes the trajectory — and when you do, update the head sections (Current State, Current Decision, Deferred Work) rather than only appending a dated entry. Dated entries go in the Evidence Log.
 
-## Current State (as of 2026-11-19)
+## Current State (as of 2026-11-21)
 
 The codebase is healthy: typecheck clean, the test suite passing, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships. The 2026-07-02 reconciliation (Evidence Log) records the first realized instance of that risk, in channel form: the WhatsApp prototype grew an interactive control surface (commit `b7a6158`) without the same-change-set governance update the Maintenance Protocol requires; the prototype is now capped until its manual acceptance evidence is recorded (Current Decision #5). A 2026-11-18 full-codebase audit filed its findings as issues and the resulting defect-fix tranche (PRs #126–#149: transactional thread leases and rate limits, conversation-scoped thread state, the escalation resolution claim, bounded response persistence, final-SQL revalidation, expired-context handling, export quoting) is trust maintenance under guardrail #1; it changes no tranche, gate, or deferral (Evidence Log 2026-11-19).
 
@@ -21,7 +21,7 @@ The codebase is healthy: typecheck clean, the test suite passing, module boundar
 | Teaching validation gates | Implemented; runs in PR CI |
 | Feedback loop (2026-06-07 plan) | Items (1) aggregation and (2) feedback-notes reader: done. Item (3) teaching impact measurement: **absent** (deferred — see Deferred Work). Item (4) side bar: only the prerequisite ambiguity classifier exists. |
 | Confidence calibration | Latest verdict (2026-06-12 post-repair acceptance run): `FAIL` — back to bucket absence (no medium-confidence results in the slice; low 3 total / 2 wrong, high 23 total / 0 wrong; low remains below `minSample=5`). The low-bucket "wrong" count is judge noise on correctly-suspended ambiguous cases (see Evidence Log). Mean judge score 4.47/5, 0/26 flagged. Side bar stays deferred per T3 #2; a future slice must produce all three buckets at sample before the side bar can activate. |
-| Node sizing | Model refresh via template validation set is active (T3 #1). The first live refresh is pending. Since 2026-11-19 the three classifiers (`slackIntake`, `followUpClassifier`, `ambiguityClassifier`) default to PROVISIONAL `flash-lite/3.5@low`, an owner judgment call on tv-v1 pilot evidence that the frozen tv-v1 sweep must confirm or revert (Evidence Log). |
+| Node sizing | Model refresh via template validation set is active (T3 #1). The tv-v1 set is frozen (2026-11-21, reduced two-family quorum; `discrepancy` underfilled) and the first live refresh is pending owner authorization. Since 2026-11-19 the three classifiers (`slackIntake`, `followUpClassifier`, `ambiguityClassifier`) default to PROVISIONAL `flash-lite/3.5@low`, an owner judgment call on tv-v1 pilot evidence that the frozen tv-v1 sweep must confirm or revert (Evidence Log). |
 | Routine query fast path | Committed, default-off (`FAST_PATH_ENABLED=false`); inert without File Search store + knowledge summaries, so inert in the template |
 | Latency evidence slice | Not yet run (requires implementation corpus) |
 | Operational trust (Firestore retention, telemetry sink, escalation timers, ✅-reaction promise) | **Completed 2026-06-09** — all four Tranche B items shipped; acceptance criteria satisfied (Evidence Log) |
@@ -563,3 +563,22 @@ The full-path quality loop passed the clarified question to the supervisor twice
 - **Confirms:** the frozen tv-v1 `sweep:template` run (T3 #1's first live refresh) returns `flash-lite/3.5@low` as Applicable for each classifier. The `DEFAULTS` comments then cite that set version and date as TEMPLATE-MEASURED.
 - **Reverts:** that sweep picks a cheaper point within ε for any classifier, or production intake latency or fallback telemetry regresses. That node then returns to its sweep pick, or to `flash-lite/3.1@minimal`.
 - **Instrument caveat (2026-11-21):** the pilot items were drafted under the shared rule that asks every drafter for BigQuery SQL, and the full tv-v1 run showed the drafter pasting a query into every drafted `slackIntake` message (26/26). So the pilot measured intake on an unrealistic input distribution, which weakens this already one-item signal further. The five message-like nodes (`slackIntake`, `followUpClassifier`, `metaQuestion`, `chart`, `dbtStatus`) now draft under plain-language rules (PR #225) and are redrafted before tv-v1 is frozen. The frozen tv-v1 sweep remains the confirm/revert gate.
+
+### 2026-11-21 - tv-v1 template validation set frozen
+
+- **Decision:** freeze tv-v1 (`benchmarks/template-validation/items/`, `fixtures/`, `quarantine/`, `provenance.json`). The set is synthetic data over `bigquery-public-data.thelook_ecommerce` and passed the template-safety scan. Re-labeling now requires bumping `VERSION`.
+- **Reduced quorum, accepted:** the Claude labeler was disabled after repeated safety-classifier refusals on labeling prompts, and the prompts were not rewritten to avoid them. The set was labeled by two families, OpenAI (`codex`) and Google (`agy`), with `codex` also drafting. `provenance.json` records `quorumKind: reduced`. Because the drafter is also a quorum member, the bias guard's quorum-member-winner flag and the per-category drop rates matter more when reading the sweep.
+- **SQL leakage repaired before freeze:** the run before PR #225 drafted message-like inputs with pasted SQL. The redraft under plain-language rules removed it:
+
+  | Node | Drafted items with SQL, before | After |
+  |---|---|---|
+  | `slackIntake` | 26/26 | 0 |
+  | `followUpClassifier` | 28/28 | 0 |
+  | `metaQuestion` | 37/37 | 0 |
+  | `chart` | 16/38 | 0 |
+  | `dbtStatus` | 5/40 | 0 |
+
+- **Human review dropped 5 accepted items** (moved to `quarantine/` with a `reason`, counted as quarantined in provenance): 3 `dbtStatus` questions that asked for warehouse data in `tv_thelook` instead of dbt run status, a `followUpClassifier` item labeled `discrepancy` whose figures actually agree, and a `followUpClassifier` closing acknowledgement labeled `meta_question` that fits no intent.
+- **Frozen counts (accepted):** `slackIntake` 40, `followUpClassifier` 36, `ambiguityClassifier` 37, `clarification` 40, `teachingCandidate` 23, `sqlGenerator` 94, `dbtStatus` 37, `chart` 33, `summaryOverride` 40, `metaQuestion` 40, `discrepancy` 15, `supervisor` 100.
+- **`discrepancy` frozen at 15 of 40:** under the underfilled rule (accepted below half of target) its sweep row reports *not applicable*, so `discrepancy` keeps its current default after this refresh. Filling it needs a new set version.
+- **Next:** the frozen-set `sweep:template` run (T3 #1's first live refresh). It is billed and runs only on explicit owner authorization. It is also the confirm/revert gate for the PROVISIONAL classifier default (2026-11-19 entry).

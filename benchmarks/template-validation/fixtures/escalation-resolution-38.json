@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-38",
+  "originalQuestion": "Is our basket average really that low?",
+  "clarifiedQuestion": "For orders created December 1–7, 2025 UTC, what was the average basket value by UTC order date? Include orders with at least one line and a price on every line, regardless of status.",
+  "humanResponse": "Add up the line prices for each eligible order before taking the daily average. This gives each basket one observation.\n\n```sql\nWITH baskets AS (\n  SELECT DATE(o.created_at, 'UTC') AS order_date, o.order_id, SUM(i.sale_price) AS basket_value\n  FROM `tv_thelook.orders` AS o\n  JOIN `tv_thelook.order_items` AS i ON i.order_id = o.order_id\n  WHERE o.created_at >= TIMESTAMP '2025-12-01 00:00:00 UTC'\n    AND o.created_at < TIMESTAMP '2025-12-08 00:00:00 UTC'\n  GROUP BY order_date, o.order_id\n  HAVING COUNT(i.sale_price) = COUNT(*)\n)\nSELECT order_date, ROUND(AVG(basket_value), 2) AS mean_basket_value\nFROM baskets\nGROUP BY order_date\nORDER BY order_date ASC\nLIMIT 7\n```",
+  "failedSql": null,
+  "supervisorNotes": null
+}

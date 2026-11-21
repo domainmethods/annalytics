@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-14",
+  "originalQuestion": "The two April dashboard proofs have different totals. Which proof is current?",
+  "clarifiedQuestion": "Identify the approved proof for the April 2025 UTC dashboard print run.",
+  "humanResponse": "Use proof B for printing. The reviewer initialed that copy and moved proof A to the archive.",
+  "failedSql": null,
+  "supervisorNotes": "The printer acknowledged receipt of proof B."
+}

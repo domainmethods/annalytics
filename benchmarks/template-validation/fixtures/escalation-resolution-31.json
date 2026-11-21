@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-31",
+  "originalQuestion": "Can the returns chart show every day of the week?",
+  "clarifiedQuestion": "Show daily order returns for August 4–10, 2025 UTC, including a zero for each day with no returns.",
+  "humanResponse": "Start with all seven dates and left join the daily counts. This gives a quiet day a row of its own.\n\n```sql\nWITH daily AS (\n  SELECT DATE(returned_at, 'UTC') AS day, COUNT(*) AS returned_orders\n  FROM `tv_thelook.orders`\n  WHERE returned_at >= TIMESTAMP '2025-08-04 00:00:00 UTC'\n    AND returned_at < TIMESTAMP '2025-08-11 00:00:00 UTC'\n  GROUP BY day\n)\nSELECT report_day, COALESCE(daily.returned_orders, 0) AS returned_orders\nFROM UNNEST(GENERATE_DATE_ARRAY(DATE '2025-08-04', DATE '2025-08-10')) AS report_day\nLEFT JOIN daily ON daily.day = report_day\nORDER BY report_day ASC\nLIMIT 7\n```",
+  "failedSql": "SELECT DATE(returned_at, 'UTC') AS day, COUNT(*) AS returned_orders\nFROM `tv_thelook.orders`\nWHERE returned_at >= TIMESTAMP '2025-08-04 00:00:00 UTC'\n  AND returned_at < TIMESTAMP '2025-08-11 00:00:00 UTC'\nGROUP BY day\nORDER BY day ASC\nLIMIT 7",
+  "supervisorNotes": null
+}
