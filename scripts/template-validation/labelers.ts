@@ -97,7 +97,10 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 // The claude CLI in JSON mode reports failures (quota, API errors) as a JSON envelope on
-// stdout and leaves stderr empty, so a non-zero exit needs stdout to explain itself.
+// stdout and leaves stderr empty, so a non-zero exit needs stdout to explain itself. The
+// envelope fields are claude's; other CLIs' stdout falls through to the raw tail. The two
+// paths truncate differently on purpose: the envelope summary leads with its status, so it
+// keeps the head, while raw CLI output usually ends with the error, so it keeps the tail.
 function stdoutErrorDetail(stdout: string | undefined): string | undefined {
   const text = stdout?.trim();
   if (!text) return undefined;
