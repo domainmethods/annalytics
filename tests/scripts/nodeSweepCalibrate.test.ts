@@ -42,9 +42,10 @@ describe('computeEpsilon', () => {
     expect(computeEpsilon([0.9, 0.8, 0.7], [0.9, 0.6, 0.7], 0.01, 1)).toBeCloseTo(0.06667, 4);
   });
 
-  it('returns the floor with fewer than two shared cases', () => {
-    expect(computeEpsilon([0.9], [0.1])).toBe(0.01);
-    expect(computeEpsilon([], [])).toBe(0.01);
+  it('throws with fewer than two shared cases instead of returning the floor', () => {
+    expect(() => computeEpsilon([0.9], [0.1])).toThrow(/at least 2 id-aligned cases.*got 1/);
+    expect(() => computeEpsilon([], [])).toThrow(/got 0/);
+    expect(() => computeEpsilon([0.9, 0.8], [0.9])).toThrow(/got 1/);
   });
 
   it('compares only over the shorter length when runs differ in size', () => {

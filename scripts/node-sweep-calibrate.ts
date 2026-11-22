@@ -8,17 +8,22 @@
  * between two single-run means, at z = 2 (about 95%). The two runs are
  * replicates of one baseline, so the spread is measured around 0, not
  * around the observed mean difference; centering on that mean would hide a
- * run-wide drift. The band is also never below the observed drift |mean(d)|. A single flipped case on a 40-case
- * corpus therefore moves ε by ~0.03 instead of setting it to that case's
- * whole swing, which made every candidate tie.
+ * run-wide drift. The band is also never below the observed drift |mean(d)|.
+ * A single flipped case on a 40-case corpus therefore moves ε by ~0.03
+ * instead of setting it to that case's whole swing, which made every
+ * candidate tie.
  *
  * Inputs MUST be id-aligned by the caller (runA[i] and runB[i] are the same
  * corpus case); see node-sweep.ts for the alignment step. Fewer than two
- * shared cases cannot estimate spread, so the floor is returned.
+ * shared cases cannot estimate noise and means the calibration is broken
+ * (an empty or failed baseline run), so it throws rather than return a floor
+ * that would treat every candidate difference as signal.
  */
 export function computeEpsilon(runA: number[], runB: number[], floor = 0.01, z = 2): number {
   const n = Math.min(runA.length, runB.length);
-  if (n < 2) return floor;
+  if (n < 2) {
+    throw new Error(`computeEpsilon needs at least 2 id-aligned cases from both baseline runs, got ${n}`);
+  }
   const diffs = Array.from({ length: n }, (_, i) => runA[i] - runB[i]);
   const mean = diffs.reduce((sum, d) => sum + d, 0) / n;
   const sumSq = diffs.reduce((sum, d) => sum + d * d, 0);
