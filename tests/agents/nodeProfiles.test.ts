@@ -23,10 +23,10 @@ describe('nodeProfiles', () => {
     }
   });
 
-  it('defaults followUpClassifier to gemini-4-hydrogen at high thinking', async () => {
+  it('defaults followUpClassifier to gemini-4-hydrogen at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     expect(resolveNodeModel('followUpClassifier')).toBe('gemini-4-hydrogen');
-    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('high');
+    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('low');
   });
 
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
@@ -41,7 +41,7 @@ describe('nodeProfiles', () => {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
     // low — light open judgment over provided context, plus slackIntake/ambiguityClassifier
-    // (followUpClassifier is measured at high; see its own test)
+    // (followUpClassifier is measured on Hydrogen; see its own test)
     for (const n of ['slackIntake', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
