@@ -179,6 +179,8 @@ it('rejects a run time on the wrong side of noon', () => {
   expect(scoreFacts('It ran at 12:30 AM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(0);
   expect(scoreFacts('It ran at 12:30 PM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(1);
   expect(scoreFacts('It ran at 02:30 AM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2:30:00 AM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 12:30:00 PM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(1);
   expect(scoreFacts('On Oct 2, 2 among 5 models passed.', ['2026-10-02T02:00:00Z'])).toBe(0);
 });
 
