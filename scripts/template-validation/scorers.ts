@@ -84,10 +84,86 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
   return count === 0 ? 1 : matches / count;
 }
 
+// dbt run statuses as a conversational answer words them.
+const STATUS_WORDS = new Map<string, RegExp>([
+  ['success', /\b(?:success(?:es|ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b(?!\s+rates?\b)/g],
+  ['error', /\b(?:error(?:ed|ing|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
+  ['skipped', /\b(?:skip(?:ped|ping|s)?)\b/g],
+  ['warn', /\bwarn(?:ed|s|ings?)?\b/g],
+]);
+// A negator up to two words before a status ("none failed", "no errors", "didn't skip")
+// denies it. Sentence punctuation ends the window.
+// A standalone 0 ("5 passed, 0 failed", "*0* failed") negates too; 0 in 10, 2.0, model-0, or WARN=0 does not.
+const NEGATED = /(?:\b(?:none\s+of(?:\s+(?:the|these|those))?|no|none|nothing|not|never|without|zero|\w+n['’]t)|(?<=^|\s)[([*`"'“‘]*0[*`"'”’]*)\s+(?:[\w'’]+\s+){0,2}$/;
+
+// A zero count after the status ("ERROR=0", "errors: none") denies it too.
+const ZERO_COUNT = /^[*`"'”’]*\s*[:=][*`"'”’]*\s*[*`"'“‘]*(?:0|none|zero)(?!\w|\.\d)/;
+
+function mentionsStatus(text: string, pattern: RegExp): boolean {
+  for (const match of text.matchAll(pattern)) {
+    const after = text.slice(match.index + match[0].length);
+    if (!NEGATED.test(text.slice(0, match.index)) && !ZERO_COUNT.test(after)) return true;
+  }
+  return false;
+}
+// Only :00 seconds parse; a fact with other seconds falls back to whole-word matching.
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::00)?(?:\.0+)?Z$/i;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+// A UTC timestamp counts when the answer names its date and its time of day in any common form.
+function mentionsTimestamp(text: string, fact: string): boolean {
+  const match = ISO_TIMESTAMP.exec(fact);
+  if (!match) return false;
+  const [, year, month, day, hour, minute] = match;
+  const monthIndex = Number(month) - 1;
+  const d = String(Number(day));
+  const monthWord = `(?:${MONTHS[monthIndex]}\\.?|${MONTH_NAMES[monthIndex]})`;
+  const date = new RegExp([
+    `\\b${monthWord}\\s+0?${d}(?:st|nd|rd|th)?\\b`,
+    `\\b0?${d}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${monthWord}\\b`,
+    `\\b${year}-${month}-${day}(?:\\b|(?=t\\d))`,
+    `\\b0?${Number(month)}/0?${d}\\b`,
+  ].join('|'));
+  const h = Number(hour);
+  const hour24 = h < 10 ? `0?${h}` : String(h);
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const hour12 = h12 < 10 ? `0?${h12}` : String(h12);
+  const am = '(?:a\\.m\\.|am)(?!\\w)';
+  const pm = '(?:p\\.m\\.|pm)(?!\\w)';
+  const meridiem = h < 12 ? am : pm;
+  const seconds = '(?::\\d{2}(?:\\.\\d+)?)?';
+  const clock = [
+    // A 24-hour time, unless a meridiem follows it (then the 12-hour branch decides).
+    `(?:\\b|(?<=\\dt))${hour24}:${minute}${seconds}(?![:.]?\\d)(?!\\s*(?:${am}|${pm}))`,
+    `\\b${hour12}:${minute}${seconds}\\s*${meridiem}`,
+  ];
+  if (minute === '00') clock.push(`\\b${hour12}\\s*${meridiem}`);
+  return date.test(text) && new RegExp(clock.join('|')).test(text);
+}
+
+// Whole-word containment, so "success" doesn't match inside "unsuccessful".
+function containsWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<!\\w)${escaped}(?!\\w)`).test(text);
+}
+
+function mentionsFact(text: string, fact: string): boolean {
+  const wanted = fact.toLowerCase();
+  const status = STATUS_WORDS.get(wanted);
+  if (status) return mentionsStatus(text, status);
+  if (containsWord(text, wanted)) return true;
+  if (wanted.includes('_') && containsWord(text, wanted.replaceAll('_', ' '))) return true;
+  return mentionsTimestamp(text, fact);
+}
+
 export function scoreFacts(text: string, requiredFacts: string[]): number {
   const normalized = text.toLowerCase();
   return requiredFacts.length === 0 ? 1
-    : requiredFacts.filter(fact => normalized.includes(fact.toLowerCase())).length / requiredFacts.length;
+    : requiredFacts.filter(fact => mentionsFact(normalized, fact)).length / requiredFacts.length;
 }
 
 export function scoreTeachingCandidate(candidate: TeachingCandidate, item: TeachingCandidateItem): number {

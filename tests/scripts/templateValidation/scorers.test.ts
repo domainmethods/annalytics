@@ -149,9 +149,113 @@ describe('scoreSummaryNumbers', () => {
   });
 });
 
-it('scores required facts with case-insensitive containment', () => {
+it('scores required facts with case-insensitive whole-word matching', () => {
   expect(scoreFacts('Orders SUCCEEDED.', ['orders', 'succeeded', 'yesterday'])).toBe(2 / 3);
   expect(scoreFacts('', [])).toBe(1);
+});
+
+it('accepts run facts worded conversationally', () => {
+  const facts = ['users', 'success', '2026-10-02T02:00:00Z'];
+  expect(scoreFacts('Yes, users passed in the 2 AM UTC run on Oct 2.', facts)).toBe(1);
+  expect(scoreFacts('users succeeded at 02:00 UTC on October 2nd', facts)).toBe(1);
+  expect(scoreFacts('users: success, 2026-10-02T02:00:00Z', facts)).toBe(1);
+  expect(scoreFacts('order items failed and products were skipped', ['order_items', 'error', 'products', 'skipped']))
+    .toBe(1);
+});
+
+it('keeps run facts strict about the run and the status', () => {
+  const fact = ['2026-10-03T02:30:00Z'];
+  expect(scoreFacts('It ran at 2:30 AM UTC on Oct 3.', fact)).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Oct 3.', fact)).toBe(0);
+  expect(scoreFacts('It ran at 2:30 AM UTC on Oct 13.', fact)).toBe(0);
+  expect(scoreFacts('It ran at 12:30 AM UTC on Oct 3.', fact)).toBe(0);
+  expect(scoreFacts('The run on Oct 3 was unsuccessful.', ['success'])).toBe(0);
+  expect(scoreFacts('Everything passed.', ['error', 'skipped'])).toBe(0);
+});
+
+it('rejects a run time on the wrong side of noon', () => {
+  expect(scoreFacts('It ran at 2:30 PM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 2:30:00 PM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 12:30 AM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 12:30 PM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 02:30 AM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2:30:00 AM UTC on Oct 3.', ['2026-10-03T02:30:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 12:30:00 PM UTC on Oct 3.', ['2026-10-03T12:30:00Z'])).toBe(1);
+  expect(scoreFacts('On Oct 2, 2 among 5 models passed.', ['2026-10-02T02:00:00Z'])).toBe(0);
+});
+
+it('denies a status the answer negates', () => {
+  expect(scoreFacts('All models passed, none failed.', ['error'])).toBe(0);
+  expect(scoreFacts('There were no errors.', ['error'])).toBe(0);
+  expect(scoreFacts("dbt didn't skip any models.", ['skipped'])).toBe(0);
+  expect(scoreFacts('The run was not successful.', ['success'])).toBe(0);
+  expect(scoreFacts('No warnings were raised.', ['warn'])).toBe(0);
+  expect(scoreFacts('None of the models failed.', ['error'])).toBe(0);
+  expect(scoreFacts('None of the models were skipped.', ['skipped'])).toBe(0);
+  expect(scoreFacts('No other model failed; order_items errored.', ['error'])).toBe(1);
+  expect(scoreFacts('No other model failed.', ['error'])).toBe(0);
+  expect(scoreFacts('5 passed, 0 failed.', ['error'])).toBe(0);
+  expect(scoreFacts('0 errors, 0 warnings.', ['error', 'warn'])).toBe(0);
+  expect(scoreFacts('Nothing else. orders failed.', ['error'])).toBe(1);
+  expect(scoreFacts('10 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('The 2:00 run failed.', ['error'])).toBe(1);
+  expect(scoreFacts('dbt 2.0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('model-0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('>0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=1.', ['error'])).toBe(1);
+  expect(scoreFacts('(0 failed)', ['error'])).toBe(0);
+  expect(scoreFacts('*0 failed*', ['error'])).toBe(0);
+  expect(scoreFacts('`0` failed', ['error'])).toBe(0);
+  expect(scoreFacts('*0* failed', ['error'])).toBe(0);
+  expect(scoreFacts('Errors: 0, warnings: none.', ['error', 'warn'])).toBe(0);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['warn', 'error'])).toBe(0);
+  expect(scoreFacts('PASS=5 ERROR=0.5', ['error'])).toBe(1);
+  expect(scoreFacts('the pass rate was 50%', ['success'])).toBe(0);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['success'])).toBe(1);
+  expect(scoreFacts('All models pass.', ['success'])).toBe(1);
+  expect(scoreFacts('PASS=0', ['success'])).toBe(0);
+  expect(scoreFacts('**Errors:** 0', ['error'])).toBe(0);
+  expect(scoreFacts('**Errors**: 0', ['error'])).toBe(0);
+  expect(scoreFacts('{"errors": 0}', ['error'])).toBe(0);
+  expect(scoreFacts('Errors: “0”', ['error'])).toBe(0);
+  expect(scoreFacts('WARN="0" ERROR=1', ['error'])).toBe(1);
+  expect(scoreFacts('models[0] failed', ['error'])).toBe(1);
+  expect(scoreFacts('the run (warnings: 0) failed', ['error'])).toBe(1);
+  expect(scoreFacts('step [0] failed', ['error'])).toBe(1);
+  expect(scoreFacts('"0 failed"', ['error'])).toBe(0);
+  expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
+});
+
+// Known leniency: the date and the time of day may come from different clauses.
+// A fix should flip this assertion deliberately.
+it('pairs a date and a time of day from different clauses', () => {
+  expect(scoreFacts('The 2:30 AM run on Oct 3 failed; the 2 AM run on Oct 4 passed.', ['2026-10-03T02:00:00Z'])).toBe(1);
+});
+
+it('accepts midnight and day-first dates', () => {
+  expect(scoreFacts('It ran at 12 AM UTC on Oct 2.', ['2026-10-02T00:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 00:00 UTC on 2 Oct.', ['2026-10-02T00:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 12 PM UTC on Oct 2.', ['2026-10-02T00:00:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 2 AM UTC on the 2nd of October.', ['2026-10-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on 10/2.', ['2026-10-02T02:00:00Z'])).toBe(1);
+});
+
+it('accepts other status wordings and afternoon runs', () => {
+  expect(scoreFacts('3 successes, orders erroring, users skipping.', ['success', 'error', 'skipped'])).toBe(1);
+  expect(scoreFacts('users finished with warnings', ['users', 'warn'])).toBe(1);
+  expect(scoreFacts('two failures, the rest passing', ['error', 'success'])).toBe(1);
+  expect(scoreFacts('the model named constructor ran', ['constructor'])).toBe(1);
+  expect(scoreFacts('all models ran', ['constructor', 'toString'])).toBe(0);
+  expect(scoreFacts('It ran at 2 PM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 14:00 UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(0);
+});
+
+it('accepts ISO timestamp variants', () => {
+  const fact = ['2026-10-02T02:00:00Z'];
+  expect(scoreFacts('Started 2026-10-02T02:00Z.', fact)).toBe(1);
+  expect(scoreFacts('Started 2026-10-02T02:00:00.000Z.', fact)).toBe(1);
+  expect(scoreFacts('Started at 02:00Z on Oct 2.', fact)).toBe(1);
 });
 
 it('halves the score when required models are missing', () => {
