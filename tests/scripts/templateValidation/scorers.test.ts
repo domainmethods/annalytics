@@ -190,6 +190,9 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts("dbt didn't skip any models.", ['skipped'])).toBe(0);
   expect(scoreFacts('The run was not successful.', ['success'])).toBe(0);
   expect(scoreFacts('No warnings were raised.', ['warn'])).toBe(0);
+  expect(scoreFacts('None of the models failed.', ['error'])).toBe(0);
+  expect(scoreFacts('None of the models were skipped.', ['skipped'])).toBe(0);
+  expect(scoreFacts('3 successes, orders erroring, users skipping.', ['success', 'error', 'skipped'])).toBe(1);
   expect(scoreFacts('No other model failed; order_items errored.', ['error'])).toBe(1);
   expect(scoreFacts('No other model failed.', ['error'])).toBe(0);
   expect(scoreFacts('5 passed, 0 failed.', ['error'])).toBe(0);

@@ -86,15 +86,15 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 
 // dbt run statuses as a conversational answer words them.
 const STATUS_WORDS = new Map<string, RegExp>([
-  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b(?!\s+rates?\b)/g],
-  ['error', /\b(?:error(?:ed|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
-  ['skipped', /\b(?:skip(?:ped|s)?)\b/g],
+  ['success', /\b(?:success(?:es|ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b(?!\s+rates?\b)/g],
+  ['error', /\b(?:error(?:ed|ing|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
+  ['skipped', /\b(?:skip(?:ped|ping|s)?)\b/g],
   ['warn', /\bwarn(?:ed|s|ings?)?\b/g],
 ]);
 // A negator up to two words before a status ("none failed", "no errors", "didn't skip")
 // denies it. Sentence punctuation ends the window.
 // A standalone 0 ("5 passed, 0 failed", "*0* failed") negates too; 0 in 10, 2.0, model-0, or WARN=0 does not.
-const NEGATED = /(?:\b(?:no|none|nothing|not|never|without|zero|\w+n['’]t)|(?<=^|\s)[([*`"'“‘]*0[*`"'”’]*)\s+(?:[\w'’]+\s+){0,2}$/;
+const NEGATED = /(?:\b(?:none\s+of(?:\s+(?:the|these|those))?|no|none|nothing|not|never|without|zero|\w+n['’]t)|(?<=^|\s)[([*`"'“‘]*0[*`"'”’]*)\s+(?:[\w'’]+\s+){0,2}$/;
 
 // A zero count after the status ("ERROR=0", "errors: none") denies it too.
 const ZERO_COUNT = /^[*`"'”’]*\s*[:=][*`"'”’]*\s*[*`"'“‘]*(?:0|none|zero)(?!\w|\.\d)/;
