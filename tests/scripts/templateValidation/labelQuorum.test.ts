@@ -838,7 +838,13 @@ describe('promotion runs', () => {
     await expect(promote()).rejects.toThrow('Promotion needs a frozen template set');
   });
 
-  it('sizes ambiguityClassifier at 80 items so one flip stays within ε', () => {
+  it('refuses a promotion whose target the frozen node already meets', async () => {
+    await expect(promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length } }))
+      .rejects.toThrow('raise templateTargetCount for slackIntake before promoting');
+    expect(deps.runLabeler).not.toHaveBeenCalled();
+  });
+
+  it('sizes ambiguityClassifier at 80 items so up to four flips stay within ε', () => {
     expect(templateTargetCount('ambiguityClassifier')).toBe(80);
     expect(templateTargetCount('slackIntake')).toBe(40);
   });

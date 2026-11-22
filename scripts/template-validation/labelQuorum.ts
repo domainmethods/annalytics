@@ -31,7 +31,11 @@ export interface Provenance {
   singleFamily: boolean;
   drafter: string;
   members: { id: string; family: string; cliVersion: string; requestedModel: string; reportedModels: string[]; isolation?: string }[];
-  /** Set by a promotion run: the frozen version whose unselected nodes this set carries forward. */
+  /**
+   * Set by a promotion run: the frozen version whose unselected nodes this set carries forward.
+   * `members` then describes only this run (cliVersion, reportedModels); the base version's
+   * provenance in git history records what labeled the carried-forward nodes.
+   */
   promotedFrom?: string;
   /**
    * `labeledIn` names the version whose run labeled the node's newest items (set by promotion runs).
@@ -447,6 +451,15 @@ export async function runLabelQuorum(
     return [node, nodes.includes(node) && !base ? items.filter(item =>
       item.source === 'manual' || (item.agreement.members.length === 1 && item.agreement.members[0] === 'manual')) : items];
   }));
+  if (base) {
+    // Checked before any paid call: a promoted node must draft something, or it would be stamped
+    // labeledIn the new version with no new labels.
+    for (const node of nodes) {
+      const target = opts.targetCounts[node] ?? templateTargetCount(node);
+      const frozen = retained.get(node)?.length ?? 0;
+      if (target <= frozen) throw new Error(`${node} already has ${frozen} items; raise templateTargetCount for ${node} before promoting`);
+    }
+  }
   const reserved = new Set(fixtureNames([...retained.values()].flat()).map(name => name.replace(/\.json$/, '')));
   const jsonLines = (items: unknown[]) => items.map(item => JSON.stringify(item) + '\n').join('');
   let references: SqlGeneratorItem[] | undefined;
@@ -494,6 +507,7 @@ export async function runLabelQuorum(
     }
     const itemsContent = jsonLines(allAccepted);
     outputs.set(relativePath, itemsContent);
+    // Quarantine is informational (sweeps never read it), so the prior file is appended without a digest check.
     const priorQuarantinePath = join(deps.root, 'quarantine', `${node}.jsonl`);
     const priorQuarantine = base && existsSync(priorQuarantinePath) ? readFileSync(priorQuarantinePath, 'utf8') : '';
     outputs.set(`quarantine/${node}.jsonl`, priorQuarantine + jsonLines(quarantined));
