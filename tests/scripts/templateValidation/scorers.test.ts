@@ -209,6 +209,13 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['warn', 'error'])).toBe(0);
   expect(scoreFacts('PASS=5 ERROR=0.5', ['error'])).toBe(1);
   expect(scoreFacts('the pass rate was 50%', ['success'])).toBe(0);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['success'])).toBe(1);
+  expect(scoreFacts('All models pass.', ['success'])).toBe(1);
+  expect(scoreFacts('PASS=0', ['success'])).toBe(0);
+  expect(scoreFacts('**Errors:** 0', ['error'])).toBe(0);
+  expect(scoreFacts('**Errors**: 0', ['error'])).toBe(0);
+  expect(scoreFacts('{"errors": 0}', ['error'])).toBe(0);
+  expect(scoreFacts('Errors: “0”', ['error'])).toBe(0);
   expect(scoreFacts('WARN="0" ERROR=1', ['error'])).toBe(1);
   expect(scoreFacts('models[0] failed', ['error'])).toBe(1);
   expect(scoreFacts('the run (warnings: 0) failed', ['error'])).toBe(1);
