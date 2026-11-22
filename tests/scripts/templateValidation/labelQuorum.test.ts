@@ -8,7 +8,7 @@ import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '.
 import * as runner from '../../../src/execution/runner.js';
 import { NODE_IDS, type NodeId } from '../../../src/agents/nodeProfiles.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
-import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps, type Provenance } from '../../../scripts/template-validation/labelQuorum.js';
+import { draftExamples, fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps, type Provenance } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems, templateTargetCount } from '../../../scripts/template-validation/items.js';
 import { resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
 import { buildRefreshRows, writeRefreshReport } from '../../../scripts/template-validation/refreshReport.js';
@@ -905,5 +905,16 @@ describe('promotion runs', () => {
   it('sizes ambiguityClassifier at 80 items so up to four flips stay within ε', () => {
     expect(templateTargetCount('ambiguityClassifier')).toBe(80);
     expect(templateTargetCount('slackIntake')).toBe(40);
+  });
+});
+
+describe('draftExamples over the frozen set', () => {
+  // Nodes whose stored items are not in their draft shape get no examples; pin which ones so a schema
+  // drift that silently empties a node's examples fails here.
+  const withoutExamples = new Set<NodeId>(['chart', 'summaryOverride', 'teachingCandidate']);
+
+  it.each(NODE_IDS)('%s', (node) => {
+    const items = loadItems(node);
+    expect(draftExamples(node, items)).toHaveLength(withoutExamples.has(node) ? 0 : items.length);
   });
 });

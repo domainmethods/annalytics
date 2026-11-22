@@ -306,6 +306,18 @@ function categorySlots(count: number, seeds: Input[]): Category[] {
   });
 }
 
+/**
+ * Retained items stripped to their draft fields, shown to the drafter as examples. Labels, IDs and hydrated
+ * fixture fields stay out of the prompt. Items stored in a different shape than they are drafted in (chart and
+ * summaryOverride rows, teachingCandidate fixtures) don't parse, so those nodes get no examples.
+ */
+export function draftExamples(node: NodeId, seeds: unknown[]): unknown[] {
+  return seeds.flatMap(seed => {
+    const parsed = draftItemSchema(node).safeParse(seed);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 async function draftInputs(
   node: NodeId, slots: Category[], drafter: LabelerConfig, context: string,
   { files: fixtures, defects }: DraftedFixtures, client: LabelClient, seeds: Input[] = [],
@@ -313,11 +325,7 @@ async function draftInputs(
   if (node === 'discrepancy' && !Object.keys(fixtures).length) return [];
   const drafts: Draft[] = [];
   const fixtureContext = Object.keys(fixtures).length ? context + '\nFixtures:\n' + JSON.stringify(fixtures) : context;
-  // Labels, IDs and hydrated fixture fields stay out of the prompt; seeds that don't fit the draft shape are skipped.
-  const examples = seeds.flatMap(seed => {
-    const parsed = draftItemSchema(node).safeParse(seed);
-    return parsed.success ? [parsed.data] : [];
-  });
+  const examples = draftExamples(node, seeds);
   const priorInputs: Input[] = [];
   for (const [index, batch] of batches(slots).entries()) {
     const prior = priorInputs.length ? 'Avoid repeats of prior inputs:\n' + JSON.stringify(priorInputs) : '';

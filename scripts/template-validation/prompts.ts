@@ -127,9 +127,11 @@ export const templateRules =
 /**
  * Nodes whose drafted inputs are messages a person types and whose tv-v1 drafts pasted SQL into them.
  * Their drafts get these rules instead of `templateRules`, whose SQL requirement led the drafter to paste
- * a query into every message. ambiguityClassifier, clarification and discrepancy also take typed text but
- * barely leaked SQL, so they stay on `templateRules`; the labeling cache is keyed on prompt text, and
- * switching them would redraft and relabel them.
+ * a query into every message. clarification and discrepancy also take typed text but barely leaked SQL, so they
+ * stay on `templateRules`; the labeling cache is keyed on prompt text, and switching them would redraft and
+ * relabel them. ambiguityClassifier also stays on `templateRules`, because its assistant turns carry the prior
+ * SQL: its draft instruction keeps that SQL out of user turns instead (its first tv-v2 draft leaked SQL into
+ * 36 of 38 user turns before that sentence existed).
  */
 const PLAIN_LANGUAGE_DRAFT_NODES: ReadonlySet<NodeId> = new Set(['slackIntake', 'followUpClassifier', 'metaQuestion', 'chart', 'dbtStatus']);
 
