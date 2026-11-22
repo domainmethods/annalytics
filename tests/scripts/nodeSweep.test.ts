@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 // Pass-through spy: behavior is the real decision rule; tests can inspect the call args.
 vi.mock('../../scripts/node-sweep-decision.js', async (importActual) => {
   const actual = await importActual<typeof import('../../scripts/node-sweep-decision.js')>();
-  return { pickWithinEpsilon: vi.fn(actual.pickWithinEpsilon) };
+  return { ...actual, pickWithinEpsilon: vi.fn(actual.pickWithinEpsilon) };
 });
 import {
   parseArgs,
