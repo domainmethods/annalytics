@@ -84,7 +84,7 @@ immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both 
 1.000 at every rung on the 2026-06-08 corpus, which was too easy to separate models.
 The frozen tv-v1 sweep (2026-11-22, ε 0.01) measured both, plus `ambiguityClassifier`.
 `slackIntake` stays at `flash-lite/3.5`@low and `followUpClassifier` moved to
-`flash/4-hydrogen`@high. Both are owner overrides of the sweep's cost tie-break,
+`flash/4-hydrogen`@low. Both are owner overrides of the sweep's cost tie-break,
 made for model-sunset risk rather than for score. `ambiguityClassifier` stays
 provisional because its ε was 0.054 (governance Evidence Log, 2026-11-22).
 **Sunsets live in the registry.** A `RegisteredModel` can carry `sunset`

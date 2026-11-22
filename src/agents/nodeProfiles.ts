@@ -30,10 +30,12 @@ export interface NodeProfile {
 //    Google lists it as the replacement for gemini-3.1-flash-lite, which has an earliest
 //    shutdown of 2027-05-07. @low is from the 2026-11-19 pilot (0.975) and was not
 //    re-walked on the frozen set. Gemini 4 Pro models lose on the 8s intake budget.
-//  - followUpClassifier: flash/4-hydrogen@high (1.000, p95 3.6s; the old default scored
-//    0.889 at high). The sweep's cost pick was flash/3@medium (1.000, p95 6.5s); the owner
-//    chose Hydrogen because Google lists gemini-3-flash-preview as superseded by
-//    gemini-3.6-flash, and Hydrogen was the fastest 1.000 point. Only @high was measured.
+//  - followUpClassifier: flash/4-hydrogen@low. Stage 1 put Hydrogen at 1.000 at high
+//    (p95 3.6s; the old default scored 0.889 at high). The sweep's cost pick was
+//    flash/3@medium (1.000, p95 6.5s); the owner chose Hydrogen because Google lists
+//    gemini-3-flash-preview as superseded by gemini-3.6-flash. A Hydrogen thinking walk
+//    (same day, ε 0.01) scored low, medium, high and default all 1.000; low was fastest
+//    (p95 3.0s vs 4.3-4.8s at high) and cheapest (~30% below high).
 //  - ambiguityClassifier: still PROVISIONAL at flash-lite/3.5@low. ε 0.054 > 0.05, so the
 //    tv-v1 result is not applicable (governance Evidence Log, 2026-11-22).
 //
@@ -49,7 +51,7 @@ export interface NodeProfile {
 // limited on the SQL path (ε too large on the 12-question corpus to size safely) and
 // stay model-managed — see docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md.
 const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'low' };
-const FOLLOW_UP_HYDROGEN: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'high' };
+const FOLLOW_UP_HYDROGEN: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'low' };
 const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'minimal' };
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
@@ -58,9 +60,9 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 // Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
 // for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  // MEASURED (model only; thinking level not walked on the frozen set) — tv-v1,
-  // 2026-11-22. slackIntake's @low is from the pilot; followUpClassifier's @high is the
-  // Stage 1 anchor. Both picks are owner overrides of the sweep's cost tie-break for
+  // MEASURED — tv-v1, 2026-11-22. slackIntake's @low is from the pilot (its thinking
+  // axis was not walked on the frozen set); followUpClassifier's @low is from a Hydrogen
+  // thinking walk. Both models are owner overrides of the sweep's cost tie-break for
   // model-sunset risk; see the classifier notes above.
   slackIntake: CLASSIFIER_LITE, followUpClassifier: FOLLOW_UP_HYDROGEN,
   // PROVISIONAL — tv-v1 2026-11-22 not applicable (ε 0.054 > 0.05).
