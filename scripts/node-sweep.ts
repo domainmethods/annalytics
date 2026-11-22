@@ -56,7 +56,8 @@ const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervi
 //     (listRegisteredModels — the registry, not a hand list), pick the cheapest
 //     within ε of the best.
 //   Stage 2 (THINKING axis): hold the winning model fixed, walk every thinking
-//     level (incl. `default`), pick the fastest within ε of the best.
+//     level (incl. `default`), pick the fastest within ε of the best seen in
+//     either stage (one shared bar, so the two ε allowances can't stack).
 //
 // The anchor is `high` on purpose: give every model ample reasoning budget in
 // Stage 1 so the model comparison reflects each one's best-case capability (we
@@ -506,7 +507,12 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       stage2.push(score);
       log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
     }
-    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency');
+    // Gate Stage 2 against the best seen in EITHER stage, so the two ε allowances can't stack.
+    const stage1Best = {
+      metric: Math.max(...stage1.map((p) => p.metric)),
+      e2e: Math.max(...stage1.map((p) => p.e2e)),
+    };
+    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency', stage1Best);
     const chosenProfile = profileByLabel.get(thinkingWinnerScore.label)!;
 
     // Guard against the search landing somewhere worse than the node's current
