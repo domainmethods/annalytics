@@ -30,6 +30,14 @@ export interface ModelCoordinate { tier: ModelTier; version: string; }
  *  `default-eligible` are labels; a sweep can recommend either as a default. */
 export type ModelStatus = 'candidate' | 'default-eligible' | 'retired';
 
+/** Google's deprecation notice for a model, copied by hand from
+ *  https://aistudio.google.com/docs/deprecations. `shutdownDate` is Google's earliest
+ *  possible shutdown (YYYY-MM-DD); omit it when Google names a replacement but no date. */
+export interface ModelSunset {
+  shutdownDate?: string;
+  replacement?: string;
+}
+
 export interface RegisteredModel {
   tier: ModelTier;
   version: string;
@@ -38,10 +46,15 @@ export interface RegisteredModel {
   inputPricePerMTok: number;
   outputPricePerMTok: number; // USD per million tokens, including thoughts
   status: ModelStatus;
+  /** Set when Google's deprecations page lists this model. Sweeps still measure it;
+   *  the refresh report and `model:discover` warn about it. */
+  sunset?: ModelSunset;
 }
 
 // Standard USD rates for text prompts up to 200K tokens.
 // https://ai.google.dev/gemini-api/docs/pricing
+// `sunset` entries were checked against https://aistudio.google.com/docs/deprecations
+// on 2026-11-22. Re-check that page during a model refresh.
 const REGISTRY: Record<string, RegisteredModel> = {
   'flash-lite/3.1': {
     tier: 'flash-lite',
@@ -51,6 +64,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 0.25,
     outputPricePerMTok: 1.50,
     status: 'default-eligible',
+    sunset: { shutdownDate: '2027-05-07', replacement: 'gemini-3.5-flash-lite' },
   },
   'flash/3': {
     tier: 'flash',
@@ -60,6 +74,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 0.50,
     outputPricePerMTok: 3.00,
     status: 'default-eligible',
+    sunset: { replacement: 'gemini-3.6-flash' },
   },
   // No 2027 rate change is announced for this model, so this rate is also its 2027 rate.
   'flash-lite/3.5': {
@@ -82,6 +97,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 1.50,
     outputPricePerMTok: 7.50,
     status: 'retired',
+    sunset: { replacement: 'gemini-3.6-flash' },
   },
   // Gemini 3.6 and 3.8 Flash are $0.75/$3.75 through 2026-12-31. These are the rates
   // from 2027-01-01, the ones a default chosen now will be billed at.
@@ -181,6 +197,15 @@ export function listRegisteredModels(): ModelCoordinate[] {
     .filter(({ status }) => status !== 'retired')
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.inputPricePerMTok - b.inputPricePerMTok)
     .map(({ tier, version }) => ({ tier, version }));
+}
+
+/** One line describing Google's deprecation notice for a model, or undefined if none. */
+export function describeSunset(model: Pick<RegisteredModel, 'id' | 'sunset'>): string | undefined {
+  const { sunset } = model;
+  if (!sunset) return undefined;
+  const when = sunset.shutdownDate ? `shuts down no earlier than ${sunset.shutdownDate}` : 'superseded (no shutdown date)';
+  const to = sunset.replacement ? `; replacement ${sunset.replacement}` : '';
+  return `${model.id} ${when}${to}`;
 }
 
 export function getRegisteredModel(tier: ModelTier, version: string): RegisteredModel | undefined {

@@ -473,8 +473,10 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       const score = await scorePoint(node, profile, label);
-      stage1.push(score);
-      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
+      const shutdown = getRegisteredModel(model.tier, model.version)?.sunset?.shutdownDate;
+      stage1.push(shutdown ? { ...score, scheduledShutdown: true } : score);
+      const note = shutdown ? ` (shutdown ${shutdown}; ranked after viable undated models)` : '';
+      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms${note}`);
     }
     const modelWinnerScore = pickWithinEpsilon(stage1, metricEps, e2eEps, 'cost');
     const stage1Winner = profileByLabel.get(modelWinnerScore.label)!;

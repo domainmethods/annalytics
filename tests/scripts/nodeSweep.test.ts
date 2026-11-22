@@ -268,12 +268,13 @@ describe('runSweep — two-stage coordinate isolation', () => {
   it('downsizes a tier-insensitive node to the cheapest model and trims thinking (clarification → flash-lite/minimal)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    // Stage 1: every model is quality-equal → cheapest tier wins.
+    // Stage 1: every model is quality-equal → cheapest tier wins, skipping
+    // flash-lite/3.1 (cheaper, but it has a dated shutdown in the registry).
     expect(o.stage1Winner.tier).toBe('flash-lite');
     // Stage 2: thinking is quality-equal → fastest (minimal) wins.
     expect(o.chosenRung).toBeDefined();
     expect(o.chosenRung!.tier).toBe('flash-lite');
-    expect(o.chosenRung!.version).toBe('3.1');
+    expect(o.chosenRung!.version).toBe('3.5');
     expect(o.chosenRung!.thinkingLevel).toBe('minimal');
   });
 

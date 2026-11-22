@@ -19,8 +19,11 @@ import type { PointScore } from './node-sweep-types.js';
  * TIE-BREAK among the viable set depends on the axis being searched:
  *  - `'cost'`  (Stage 1, the MODEL axis): take the cheapest point — i.e. the
  *    cheapest model whose quality matches the best. Cost is dominated by tier
- *    price, so this is "the cheapest tier that's good enough". Ties resolve to
- *    higher quality, then lower latency.
+ *    price, so this is "the cheapest tier that's good enough". A viable point
+ *    whose model has a dated shutdown (`scheduledShutdown`) ranks after every
+ *    viable point without one, whatever its cost: a default on it would have to
+ *    move again. It still sets the quality bar. Ties resolve to higher quality,
+ *    then lower latency.
  *  - `'latency'` (Stage 2, the THINKING axis): the model is fixed, so cost varies
  *    only with thinking tokens; take the fastest point within a 5% latency band
  *    (least thinking), then higher quality, then lower cost.
@@ -61,7 +64,8 @@ export function pickWithinEpsilon(
 
   if (tieBreak === 'cost') {
     return [...pool].sort(
-      (a, b) => (a.cost - b.cost) || (b.metric - a.metric) || (a.p95LatencyMs - b.p95LatencyMs),
+      (a, b) => (Number(a.scheduledShutdown ?? false) - Number(b.scheduledShutdown ?? false))
+        || (a.cost - b.cost) || (b.metric - a.metric) || (a.p95LatencyMs - b.p95LatencyMs),
     )[0];
   }
 

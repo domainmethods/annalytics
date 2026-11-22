@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { ApiError, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { listAllRegisteredModels } from '../src/agents/modelConfig.js';
-import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, templateDefaultIds } from './model-discover-core.js';
+import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, sunsetWarnings, templateDefaultIds } from './model-discover-core.js';
 
 async function main(): Promise<void> {
   if (existsSync('.env') && typeof process.loadEnvFile === 'function') {
@@ -23,8 +23,19 @@ async function main(): Promise<void> {
     }
   }
 
-  const diff = diffModels(liveIds, listAllRegisteredModels(), templateDefaultIds());
-  process.exitCode = discoveryExitCode(diff);
+  const registry = listAllRegisteredModels();
+  const defaults = templateDefaultIds();
+  const diff = diffModels(liveIds, registry, defaults);
+  const sunsets = sunsetWarnings(registry, defaults, new Date());
+  process.exitCode = discoveryExitCode(diff, sunsets);
+  if (sunsets.length > 0) {
+    console.error('Registered models with a Google deprecation notice');
+    for (const { notice, usedByDefaults, daysLeft } of sunsets) {
+      const nodes = usedByDefaults.length > 0 ? usedByDefaults.join(', ') : 'none';
+      const days = daysLeft === undefined ? '' : ` (${daysLeft} days)`;
+      console.error(`- ${notice}${days} (template defaults: ${nodes})`);
+    }
+  }
   if (diff.missing.length > 0) {
     console.error('Missing registered models');
     for (const { id, usedByDefaults } of diff.missing) {

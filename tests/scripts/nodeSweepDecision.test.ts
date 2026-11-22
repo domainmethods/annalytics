@@ -26,6 +26,23 @@ describe('pickWithinEpsilon', () => {
       expect(pickWithinEpsilon(cands, 0.02, 0.3, 'cost').label).toBe('pro');
     });
 
+    it('ranks a model with a scheduled shutdown after viable models without one', () => {
+      const cands = [
+        pt({ label: 'dated-lite', metric: 0.90, cost: 10, scheduledShutdown: true }),
+        pt({ label: 'lite', metric: 0.90, cost: 15 }),
+        pt({ label: 'flash', metric: 0.90, cost: 30 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.1, 'cost').label).toBe('lite');
+    });
+
+    it('still picks a dated model when it is the only viable one, and lets it set the bar', () => {
+      const cands = [
+        pt({ label: 'dated-lite', metric: 0.95, cost: 10, scheduledShutdown: true }),
+        pt({ label: 'lite', metric: 0.90, cost: 15 }), // 0.05 under the dated best > ε
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.1, 'cost').label).toBe('dated-lite');
+    });
+
     it('breaks a cost tie by higher quality, then lower latency', () => {
       const cands = [
         pt({ label: 'a', metric: 0.90, e2e: 8.0, cost: 50, p95LatencyMs: 900 }),
