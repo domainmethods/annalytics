@@ -308,15 +308,20 @@ function categorySlots(count: number, seeds: Input[]): Category[] {
 
 async function draftInputs(
   node: NodeId, slots: Category[], drafter: LabelerConfig, context: string,
-  { files: fixtures, defects }: DraftedFixtures, client: LabelClient,
+  { files: fixtures, defects }: DraftedFixtures, client: LabelClient, seeds: Input[] = [],
 ): Promise<Draft[]> {
   if (node === 'discrepancy' && !Object.keys(fixtures).length) return [];
   const drafts: Draft[] = [];
   const fixtureContext = Object.keys(fixtures).length ? context + '\nFixtures:\n' + JSON.stringify(fixtures) : context;
+  // Labels, IDs and hydrated fixture fields stay out of the prompt; seeds that don't fit the draft shape are skipped.
+  const examples = seeds.flatMap(seed => {
+    const parsed = draftItemSchema(node).safeParse(seed);
+    return parsed.success ? [parsed.data] : [];
+  });
   const priorInputs: Input[] = [];
   for (const [index, batch] of batches(slots).entries()) {
     const prior = priorInputs.length ? 'Avoid repeats of prior inputs:\n' + JSON.stringify(priorInputs) : '';
-    const prompt = draftPrompt(node, batch, fixtureContext, prior);
+    const prompt = draftPrompt(node, batch, fixtureContext, prior, examples);
     const result = await client.request(drafter, node, index, batch, prompt, draftBatchSchema(node, batch.length));
     for (const [i, item] of result.items.entries()) {
       const input = { ...item, category: batch[i] };
@@ -484,7 +489,7 @@ export async function runLabelQuorum(
       }
       drafts = await supervisorDrafts(references ?? loadItems('sqlGenerator', deps.root), count, quorumDeps, context, client);
     } else {
-      drafts = await draftInputs(node, categorySlots(count, seeds), drafter, context, fixtures, client);
+      drafts = await draftInputs(node, categorySlots(count, seeds), drafter, context, fixtures, client, seeds);
     }
 
     const { accepted, quarantined } = await labelDrafts(node, drafts, quorumDeps, client, context, fixtures.files, seeds);

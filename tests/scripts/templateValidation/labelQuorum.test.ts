@@ -802,6 +802,16 @@ describe('promotion runs', () => {
     }
   });
 
+  it('shows the frozen items to the drafter without their labels', async () => {
+    const seeds = loadItems('slackIntake', root);
+    await promote();
+    const draft = vi.mocked(deps.runLabeler).mock.calls.map(([, { prompt }]) => prompt).find(prompt => prompt.startsWith('Draft'));
+    expect(draft).toContain('Match the structure, style and difficulty of these existing items');
+    expect(draft).toContain(JSON.stringify(seeds[0].text));
+    expect(draft).not.toContain('expectedRoute');
+    expect(draft).not.toContain(seeds[0].id);
+  });
+
   it('refuses to promote into the version it builds on', async () => {
     writeFileSync(join(root, 'VERSION'), baseVersion + '\n');
     await expect(promote()).rejects.toThrow('Bump VERSION before promoting');
@@ -841,7 +851,10 @@ describe('promotion runs', () => {
   it('appends newly quarantined items after the frozen quarantine and totals the counts', async () => {
     const priorQuarantine = JSON.stringify({ item: { category: 'simple', text: 'An older split item' }, labels: {} }) + '\n';
     writeFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), priorQuarantine);
+    // Keep the fixture consistent: the frozen set reports the one prior quarantined item.
     const base = baseProvenance();
+    base.perNode.slackIntake = { ...base.perNode.slackIntake, quarantined: 1 };
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify(base));
     const split = { category: 'edge_case', text: 'Is the returns number right or not?' };
     deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
       cached: false,
@@ -852,7 +865,7 @@ describe('promotion runs', () => {
     const quarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
     expect(quarantine.startsWith(priorQuarantine)).toBe(true);
     expect(JSON.parse(quarantine.slice(priorQuarantine.length))).toMatchObject({ item: { text: split.text } });
-    expect(result.perNode.slackIntake.quarantined).toBe(base.perNode.slackIntake.quarantined + 1);
+    expect(result.perNode.slackIntake.quarantined).toBe(2);
   });
 
   it('refuses to publish when a carried-forward file drifts during the paid run', async () => {
@@ -863,6 +876,23 @@ describe('promotion runs', () => {
       return label(...args);
     });
     await expect(promote()).rejects.toThrow('items/chart.jsonl does not match frozen set tv-v1');
+    expect(baseProvenance().version).toBe(baseVersion);
+  });
+
+  it('refuses to publish when the frozen provenance changes during the paid run', async () => {
+    const path = join(root, 'provenance.json');
+    const label = deps.runLabeler;
+    let edited = false;
+    deps.runLabeler = vi.fn(async (...args: Parameters<typeof label>) => {
+      // Digests still match, so only the publish-time comparison can catch this edit.
+      if (!edited) {
+        edited = true;
+        const base = baseProvenance();
+        writeFileSync(path, JSON.stringify({ ...base, perNode: { ...base.perNode, chart: { ...base.perNode.chart, labeledIn: 'tv-v0' } } }));
+      }
+      return label(...args);
+    });
+    await expect(promote()).rejects.toThrow('Frozen template set changed during labeling');
     expect(baseProvenance().version).toBe(baseVersion);
   });
 
