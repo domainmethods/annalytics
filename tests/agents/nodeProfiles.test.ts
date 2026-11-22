@@ -42,7 +42,7 @@ describe('nodeProfiles', () => {
     }
     // low — light open judgment over provided context, plus slackIntake/ambiguityClassifier
     // (followUpClassifier is measured at high; see its own test)
-    for (const n of ['slackIntake', 'ambiguityClassifier','clarification', 'metaQuestion', 'teachingCandidate'] as const) {
+    for (const n of ['slackIntake', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
     // default — hard reasoning nodes stay model-managed
