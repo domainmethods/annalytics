@@ -807,11 +807,11 @@ describe('promotion runs', () => {
     const mutant = '/* mutant */';
     deps.execute = vi.fn(async (sql: string) => ({ columnNames: ['n'], rows: [{ n: sql.includes(mutant) ? 2 : 1 }] }));
     deps.runLabeler = vi.fn(async (_cfg, { prompt }) => {
-      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql: string }[];
+      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql: string; referenceSql: string }[];
       return {
         cached: false,
         value: prompt.startsWith('Mutate')
-          ? { items: inputs.map(({ candidateSql }) => ({ mutations: [`${candidateSql} ${mutant}`] })) }
+          ? { items: inputs.map(({ referenceSql }) => ({ mutations: [`${referenceSql} ${mutant}`] })) }
           : { labels: inputs.map(({ candidateSql }) => ({ expectedVerdict: candidateSql.includes(mutant) ? 'FAIL' : 'PASS' })) },
       };
     });

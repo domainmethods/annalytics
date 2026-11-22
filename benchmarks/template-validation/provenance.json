@@ -1,12 +1,29 @@
 {
-  "version": "tv-v1",
-  "createdAt": "2026-11-21T22:27:00.476Z",
+  "version": "tv-v2",
+  "createdAt": "2026-11-22T21:51:34.751Z",
   "quorumKind": "reduced",
   "reducedQuorum": true,
   "singleFamily": false,
   "drafter": "codex",
+  "promotedFrom": "tv-v1",
   "perNode": {
+    "ambiguityClassifier": {
+      "drafted": 83,
+      "accepted": 79,
+      "quarantined": 4,
+      "itemsSha256": "e1907d05eac5cd0580085fc12a4f7496cba28933a1a6fc687bba28e459dd447a",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0.125,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      },
+      "labeledIn": "tv-v2"
+    },
     "slackIntake": {
+      "labeledIn": "tv-v1",
       "drafted": 26,
       "accepted": 40,
       "quarantined": 0,
@@ -20,6 +37,7 @@
       }
     },
     "followUpClassifier": {
+      "labeledIn": "tv-v1",
       "drafted": 28,
       "accepted": 36,
       "quarantined": 4,
@@ -32,63 +50,8 @@
         "edge_case": 0.3333333333333333
       }
     },
-    "ambiguityClassifier": {
-      "drafted": 40,
-      "accepted": 37,
-      "quarantined": 3,
-      "itemsSha256": "2609c5032e920393311104a92ded1b5d0d82bc76fd6d671d46f129d0e7dae6d9",
-      "dropRateByCategory": {
-        "simple": 0,
-        "join": 0.14285714285714285,
-        "aggregate": 0,
-        "time_series": 0,
-        "ambiguous": 0.16666666666666666,
-        "edge_case": 0.16666666666666666
-      }
-    },
-    "clarification": {
-      "drafted": 40,
-      "accepted": 40,
-      "quarantined": 0,
-      "itemsSha256": "d9b2a36485e1b6908dcf21ec191d4c559707626256cbe18b98f84a9c950bd802",
-      "dropRateByCategory": {
-        "simple": 0,
-        "join": 0,
-        "aggregate": 0,
-        "time_series": 0,
-        "ambiguous": 0,
-        "edge_case": 0
-      }
-    },
-    "teachingCandidate": {
-      "drafted": 40,
-      "accepted": 23,
-      "quarantined": 17,
-      "itemsSha256": "dfc3eaf7bbfc5cfd199b458e5a5ae4e48a512491cd687efc66826c7a3a7bded3",
-      "dropRateByCategory": {
-        "simple": 0.42857142857142855,
-        "join": 0.2857142857142857,
-        "aggregate": 0.5714285714285714,
-        "time_series": 0.2857142857142857,
-        "ambiguous": 0.5,
-        "edge_case": 0.5
-      }
-    },
-    "sqlGenerator": {
-      "drafted": 100,
-      "accepted": 94,
-      "quarantined": 6,
-      "itemsSha256": "0b86cc2dcfcd12f2ecb86cbcc8279bdd68c29eb17db931d1b04b5d84bd2a7165",
-      "dropRateByCategory": {
-        "simple": 0.058823529411764705,
-        "join": 0,
-        "aggregate": 0.11764705882352941,
-        "time_series": 0.058823529411764705,
-        "ambiguous": 0.0625,
-        "edge_case": 0.0625
-      }
-    },
     "dbtStatus": {
+      "labeledIn": "tv-v1",
       "drafted": 40,
       "accepted": 40,
       "quarantined": 0,
@@ -103,6 +66,7 @@
       }
     },
     "chart": {
+      "labeledIn": "tv-v1",
       "drafted": 40,
       "accepted": 33,
       "quarantined": 7,
@@ -117,6 +81,7 @@
       }
     },
     "summaryOverride": {
+      "labeledIn": "tv-v1",
       "drafted": 40,
       "accepted": 40,
       "quarantined": 0,
@@ -130,7 +95,23 @@
         "edge_case": 0
       }
     },
+    "clarification": {
+      "labeledIn": "tv-v1",
+      "drafted": 40,
+      "accepted": 40,
+      "quarantined": 0,
+      "itemsSha256": "d9b2a36485e1b6908dcf21ec191d4c559707626256cbe18b98f84a9c950bd802",
+      "dropRateByCategory": {
+        "simple": 0,
+        "join": 0,
+        "aggregate": 0,
+        "time_series": 0,
+        "ambiguous": 0,
+        "edge_case": 0
+      }
+    },
     "metaQuestion": {
+      "labeledIn": "tv-v1",
       "drafted": 40,
       "accepted": 40,
       "quarantined": 0,
@@ -144,21 +125,38 @@
         "edge_case": 0
       }
     },
-    "discrepancy": {
+    "teachingCandidate": {
+      "labeledIn": "tv-v1",
       "drafted": 40,
-      "accepted": 15,
-      "quarantined": 25,
-      "itemsSha256": "12ba6532feac2b5afd9cd870d6ee766c7d371347cb8f2db03b40c1ac03147bea",
+      "accepted": 23,
+      "quarantined": 17,
+      "itemsSha256": "dfc3eaf7bbfc5cfd199b458e5a5ae4e48a512491cd687efc66826c7a3a7bded3",
       "dropRateByCategory": {
-        "simple": 0.5714285714285714,
-        "join": 0.7142857142857143,
-        "aggregate": 0.7142857142857143,
-        "time_series": 0.5714285714285714,
+        "simple": 0.42857142857142855,
+        "join": 0.2857142857142857,
+        "aggregate": 0.5714285714285714,
+        "time_series": 0.2857142857142857,
         "ambiguous": 0.5,
-        "edge_case": 0.6666666666666666
+        "edge_case": 0.5
+      }
+    },
+    "sqlGenerator": {
+      "labeledIn": "tv-v1",
+      "drafted": 100,
+      "accepted": 94,
+      "quarantined": 6,
+      "itemsSha256": "0b86cc2dcfcd12f2ecb86cbcc8279bdd68c29eb17db931d1b04b5d84bd2a7165",
+      "dropRateByCategory": {
+        "simple": 0.058823529411764705,
+        "join": 0,
+        "aggregate": 0.11764705882352941,
+        "time_series": 0.058823529411764705,
+        "ambiguous": 0.0625,
+        "edge_case": 0.0625
       }
     },
     "supervisor": {
+      "labeledIn": "tv-v1",
       "drafted": 100,
       "accepted": 100,
       "quarantined": 0,
@@ -170,6 +168,21 @@
         "time_series": 0,
         "ambiguous": 0,
         "edge_case": 0
+      }
+    },
+    "discrepancy": {
+      "labeledIn": "tv-v1",
+      "drafted": 40,
+      "accepted": 15,
+      "quarantined": 25,
+      "itemsSha256": "12ba6532feac2b5afd9cd870d6ee766c7d371347cb8f2db03b40c1ac03147bea",
+      "dropRateByCategory": {
+        "simple": 0.5714285714285714,
+        "join": 0.7142857142857143,
+        "aggregate": 0.7142857142857143,
+        "time_series": 0.5714285714285714,
+        "ambiguous": 0.5,
+        "edge_case": 0.6666666666666666
       }
     }
   },
