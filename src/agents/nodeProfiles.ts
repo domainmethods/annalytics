@@ -29,7 +29,7 @@ export interface NodeProfile {
 //    flash-lite/3.5 also scored 1.000 (at high, p95 2.5s). The owner kept 3.5 because
 //    Google lists it as the replacement for gemini-3.1-flash-lite, which has an earliest
 //    shutdown of 2027-05-07. @low is from the 2026-11-19 pilot (0.975) and was not
-//    re-walked on the frozen set. Pro and Gemini 4 Pro models lose on the 8s intake budget.
+//    re-walked on the frozen set. Gemini 4 Pro models lose on the 8s intake budget.
 //  - followUpClassifier: flash/4-hydrogen@high (1.000, p95 3.6s; the old default scored
 //    0.889 at high). The sweep's cost pick was flash/3@medium (1.000, p95 6.5s); the owner
 //    chose Hydrogen because Google lists gemini-3-flash-preview as superseded by
