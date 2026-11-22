@@ -31,7 +31,8 @@ reviewing and applying the template results.
 ## Reading a sweep result — two traps
 
 - **Flat-at-ceiling ≠ flat-at-floor.** Both look "flat across rungs," opposite meaning.
-  Classifiers flat at **1.000** = cheapest model already wins → downsize is safe.
+  Classifiers flat at **1.000** on the 2026-06-08 corpus = cheapest model already wins
+  *on that corpus* → downsize was safe there; a harder set can separate them (below).
   `clarification` flat at **0.083** = every model (incl. pro/3.1/high) scores the same
   *low* value → no evidence the cheap model is *adequate*, only that it's no worse on a
   corpus that barely tests it. A flat-at-floor result blocks a default change.
@@ -81,8 +82,11 @@ requires enough cases to bound ε.
 `scripts/universal-sweep.ts` sizes them with **exact-match accuracy and no LLM judge** —
 immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both scored
 1.000 at every rung on the 2026-06-08 corpus, which was too easy to separate models.
-The harder tv-v1 pilot intake items (2026-11-19) moved the template default
-(`CLASSIFIER_LITE`) to `flash-lite/3.5`@low: 0.975 vs 0.950 for `flash-lite/3.1`@minimal.
+The harder tv-v1 pilot intake items (2026-11-19) *provisionally* moved the template
+default (`CLASSIFIER_LITE`) to `flash-lite/3.5`@low: 0.975 vs 0.950 for
+`flash-lite/3.1`@minimal. That is a one-item gap inside ε, so it is an owner judgment
+call, not a sizing result, and not precedent for changing defaults on pilot data (see
+the governance Evidence Log, 2026-11-19). The frozen tv-v1 sweep confirms or reverts it.
 For intake, latency matters as much as accuracy: models that blow the 8s
 `INTAKE_TIMEOUT_MS` lose to smaller ones, so higher thinking is not free here.
 Keep corpora template-safe (generic metrics, no client names/IDs); `benchmarks/results/`

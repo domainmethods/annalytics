@@ -215,6 +215,8 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('the failure rate fell to 2%', ['error'])).toBe(0);
   expect(scoreFacts('the skip rate held at 10%', ['skipped'])).toBe(0);
   expect(scoreFacts('the warning rates are flat', ['warn'])).toBe(0);
+  expect(scoreFacts('the pass-rate was 50%', ['success'])).toBe(0);
+  expect(scoreFacts('the error-rate held at 0%', ['error'])).toBe(0);
   expect(scoreFacts('the error rate was 0%, but orders failed', ['error'])).toBe(1);
   expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['success'])).toBe(1);
   expect(scoreFacts('All models pass.', ['success'])).toBe(1);
