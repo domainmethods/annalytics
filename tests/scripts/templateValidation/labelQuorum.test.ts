@@ -915,6 +915,7 @@ describe('draftExamples over the frozen set', () => {
 
   it.each(NODE_IDS)('%s', (node) => {
     const items = loadItems(node);
+    expect(items.length).toBeGreaterThan(0);
     expect(draftExamples(node, items)).toHaveLength(withoutExamples.has(node) ? 0 : items.length);
   });
 });

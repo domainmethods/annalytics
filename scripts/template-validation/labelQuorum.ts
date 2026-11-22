@@ -312,8 +312,9 @@ function categorySlots(count: number, seeds: Input[]): Category[] {
  * summaryOverride rows, teachingCandidate fixtures) don't parse, so those nodes get no examples.
  */
 export function draftExamples(node: NodeId, seeds: unknown[]): unknown[] {
+  const schema = draftItemSchema(node);
   return seeds.flatMap(seed => {
-    const parsed = draftItemSchema(node).safeParse(seed);
+    const parsed = schema.safeParse(seed);
     return parsed.success ? [parsed.data] : [];
   });
 }
