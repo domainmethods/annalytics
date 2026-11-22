@@ -820,6 +820,9 @@ describe('promotion runs', () => {
     expect(result.perNode.supervisor).toMatchObject({
       accepted: base.perNode.supervisor.accepted + 2, quarantined: base.perNode.supervisor.quarantined,
     });
+    // The frozen PASS items use the first two reference batches, so the new PASS item must come from a later one.
+    const added = loadItems('supervisor', root, result.perNode.supervisor.itemsSha256).slice(base.perNode.supervisor.accepted);
+    expect(added.map(item => item.expectedVerdict).sort()).toEqual(['FAIL', 'PASS']);
   });
 
   it('shows the frozen items to the drafter without their labels', async () => {

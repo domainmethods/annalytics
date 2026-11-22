@@ -371,7 +371,11 @@ async function supervisorDrafts(
       if (passing.length < passTarget) add(passing, { input: { category, question, candidateSql: referenceSql }, expectedVerdict: 'PASS' });
     }
     if (!verified.length) continue;
-    if (passing.length + failing.length >= count) break;
+    if (passing.length + failing.length >= count) {
+      // Failing is full; keep scanning references (without mutation calls) until the PASS target is met.
+      if (passing.length >= passTarget) break;
+      continue;
+    }
     const inputs = verified.map(({ reference }) => ({ question: reference.question, referenceSql: reference.referenceSql }));
     const prompt = mutationPrompt(inputs, context);
     const mutationInputs = inputs.map(({ question, referenceSql }) => ({ question, candidateSql: referenceSql }));
