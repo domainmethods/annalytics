@@ -41,7 +41,9 @@ reviewing and applying the template results.
   back the cheapest point as a fake downsize. An earlier run printed "ACCEPTED — downsize
   all three"; only `clarification` (ε=0.01) was real. **For template results,
   ε > 0.05 on the 0–1 metric blocks a change.** For install-corpus sizing, grow
-  the corpus if ε exceeds a meaningful quality delta.
+  the corpus if ε exceeds a meaningful quality delta. The ε figures above (`sqlGenerator` 0.33, `supervisor` 2.85, `clarification` 0.01) used the old max-per-case band;
+  since 2026-11-21 `computeEpsilon` measures noise on the mean (`2·√Σd²/n` over paired diffs, centered on 0),
+  because one flipped case under the old band tied every candidate (governance Evidence Log).
 
 ## Two-stage coordinate isolation (the sweep search shape)
 
