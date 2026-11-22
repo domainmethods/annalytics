@@ -39,4 +39,6 @@ export interface PointScore {
   p95LatencyMs: number;
   cost: number;
   exhaustionRate?: number;
+  /** The model has a dated shutdown on Google's deprecations page (registry `sunset`). */
+  scheduledShutdown?: boolean;
 }

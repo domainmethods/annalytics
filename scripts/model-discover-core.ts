@@ -1,4 +1,4 @@
-import { getRegisteredModel, type RegisteredModel, type ThinkingLevel } from '../src/agents/modelConfig.js';
+import { describeSunset, getRegisteredModel, type RegisteredModel, type ThinkingLevel } from '../src/agents/modelConfig.js';
 import { NODE_IDS, defaultProfileForNode, type NodeId } from '../src/agents/nodeProfiles.js';
 
 const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'] satisfies Exclude<ThinkingLevel, 'default'>[];
@@ -36,8 +36,35 @@ export function diffModels(liveIds: string[], registry: RegisteredModel[], defau
   };
 }
 
-export function discoveryExitCode(diff: ModelDiff): 0 | 1 {
-  return diff.missing.some(({ usedByDefaults }) => usedByDefaults.length > 0) ? 1 : 0;
+export interface SunsetWarning {
+  id: string;
+  notice: string;
+  usedByDefaults: NodeId[];
+  /** Days until the earliest shutdown; undefined when Google gives no date. */
+  daysLeft?: number;
+}
+
+/** A template default this close to its model's shutdown fails discovery. */
+export const SUNSET_FAIL_DAYS = 90;
+
+export function sunsetWarnings(registry: RegisteredModel[], defaultIds: Map<NodeId, string>, today: Date): SunsetWarning[] {
+  const day = 24 * 60 * 60 * 1000;
+  return registry.filter(model => model.status !== 'retired' && model.sunset).map(model => {
+    const shutdown = model.sunset?.shutdownDate;
+    return {
+      id: model.id,
+      notice: describeSunset(model)!,
+      usedByDefaults: [...defaultIds].filter(([, modelId]) => modelId === model.id).map(([node]) => node),
+      ...(shutdown && { daysLeft: Math.ceil((Date.parse(`${shutdown}T00:00:00Z`) - today.getTime()) / day) }),
+    };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function discoveryExitCode(diff: ModelDiff, sunsets: SunsetWarning[] = []): 0 | 1 {
+  const missingDefault = diff.missing.some(({ usedByDefaults }) => usedByDefaults.length > 0);
+  const imminentDefault = sunsets.some(({ usedByDefaults, daysLeft }) =>
+    usedByDefaults.length > 0 && daysLeft !== undefined && daysLeft <= SUNSET_FAIL_DAYS);
+  return missingDefault || imminentDefault ? 1 : 0;
 }
 
 export async function probeThinkingLevels(id: string, call: (id: string, level: string) => Promise<void>): Promise<string[]> {

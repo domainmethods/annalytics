@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getRegisteredModel, resolveModelId } from '../../src/agents/modelConfig.js';
+import { describeSunset, getRegisteredModel, resolveModelId } from '../../src/agents/modelConfig.js';
 import { defaultProfileForNode, type NodeId } from '../../src/agents/nodeProfiles.js';
 import type { NodeOutcome } from '../node-sweep.js';
 import { formatSweepProfile, type SweepFailure } from '../node-sweep-types.js';
@@ -23,6 +23,8 @@ export interface RefreshRow {
   dropRate: number | null;
   applicable: boolean;
   applicationReason?: string;
+  /** Google's deprecation notice for the recommended model, when it has one. */
+  sunsetNotice?: string;
   failureCounts: ProfileFailureCount[];
   flatAtFloor: boolean;
   quorumMemberWinner: boolean;
@@ -65,6 +67,9 @@ export function buildRefreshRows(
     const dropRate = drafted === 0 ? null : quarantined / drafted;
     const failureCounts = failuresByNode.get(node) ?? [];
     const infrastructureFailure = blocked.has(node) || failureCounts.some(failure => failure.category !== 'candidate');
+    const recommendedEntry = getRegisteredModel(recommendedProfile.tier, recommendedProfile.version);
+    // Only a registry-resolved pick carries the registry's notice; an override is withheld below anyway.
+    const sunsetNotice = recommendedEntry?.id === recommendedModel ? describeSunset(recommendedEntry) : undefined;
     let applicationReason: string | undefined;
     if (acceptedCount * 2 < templateTargetCount(node)) {
       applicationReason = 'underfilled corpus';
@@ -73,14 +78,18 @@ export function buildRefreshRows(
     } else if (currentModel === recommendedModel && defaultProfile.thinkingLevel === recommendedProfile.thinkingLevel) {
       applicationReason = 'same resolved model';
     } else if (currentModel !== getRegisteredModel(defaultProfile.tier, defaultProfile.version)?.id ||
-        recommendedModel !== getRegisteredModel(recommendedProfile.tier, recommendedProfile.version)?.id) {
+        recommendedModel !== recommendedEntry?.id) {
       applicationReason = 'measured under local model override';
+    } else if (recommendedEntry?.sunset?.shutdownDate) {
+      // A dated shutdown means the default would have to move again; pick its replacement instead.
+      applicationReason = 'recommended model has a scheduled shutdown';
     }
     return {
       node, current, recommended, currentMetric: baseline.metric, recommendedMetric: chosen.metric,
       eps, signal: signal[node], costDelta: chosen.cost - baseline.cost, p95Ms: chosen.p95LatencyMs, acceptedCount, dropRate,
       applicable: applicationReason === undefined && eps <= 0.05 && !flatAtFloor,
       ...(applicationReason && { applicationReason }),
+      ...(sunsetNotice && { sunsetNotice }),
       failureCounts,
       flatAtFloor, quorumMemberWinner: quorumModels.has(recommendedModel),
     };
@@ -103,7 +112,7 @@ export function renderRefreshReport(rows: RefreshRow[], meta: RefreshMeta): stri
     lines.push(`| ${[
       row.node, row.current, row.recommended, row.currentMetric.toFixed(3), row.recommendedMetric.toFixed(3),
       row.eps.toFixed(4), row.signal, row.costDelta.toExponential(2), row.p95Ms, row.acceptedCount,
-      row.dropRate === null ? 'n/a' : `${(row.dropRate * 100).toFixed(1)}%`, row.applicable, row.applicationReason ?? '',
+      row.dropRate === null ? 'n/a' : `${(row.dropRate * 100).toFixed(1)}%`, row.applicable, [row.applicationReason, row.sunsetNotice].filter(Boolean).join('; '),
       row.flatAtFloor, row.quorumMemberWinner, meta.setVersion, meta.setHash,
     ].join(' | ')} |`);
   }

@@ -87,8 +87,13 @@ The frozen tv-v1 sweep (2026-11-22, ε 0.01) measured both, plus `ambiguityClass
 `flash/4-hydrogen`@high. Both are owner overrides of the sweep's cost tie-break,
 made for model-sunset risk rather than for score. `ambiguityClassifier` stays
 provisional because its ε was 0.054 (governance Evidence Log, 2026-11-22).
-**The sweep does not see Google's deprecation schedule.** Check
-https://aistudio.google.com/docs/deprecations before applying a sweep pick as a default.
+**Sunsets live in the registry.** A `RegisteredModel` can carry `sunset`
+(`shutdownDate`, `replacement`), copied by hand from
+https://aistudio.google.com/docs/deprecations. Stage 1's cost tie-break ranks a model
+with a `shutdownDate` after every other viable model, though it still sets the quality
+bar. The refresh report withholds a dated pick and notes a dateless one, and
+`model:discover` lists both and fails when a template default is within 90 days of its
+shutdown. The page is still the source: re-read it during every refresh.
 For intake, latency matters as much as accuracy: models that blow the 8s
 `INTAKE_TIMEOUT_MS` lose to smaller ones, so higher thinking is not free here.
 Keep corpora template-safe (generic metrics, no client names/IDs); `benchmarks/results/`

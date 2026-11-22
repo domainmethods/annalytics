@@ -268,13 +268,24 @@ describe('runSweep — two-stage coordinate isolation', () => {
   it('downsizes a tier-insensitive node to the cheapest model and trims thinking (clarification → flash-lite/minimal)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    // Stage 1: every model is quality-equal → cheapest tier wins.
+    // Stage 1: every model is quality-equal → cheapest tier wins, skipping
+    // flash-lite/3.1 (cheaper, but it has a dated shutdown in the registry).
     expect(o.stage1Winner.tier).toBe('flash-lite');
     // Stage 2: thinking is quality-equal → fastest (minimal) wins.
     expect(o.chosenRung).toBeDefined();
     expect(o.chosenRung!.tier).toBe('flash-lite');
-    expect(o.chosenRung!.version).toBe('3.1');
+    expect(o.chosenRung!.version).toBe('3.5');
     expect(o.chosenRung!.thinkingLevel).toBe('minimal');
+  });
+
+  it('ignores a registry sunset when MODEL_ID_OVERRIDES points the coordinate at another model', async () => {
+    vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ 'flash-lite/3.1': 'gemini-3.5-flash-lite' }));
+    try {
+      const o = (await sweep(['clarification'])).outcomes[0];
+      expect(`${o.stage1Winner.tier}/${o.stage1Winner.version}`).toBe('flash-lite/3.1');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('keeps a tier-sensitive node on pro (the quality gate excludes cheap tiers)', async () => {

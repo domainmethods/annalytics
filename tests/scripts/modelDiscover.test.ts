@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
 import { listAllRegisteredModels, type RegisteredModel } from '../../src/agents/modelConfig.js';
-import { diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, templateDefaultIds } from '../../scripts/model-discover-core.js';
+import { SUNSET_FAIL_DAYS, diffModels, discoveryExitCode, formatRegistryStub, isTextGenerationModel, probeThinkingLevels, sunsetWarnings, templateDefaultIds } from '../../scripts/model-discover-core.js';
 
 test('isTextGenerationModel excludes non-text and aliases', () => {
   const excluded = [
@@ -99,4 +99,43 @@ test('discovery reports a missing retired model without failing when no default 
   const diff = diffModels([], [retired], new Map());
   expect(diff.missing).toEqual([{ id: retired.id, usedByDefaults: [] }]);
   expect(discoveryExitCode(diff)).toBe(0);
+});
+
+const lite: RegisteredModel = {
+  tier: 'flash-lite', version: '3.1', id: 'gemini-3.1-flash-lite', status: 'default-eligible',
+  thinkingLevels: ['minimal'], inputPricePerMTok: 0, outputPricePerMTok: 0,
+  sunset: { shutdownDate: '2027-05-07', replacement: 'gemini-3.5-flash-lite' },
+};
+const preview: RegisteredModel = {
+  ...lite, tier: 'flash', version: '3', id: 'gemini-3-flash-preview', sunset: { replacement: 'gemini-3.6-flash' },
+};
+const noDiff = { added: [], missing: [], unchanged: [] };
+
+test('sunsetWarnings lists noticed models, the defaults using them and days left', () => {
+  const retired: RegisteredModel = { ...preview, id: 'gemini-3.5-flash', status: 'retired' };
+  const clean: RegisteredModel = { ...lite, id: 'gemini-3.5-flash-lite', sunset: undefined };
+  const warnings = sunsetWarnings([lite, preview, retired, clean], new Map([
+    ['slackIntake', lite.id], ['dbtStatus', preview.id], ['chart', preview.id],
+  ]), new Date('2027-05-01T12:00:00Z'));
+  expect(warnings).toEqual([
+    { id: preview.id, notice: 'gemini-3-flash-preview superseded (no shutdown date); replacement gemini-3.6-flash', usedByDefaults: ['dbtStatus', 'chart'] },
+    { id: lite.id, notice: 'gemini-3.1-flash-lite shuts down no earlier than 2027-05-07; replacement gemini-3.5-flash-lite', usedByDefaults: ['slackIntake'], daysLeft: 6 },
+  ]);
+});
+
+test('discoveryExitCode fails only when a default is within the sunset window', () => {
+  const at = (days: number, usedByDefaults: ('slackIntake')[] = ['slackIntake']) =>
+    [{ id: lite.id, notice: '', usedByDefaults, daysLeft: days }];
+  expect(discoveryExitCode(noDiff, at(SUNSET_FAIL_DAYS))).toBe(1);
+  expect(discoveryExitCode(noDiff, at(SUNSET_FAIL_DAYS + 1))).toBe(0);
+  expect(discoveryExitCode(noDiff, at(1, []))).toBe(0);
+  expect(discoveryExitCode(noDiff, [{ id: preview.id, notice: '', usedByDefaults: ['slackIntake'] }])).toBe(0);
+});
+
+test('every registered sunset date is a real YYYY-MM-DD date', () => {
+  for (const { id, sunset } of listAllRegisteredModels()) {
+    if (!sunset?.shutdownDate) continue;
+    expect(sunset.shutdownDate, id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(new Date(`${sunset.shutdownDate}T00:00:00Z`).toISOString().slice(0, 10), id).toBe(sunset.shutdownDate);
+  }
 });

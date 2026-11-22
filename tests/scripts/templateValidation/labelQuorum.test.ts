@@ -733,8 +733,8 @@ it('reports a 1-of-40 chart corpus as underfilled even when its candidate scores
   });
   const provenance = await run({ nodes: ['chart'], targetCounts: {} });
   const baseline = { label: 'DEFAULT', metric: 1, e2e: 1, p95LatencyMs: 1, cost: 1 };
-  const chosen = { ...baseline, label: 'flash-lite/3.1@minimal', cost: 0.5 };
-  const chosenRung = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' } as const;
+  const chosen = { ...baseline, label: 'flash-lite/3.5@minimal', cost: 0.5 };
+  const chosenRung = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'minimal' } as const;
   const rows = buildRefreshRows([{
     nodeId: 'chart', baseline, chosen, chosenRung, stage1Winner: chosenRung,
     stage1: [chosen], stage2: [chosen], e2eCritical: false,
