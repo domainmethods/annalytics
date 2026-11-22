@@ -197,6 +197,11 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('Nothing else. orders failed.', ['error'])).toBe(1);
   expect(scoreFacts('10 failed.', ['error'])).toBe(1);
   expect(scoreFacts('The 2:00 run failed.', ['error'])).toBe(1);
+  expect(scoreFacts('dbt 2.0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('model-0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('>0 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=1.', ['error'])).toBe(1);
+  expect(scoreFacts('(0 failed)', ['error'])).toBe(0);
   expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
 });
 
