@@ -434,6 +434,8 @@ export async function runLabelQuorum(
   const { members, kind } = validateQuorum(eligible, opts.allowSingleFamily);
   if (base) {
     // A promoted set mixes versions' labels, so every version must come from the same quorum.
+    // Labeler configs carry `model`; provenance members carry `requestedModel`. Matching rosters
+    // also imply the same quorum kind, so quorumKind needs no separate check.
     const roster = (list: { id: string; model?: string; requestedModel?: string }[]) =>
       list.map(member => `${member.id}:${member.requestedModel ?? member.model}`).sort().join(',');
     if (roster(members) !== roster(base.members) || drafter.id !== base.drafter) {
@@ -583,6 +585,8 @@ export async function runLabelQuorum(
     if (readVersion(deps.root) !== version) {
       throw new Error('VERSION changed during labeling');
     }
+    // A long paid run leaves time for carried-forward files to drift; check them again.
+    if (base) promotionBase(deps.root, provenancePath, version);
     for (const [index, content] of [...outputs.values()].entries()) writeFileSync(join(staging, String(index)), content);
     // Publish provenance last. A failed write leaves the run resumable from adapter caches.
     for (const [index, name] of [...outputs.keys()].entries()) {

@@ -838,6 +838,22 @@ describe('promotion runs', () => {
     await expect(promote()).rejects.toThrow('Promotion needs a frozen template set');
   });
 
+  it('appends newly quarantined items after the frozen quarantine and totals the counts', async () => {
+    const base = baseProvenance();
+    const priorQuarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
+    const split = { category: 'edge_case', text: 'Is the returns number right or not?' };
+    deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
+      cached: false,
+      value: prompt.startsWith('Draft') ? { items: [promoted, split] }
+        : { labels: [route, cfg.id === 'claude' ? { expectedRoute: 'immediate_response' } : route] },
+    }));
+    const result = await promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length + 2 } });
+    const quarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
+    expect(quarantine.startsWith(priorQuarantine)).toBe(true);
+    expect(JSON.parse(quarantine.slice(priorQuarantine.length))).toMatchObject({ item: { text: split.text } });
+    expect(result.perNode.slackIntake.quarantined).toBe(base.perNode.slackIntake.quarantined + 1);
+  });
+
   it('refuses a promotion whose target the frozen node already meets', async () => {
     await expect(promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length } }))
       .rejects.toThrow('raise templateTargetCount for slackIntake before promoting');
