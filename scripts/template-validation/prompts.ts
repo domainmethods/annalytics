@@ -127,9 +127,11 @@ export const templateRules =
 /**
  * Nodes whose drafted inputs are messages a person types and whose tv-v1 drafts pasted SQL into them.
  * Their drafts get these rules instead of `templateRules`, whose SQL requirement led the drafter to paste
- * a query into every message. ambiguityClassifier, clarification and discrepancy also take typed text but
- * barely leaked SQL, so they stay on `templateRules`; the labeling cache is keyed on prompt text, and
- * switching them would redraft and relabel them.
+ * a query into every message. clarification and discrepancy also take typed text but barely leaked SQL, so they
+ * stay on `templateRules`; the labeling cache is keyed on prompt text, and switching them would redraft and
+ * relabel them. ambiguityClassifier also stays on `templateRules`, because its assistant turns carry the prior
+ * SQL: its draft instruction keeps that SQL out of user turns instead (its first tv-v2 draft leaked SQL into
+ * 36 of 38 user turns before that sentence existed).
  */
 const PLAIN_LANGUAGE_DRAFT_NODES: ReadonlySet<NodeId> = new Set(['slackIntake', 'followUpClassifier', 'metaQuestion', 'chart', 'dbtStatus']);
 
@@ -141,7 +143,11 @@ const plainLanguageRules =
 const draftInstructions: Record<NodeId, string> = {
   slackIntake: 'Draft Slack messages covering lightweight bot interactions and requests for warehouse analytics. Include borderline messages.',
   followUpClassifier: 'Draft thread histories and final replies covering new queries, refinements, questions about the prior answer and reports of conflicting figures. Write each assistant turn as the bot\'s short answer summary with its figures.',
-  ambiguityClassifier: 'Draft ambiguous questions with ambiguity descriptions, possible clarifying questions and thread context. Include cases resolved by organization knowledge and cases that require asking the user.',
+  ambiguityClassifier: 'Draft ambiguous questions with ambiguity descriptions, possible clarifying questions and thread context. Include cases resolved by organization knowledge and cases that require asking the user. ' +
+    'Leave every ambiguity open: the thread context must not answer the clarifying question. ' +
+    'Describe the competing readings without naming or hinting at who resolves them; avoid phrases such as "the organization\'s definition" or "the standard metric". ' +
+    'Vary organization-knowledge cases across source-of-truth tables, required filters, exclusion rules, ownership decisions and metric definitions. ' +
+    'Write user turns in plain language and put any SQL only in assistant turns.',
   clarification: 'Include clear, underspecified and knowledge-dependent questions. Every ambiguous-category slot should be ambiguous with the schema alone and clear when the supplied ReferenceCard is applied. Use the remaining slots for a mix of questions that should proceed and questions that should suspend.',
   teachingCandidate: 'Choose a supplied escalation-resolution filename (without .json) for each draft. Each fixture can be used once.',
   sqlGenerator: 'Draft answerable analytics questions with enough detail to specify an equivalent result. Each question must be answerable from the documented schema alone. Avoid organization-specific definitions.',
@@ -171,11 +177,17 @@ const labelInstructions: Record<NodeId, string> = {
   discrepancy: 'Locate the central SQL defect and give a rubric of required diagnostic facts. Use separate short verbatim SQL fragments or column identifiers when possible.',
 };
 
-export function draftPrompt(node: NodeId, categories: Category[], context: string, priorInputs: string): string {
+/**
+ * `examples` are retained items (a promoted node's frozen set, or a relabeled node's manual items),
+ * stripped to their draft fields. Without them a promotion drafter matches neither the frozen items'
+ * structure nor their difficulty.
+ */
+export function draftPrompt(node: NodeId, categories: Category[], context: string, priorInputs: string, examples: unknown[] = []): string {
   return [
     `Draft ${categories.length} distinct ${node} item inputs, one per slot in category order ${JSON.stringify(categories)}.`,
     PLAIN_LANGUAGE_DRAFT_NODES.has(node) ? plainLanguageRules : templateRules, draftInstructions[node],
     'Return the input fields only. Omit proposed labels, IDs and answers.',
+    examples.length ? 'Match the structure, style and difficulty of these existing items without repeating them:\n' + JSON.stringify(examples) : '',
     context, priorInputs,
   ].filter(Boolean).join('\n\n');
 }

@@ -43,3 +43,21 @@ describe('dbtStatus draft instruction', () => {
     expect(prompt).toContain('Do not ask for rows, counts or values from the tables the models build.');
   });
 });
+
+describe('ambiguityClassifier draft instruction', () => {
+  it('keeps ambiguities open, hides the type and keeps SQL out of user turns', () => {
+    const prompt = draftPrompt('ambiguityClassifier', ['simple'], '', '');
+    expect(prompt).toContain('the thread context must not answer the clarifying question');
+    expect(prompt).toContain('without naming or hinting at who resolves them');
+    expect(prompt).toContain('put any SQL only in assistant turns');
+  });
+});
+
+describe('draft examples', () => {
+  it('shows retained items as style examples only when there are any', () => {
+    expect(draftPrompt('slackIntake', ['simple'], '', '')).not.toContain('Match the structure');
+    const prompt = draftPrompt('slackIntake', ['simple'], '', '', [{ category: 'simple', text: 'An example seed' }]);
+    expect(prompt).toContain('Match the structure, style and difficulty of these existing items');
+    expect(prompt).toContain('An example seed');
+  });
+});

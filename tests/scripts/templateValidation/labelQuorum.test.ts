@@ -8,7 +8,7 @@ import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '.
 import * as runner from '../../../src/execution/runner.js';
 import { NODE_IDS, type NodeId } from '../../../src/agents/nodeProfiles.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
-import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps, type Provenance } from '../../../scripts/template-validation/labelQuorum.js';
+import { draftExamples, fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps, type Provenance } from '../../../scripts/template-validation/labelQuorum.js';
 import { hashItemInput, loadFixture, loadItems, templateTargetCount } from '../../../scripts/template-validation/items.js';
 import { resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
 import { buildRefreshRows, writeRefreshReport } from '../../../scripts/template-validation/refreshReport.js';
@@ -802,6 +802,16 @@ describe('promotion runs', () => {
     }
   });
 
+  it('shows the frozen items to the drafter without their labels', async () => {
+    const seeds = loadItems('slackIntake', root);
+    await promote();
+    const draft = vi.mocked(deps.runLabeler).mock.calls.map(([, { prompt }]) => prompt).find(prompt => prompt.startsWith('Draft'));
+    expect(draft).toContain('Match the structure, style and difficulty of these existing items');
+    expect(draft).toContain(JSON.stringify(seeds[0].text));
+    expect(draft).not.toContain('expectedRoute');
+    expect(draft).not.toContain(seeds[0].id);
+  });
+
   it('refuses to promote into the version it builds on', async () => {
     writeFileSync(join(root, 'VERSION'), baseVersion + '\n');
     await expect(promote()).rejects.toThrow('Bump VERSION before promoting');
@@ -841,7 +851,10 @@ describe('promotion runs', () => {
   it('appends newly quarantined items after the frozen quarantine and totals the counts', async () => {
     const priorQuarantine = JSON.stringify({ item: { category: 'simple', text: 'An older split item' }, labels: {} }) + '\n';
     writeFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), priorQuarantine);
+    // Keep the fixture consistent: the frozen set reports the one prior quarantined item.
     const base = baseProvenance();
+    base.perNode.slackIntake = { ...base.perNode.slackIntake, quarantined: 1 };
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify(base));
     const split = { category: 'edge_case', text: 'Is the returns number right or not?' };
     deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
       cached: false,
@@ -852,7 +865,7 @@ describe('promotion runs', () => {
     const quarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
     expect(quarantine.startsWith(priorQuarantine)).toBe(true);
     expect(JSON.parse(quarantine.slice(priorQuarantine.length))).toMatchObject({ item: { text: split.text } });
-    expect(result.perNode.slackIntake.quarantined).toBe(base.perNode.slackIntake.quarantined + 1);
+    expect(result.perNode.slackIntake.quarantined).toBe(2);
   });
 
   it('refuses to publish when a carried-forward file drifts during the paid run', async () => {
@@ -866,6 +879,23 @@ describe('promotion runs', () => {
     expect(baseProvenance().version).toBe(baseVersion);
   });
 
+  it('refuses to publish when the frozen provenance changes during the paid run', async () => {
+    const path = join(root, 'provenance.json');
+    const label = deps.runLabeler;
+    let edited = false;
+    deps.runLabeler = vi.fn(async (...args: Parameters<typeof label>) => {
+      // Digests still match, so only the publish-time comparison can catch this edit.
+      if (!edited) {
+        edited = true;
+        const base = baseProvenance();
+        writeFileSync(path, JSON.stringify({ ...base, perNode: { ...base.perNode, chart: { ...base.perNode.chart, labeledIn: 'tv-v0' } } }));
+      }
+      return label(...args);
+    });
+    await expect(promote()).rejects.toThrow('Frozen template set changed during labeling');
+    expect(baseProvenance().version).toBe(baseVersion);
+  });
+
   it('refuses a promotion whose target the frozen node already meets', async () => {
     await expect(promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length } }))
       .rejects.toThrow('raise templateTargetCount for slackIntake before promoting');
@@ -875,5 +905,17 @@ describe('promotion runs', () => {
   it('sizes ambiguityClassifier at 80 items so up to four flips stay within ε', () => {
     expect(templateTargetCount('ambiguityClassifier')).toBe(80);
     expect(templateTargetCount('slackIntake')).toBe(40);
+  });
+});
+
+describe('draftExamples over the frozen set', () => {
+  // Nodes whose stored items are not in their draft shape get no examples; pin which ones so a schema
+  // drift that silently empties a node's examples fails here.
+  const withoutExamples = new Set<NodeId>(['chart', 'summaryOverride', 'teachingCandidate']);
+
+  it.each(NODE_IDS)('%s', (node) => {
+    const items = loadItems(node);
+    expect(items.length).toBeGreaterThan(0);
+    expect(draftExamples(node, items)).toHaveLength(withoutExamples.has(node) ? 0 : items.length);
   });
 });
