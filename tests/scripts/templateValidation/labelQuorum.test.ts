@@ -807,12 +807,16 @@ describe('promotion runs', () => {
     const mutant = '/* mutant */';
     deps.execute = vi.fn(async (sql: string) => ({ columnNames: ['n'], rows: [{ n: sql.includes(mutant) ? 2 : 1 }] }));
     deps.runLabeler = vi.fn(async (_cfg, { prompt }) => {
-      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql: string; referenceSql: string }[];
+      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql?: string; referenceSql?: string }[];
+      const field = (value: string | undefined, name: string): string => {
+        if (value === undefined) throw new Error(`prompt payload is missing ${name}`);
+        return value;
+      };
       return {
         cached: false,
         value: prompt.startsWith('Mutate')
-          ? { items: inputs.map(({ referenceSql }) => ({ mutations: [`${referenceSql} ${mutant}`] })) }
-          : { labels: inputs.map(({ candidateSql }) => ({ expectedVerdict: candidateSql.includes(mutant) ? 'FAIL' : 'PASS' })) },
+          ? { items: inputs.map(({ referenceSql }) => ({ mutations: [`${field(referenceSql, 'referenceSql')} ${mutant}`] })) }
+          : { labels: inputs.map(({ candidateSql }) => ({ expectedVerdict: field(candidateSql, 'candidateSql').includes(mutant) ? 'FAIL' : 'PASS' })) },
       };
     });
     const result = await promote({ nodes: ['supervisor'], targetCounts: { supervisor: base.perNode.supervisor.accepted + 2 } });
