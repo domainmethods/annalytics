@@ -839,8 +839,9 @@ describe('promotion runs', () => {
   });
 
   it('appends newly quarantined items after the frozen quarantine and totals the counts', async () => {
+    const priorQuarantine = JSON.stringify({ item: { category: 'simple', text: 'An older split item' }, labels: {} }) + '\n';
+    writeFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), priorQuarantine);
     const base = baseProvenance();
-    const priorQuarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
     const split = { category: 'edge_case', text: 'Is the returns number right or not?' };
     deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
       cached: false,
@@ -852,6 +853,17 @@ describe('promotion runs', () => {
     expect(quarantine.startsWith(priorQuarantine)).toBe(true);
     expect(JSON.parse(quarantine.slice(priorQuarantine.length))).toMatchObject({ item: { text: split.text } });
     expect(result.perNode.slackIntake.quarantined).toBe(base.perNode.slackIntake.quarantined + 1);
+  });
+
+  it('refuses to publish when a carried-forward file drifts during the paid run', async () => {
+    const chart = join(root, 'items', 'chart.jsonl');
+    const label = deps.runLabeler;
+    deps.runLabeler = vi.fn(async (...args: Parameters<typeof label>) => {
+      writeFileSync(chart, readFileSync(chart, 'utf8').split('\n').slice(1).join('\n'));
+      return label(...args);
+    });
+    await expect(promote()).rejects.toThrow('items/chart.jsonl does not match frozen set tv-v1');
+    expect(baseProvenance().version).toBe(baseVersion);
   });
 
   it('refuses a promotion whose target the frozen node already meets', async () => {

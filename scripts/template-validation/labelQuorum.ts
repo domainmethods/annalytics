@@ -585,8 +585,10 @@ export async function runLabelQuorum(
     if (readVersion(deps.root) !== version) {
       throw new Error('VERSION changed during labeling');
     }
-    // A long paid run leaves time for carried-forward files to drift; check them again.
-    if (base) promotionBase(deps.root, provenancePath, version);
+    // A long paid run leaves time for the base set to change; check it and its files again.
+    if (base && JSON.stringify(promotionBase(deps.root, provenancePath, version)) !== JSON.stringify(base)) {
+      throw new Error('Frozen template set changed during labeling');
+    }
     for (const [index, content] of [...outputs.values()].entries()) writeFileSync(join(staging, String(index)), content);
     // Publish provenance last. A failed write leaves the run resumable from adapter caches.
     for (const [index, name] of [...outputs.keys()].entries()) {
