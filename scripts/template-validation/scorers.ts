@@ -144,7 +144,7 @@ function mentionsTimestamp(text: string, fact: string): boolean {
 // Whole-word containment, so "success" doesn't match inside "unsuccessful".
 function containsWord(text: string, word: string): boolean {
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![\\w])${escaped}(?![\\w])`).test(text);
+  return new RegExp(`(?<!\\w)${escaped}(?!\\w)`).test(text);
 }
 
 function mentionsFact(text: string, fact: string): boolean {

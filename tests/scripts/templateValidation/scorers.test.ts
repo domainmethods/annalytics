@@ -149,7 +149,7 @@ describe('scoreSummaryNumbers', () => {
   });
 });
 
-it('scores required facts with case-insensitive containment', () => {
+it('scores required facts with case-insensitive whole-word matching', () => {
   expect(scoreFacts('Orders SUCCEEDED.', ['orders', 'succeeded', 'yesterday'])).toBe(2 / 3);
   expect(scoreFacts('', [])).toBe(1);
 });
