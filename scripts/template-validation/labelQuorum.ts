@@ -31,7 +31,17 @@ export interface Provenance {
   singleFamily: boolean;
   drafter: string;
   members: { id: string; family: string; cliVersion: string; requestedModel: string; reportedModels: string[]; isolation?: string }[];
-  perNode: Record<string, { drafted: number; accepted: number; quarantined: number; itemsSha256: string; dropRateByCategory: Record<string, number> }>;
+  /** Set by a promotion run: the frozen version whose unselected nodes this set carries forward. */
+  promotedFrom?: string;
+  /**
+   * `labeledIn` names the version whose run labeled the node's newest items (set by promotion runs).
+   * On a promoted node, `drafted` and `quarantined` total every version's drafts, while
+   * `dropRateByCategory` covers only this version's drafts.
+   */
+  perNode: Record<string, {
+    drafted: number; accepted: number; quarantined: number; itemsSha256: string;
+    dropRateByCategory: Record<string, number>; labeledIn?: string;
+  }>;
 }
 
 const BATCH_SIZE = 20;
@@ -372,6 +382,25 @@ async function supervisorDrafts(
     hashItemInput(a.input).localeCompare(hashItemInput(b.input)));
 }
 
+/**
+ * Reads the frozen set a promotion builds on and checks every node's item file against its digest,
+ * so a carried-forward node is byte-identical to what the base version froze.
+ */
+function promotionBase(root: string, provenancePath: string, version: string): Provenance {
+  if (!existsSync(provenancePath)) throw new Error('Promotion needs a frozen template set to build on');
+  const base = JSON.parse(readFileSync(provenancePath, 'utf8')) as Provenance;
+  if (base.version === version) throw new Error('Bump VERSION before promoting nodes into a new set');
+  for (const node of NODE_IDS) {
+    const frozen = base.perNode?.[node];
+    if (!frozen?.itemsSha256) throw new Error(`Frozen set ${base.version} has no item digest for ${node}`);
+    const path = join(root, 'items', `${node}.jsonl`);
+    if (!existsSync(path) || hashItemFile(readFileSync(path)) !== frozen.itemsSha256) {
+      throw new Error(`items/${node}.jsonl does not match frozen set ${base.version}`);
+    }
+  }
+  return base;
+}
+
 function refuseOverwrite(path: string, version: string): void {
   if (existsSync(path) && JSON.parse(readFileSync(path, 'utf8')).version === version) {
     throw new Error('Template validation set already exists, bump VERSION to relabel');
@@ -379,19 +408,33 @@ function refuseOverwrite(path: string, version: string): void {
 }
 
 export async function runLabelQuorum(
-  opts: { nodes: NodeId[]; allowSingleFamily: boolean; drafter: string; targetCounts: Partial<Record<NodeId, number>> },
+  opts: {
+    nodes: NodeId[]; allowSingleFamily: boolean; drafter: string; targetCounts: Partial<Record<NodeId, number>>;
+    /** Grow the selected nodes into a new frozen set, carrying every other node forward unchanged. */
+    promote?: boolean;
+  },
   deps: LabelRunDeps,
 ): Promise<Provenance> {
   const version = readVersion(deps.root);
   const provenancePath = join(deps.root, 'provenance.json');
   const nodes = [...new Set(opts.nodes)].sort((a, b) => Number(a === 'supervisor') - Number(b === 'supervisor'));
   const partial = !NODE_IDS.every(node => nodes.includes(node));
+  if (opts.promote && !partial) throw new Error('Promotion grows selected nodes; a full run relabels every node');
+  const base = opts.promote ? promotionBase(deps.root, provenancePath, version) : undefined;
   if (!partial) refuseOverwrite(provenancePath, version);
   const usable = deps.labelers.filter(cfg => cfg.enabled !== false);
   const drafter = usable.find(cfg => cfg.id === opts.drafter);
   if (!drafter) throw new Error(`Drafter ${opts.drafter} is unavailable`);
   const eligible = usable.filter(cfg => cfg.family !== drafter.family || cfg.id === drafter.id);
   const { members, kind } = validateQuorum(eligible, opts.allowSingleFamily);
+  if (base) {
+    // A promoted set mixes versions' labels, so every version must come from the same quorum.
+    const roster = (list: { id: string; model?: string; requestedModel?: string }[]) =>
+      list.map(member => `${member.id}:${member.requestedModel ?? member.model}`).sort().join(',');
+    if (roster(members) !== roster(base.members) || drafter.id !== base.drafter) {
+      throw new Error(`Promotion needs the quorum and drafter that labeled ${base.version}`);
+    }
+  }
   const quorumDeps = { ...deps, labelers: members };
   const client = createLabelClient(deps, version);
   const perNode: Provenance['perNode'] = {};
@@ -399,7 +442,8 @@ export async function runLabelQuorum(
   const retained = new Map([...new Set([...nodes, ...Object.keys(fixtureSpecs) as FixtureNode[]])].map(node => {
     const path = join(deps.root, 'items', `${node}.jsonl`);
     const items = existsSync(path) ? loadItems(node, deps.root) : [];
-    return [node, nodes.includes(node) ? items.filter(item =>
+    // A promoted node keeps all its frozen items as seeds; a relabeled one keeps only manual items.
+    return [node, nodes.includes(node) && !base ? items.filter(item =>
       item.source === 'manual' || (item.agreement.members.length === 1 && item.agreement.members[0] === 'manual')) : items];
   }));
   const reserved = new Set(fixtureNames([...retained.values()].flat()).map(name => name.replace(/\.json$/, '')));
@@ -449,21 +493,31 @@ export async function runLabelQuorum(
     }
     const itemsContent = jsonLines(allAccepted);
     outputs.set(relativePath, itemsContent);
-    outputs.set(`quarantine/${node}.jsonl`, jsonLines(quarantined));
+    const priorQuarantinePath = join(deps.root, 'quarantine', `${node}.jsonl`);
+    const priorQuarantine = base && existsSync(priorQuarantinePath) ? readFileSync(priorQuarantinePath, 'utf8') : '';
+    outputs.set(`quarantine/${node}.jsonl`, priorQuarantine + jsonLines(quarantined));
+    const prior = base?.perNode[node];
     perNode[node] = {
-      drafted: drafts.length, accepted: allAccepted.length, quarantined: quarantined.length,
+      drafted: drafts.length + (prior?.drafted ?? 0), accepted: allAccepted.length,
+      quarantined: quarantined.length + (prior?.quarantined ?? 0),
       itemsSha256: hashItemFile(itemsContent),
       dropRateByCategory: Object.fromEntries(CATEGORIES.flatMap(category => {
         const drafted = drafts.filter(draft => draft.input.category === category).length;
         const dropped = quarantined.filter(({ item }) => item.category === category).length;
         return drafted ? [[category, dropped / drafted]] : [];
       })),
+      ...(base && { labeledIn: version }),
     };
+  }
+  if (base) {
+    for (const node of NODE_IDS) {
+      if (!nodes.includes(node)) perNode[node] = { labeledIn: base.version, ...base.perNode[node] };
+    }
   }
 
   const provenance: Provenance = {
     version, createdAt: deps.now().toISOString(), quorumKind: kind, reducedQuorum: kind === 'reduced',
-    singleFamily: kind === 'single', drafter: drafter.id, perNode,
+    singleFamily: kind === 'single', drafter: drafter.id, ...(base && { promotedFrom: base.version }), perNode,
     members: members.map(member => ({
       id: member.id, family: member.family, requestedModel: member.model,
       cliVersion: usable.find(cfg => cfg.id === member.id)?.cliVersion ?? 'unknown',
@@ -474,7 +528,7 @@ export async function runLabelQuorum(
   outputs.set('provenance.json', JSON.stringify(provenance, null, 2) + '\n');
   for (const [name, content] of outputs) assertSafeText(content, name);
 
-  if (partial) {
+  if (partial && !base) {
     const scratch = join(client.cacheDir, 'partial', [...nodes].sort().join('-'));
     for (const [name, content] of outputs) {
       const path = join(scratch, name);

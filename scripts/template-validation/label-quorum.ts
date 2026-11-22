@@ -135,6 +135,7 @@ async function main(): Promise<void> {
       node: { type: 'string', multiple: true },
       'allow-single-family': { type: 'boolean', default: false },
       drafter: { type: 'string', default: 'claude' },
+      promote: { type: 'boolean', default: false },
     },
   });
   const nodes = (values.node ?? Object.keys(ITEM_SCHEMAS)).map(node => {
@@ -153,6 +154,7 @@ async function main(): Promise<void> {
 
   const result = await runLabelQuorum({
     nodes, drafter: values.drafter, allowSingleFamily: values['allow-single-family'], targetCounts: {},
+    promote: values.promote,
   }, { labelers, runLabeler, execute: sql => executeTemplateSql(sql, projectId), root: TV_ROOT, now: () => new Date(), spawn });
   console.log(JSON.stringify(result, null, 2));
 }
