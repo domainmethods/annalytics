@@ -278,6 +278,16 @@ describe('runSweep — two-stage coordinate isolation', () => {
     expect(o.chosenRung!.thinkingLevel).toBe('minimal');
   });
 
+  it('ignores a registry sunset when MODEL_ID_OVERRIDES points the coordinate at another model', async () => {
+    vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ 'flash-lite/3.1': 'gemini-3.5-flash-lite' }));
+    try {
+      const o = (await sweep(['clarification'])).outcomes[0];
+      expect(`${o.stage1Winner.tier}/${o.stage1Winner.version}`).toBe('flash-lite/3.1');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('keeps a tier-sensitive node on pro (the quality gate excludes cheap tiers)', async () => {
     const r = await sweep(['sqlGenerator']);
     const o = r.outcomes[0];

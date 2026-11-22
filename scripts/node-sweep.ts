@@ -473,14 +473,16 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       const score = await scorePoint(node, profile, label);
-      const shutdown = getRegisteredModel(model.tier, model.version)?.sunset?.shutdownDate;
+      // Under MODEL_ID_OVERRIDES the coordinate may run a different model; its notice doesn't apply.
+      const entry = getRegisteredModel(model.tier, model.version);
+      const shutdown = entry?.id === resolveModelId(model.tier, model.version) ? entry?.sunset?.shutdownDate : undefined;
       stage1.push(shutdown ? { ...score, scheduledShutdown: true } : score);
       const note = shutdown ? ` (shutdown ${shutdown}; ranked after viable undated models)` : '';
       log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms${note}`);
     }
     const modelWinnerScore = pickWithinEpsilon(stage1, metricEps, e2eEps, 'cost');
     const stage1Winner = profileByLabel.get(modelWinnerScore.label)!;
-    log(`  → Stage 1 winner (cheapest within ε): ${stage1Winner.tier}/${stage1Winner.version}`);
+    log(`  → Stage 1 winner (cheapest within ε, dated shutdowns last): ${stage1Winner.tier}/${stage1Winner.version}`);
 
     // Stage 2 — THINKING axis. Hold the winning model fixed, walk every thinking
     // level the WINNING MODEL actually serves, incl. `default`. Reuse the Stage-1
