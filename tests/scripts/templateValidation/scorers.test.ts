@@ -188,6 +188,7 @@ it('accepts other status wordings and afternoon runs', () => {
   expect(scoreFacts('users finished with warnings', ['users', 'warn'])).toBe(1);
   expect(scoreFacts('two failures, the rest passing', ['error', 'success'])).toBe(1);
   expect(scoreFacts('the model named constructor ran', ['constructor'])).toBe(1);
+  expect(scoreFacts('all models ran', ['constructor', 'toString'])).toBe(0);
   expect(scoreFacts('It ran at 2 PM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
   expect(scoreFacts('It ran at 14:00 UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
   expect(scoreFacts('It ran at 2 AM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(0);
