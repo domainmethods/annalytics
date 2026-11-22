@@ -46,8 +46,9 @@ export interface RegisteredModel {
   inputPricePerMTok: number;
   outputPricePerMTok: number; // USD per million tokens, including thoughts
   status: ModelStatus;
-  /** Set when Google's deprecations page lists this model. Sweeps still measure it;
-   *  the refresh report and `model:discover` warn about it. */
+  /** Set when Google's deprecations page lists this model. Sweeps still measure it, but
+   *  Stage 1 ranks a model with a `shutdownDate` after viable undated models, the refresh
+   *  report withholds a dated pick, and `model:discover` warns about every notice. */
   sunset?: ModelSunset;
 }
 
