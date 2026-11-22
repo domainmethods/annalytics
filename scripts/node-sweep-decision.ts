@@ -38,8 +38,8 @@ export function pickWithinEpsilon(
   metricEps: number,
   e2eEps: number,
   tieBreak: 'cost' | 'latency',
-  latencyBand = 0.05,
   reference?: { metric: number; e2e: number },
+  latencyBand = 0.05,
 ): PointScore {
   if (candidates.length === 0) {
     throw new Error('pickWithinEpsilon: no candidates to choose from');

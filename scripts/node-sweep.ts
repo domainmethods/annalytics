@@ -512,7 +512,7 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       metric: Math.max(...stage1.map((p) => p.metric)),
       e2e: Math.max(...stage1.map((p) => p.e2e)),
     };
-    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency', undefined, stage1Best);
+    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency', stage1Best);
     const chosenProfile = profileByLabel.get(thinkingWinnerScore.label)!;
 
     // Guard against the search landing somewhere worse than the node's current

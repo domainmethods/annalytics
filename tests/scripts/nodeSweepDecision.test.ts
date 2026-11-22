@@ -88,7 +88,7 @@ describe('pickWithinEpsilon', () => {
     });
 
     it('gates against the earlier stage best so the losses cannot stack', () => {
-      const pick = pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', undefined, { metric: 1, e2e: 1 });
+      const pick = pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 1, e2e: 1 });
       expect(pick.label).toBe('minimal');
       expect(1 - pick.metric).toBeLessThanOrEqual(0.0573);
     });
@@ -99,11 +99,11 @@ describe('pickWithinEpsilon', () => {
         pt({ label: 'fast', metric: 0.9, e2e: 7.85, p95LatencyMs: 400 }),
       ];
       expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency').label).toBe('fast');
-      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency', undefined, { metric: 0.9, e2e: 8.1 }).label).toBe('slow');
+      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency', { metric: 0.9, e2e: 8.1 }).label).toBe('slow');
     });
 
     it('is a no-op when the reference is below the stage best', () => {
-      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', undefined, { metric: 0.5, e2e: 0.5 }).label)
+      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 0.5, e2e: 0.5 }).label)
         .toBe('default');
     });
   });

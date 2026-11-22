@@ -1,4 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// Pass-through spy: behavior is the real decision rule; tests can inspect the call args.
+vi.mock('../../scripts/node-sweep-decision.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../scripts/node-sweep-decision.js')>();
+  return { pickWithinEpsilon: vi.fn(actual.pickWithinEpsilon) };
+});
 import {
   parseArgs,
   nodeCost,
@@ -9,6 +15,7 @@ import {
   type NodeOutcome,
 } from '../../scripts/node-sweep.js';
 import type { PointScore, SweepProfile } from '../../scripts/node-sweep-types.js';
+import { pickWithinEpsilon } from '../../scripts/node-sweep-decision.js';
 import { defaultProfileForNode, NODE_IDS, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
 import type { ModelTier } from '../../src/agents/modelConfig.js';
 
@@ -181,6 +188,18 @@ describe('runSweep — two-stage coordinate isolation', () => {
 
     expect(seenOverrides.slice(0, 2)).toEqual([overrides, overrides]);
     expect(result.outcomes[0].baseline.cost).toBe(9.00);
+  });
+
+  it('gates Stage 2 against the best Stage 1 saw, not just the Stage 2 points', async () => {
+    const spy = vi.mocked(pickWithinEpsilon);
+    spy.mockClear();
+    const r = await sweep(['clarification']);
+    const o = r.outcomes[0];
+    const stage2Call = spy.mock.calls.find((args) => args[3] === 'latency');
+    expect(stage2Call?.[4]).toEqual({
+      metric: Math.max(...o.stage1.map((p) => p.metric)),
+      e2e: Math.max(...o.stage1.map((p) => p.e2e)),
+    });
   });
 
   it('reports the Stage-1 thinking anchor it held fixed', async () => {
