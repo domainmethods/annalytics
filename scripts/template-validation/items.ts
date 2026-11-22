@@ -95,7 +95,10 @@ export type MetaQuestionItem = Item<'metaQuestion'>;
 export type DiscrepancyItem = Item<'discrepancy'>;
 
 export function templateTargetCount(node: NodeId): number {
-  return node === 'sqlGenerator' || node === 'supervisor' ? 100 : 40;
+  if (node === 'sqlGenerator' || node === 'supervisor') return 100;
+  // Grown after tv-v1: at 37 items one flipped answer gave ε 0.054, above the 0.05 bar.
+  if (node === 'ambiguityClassifier') return 80;
+  return 40;
 }
 
 export function hashItemFile(content: Buffer | string): string {
