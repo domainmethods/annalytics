@@ -191,7 +191,12 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('The run was not successful.', ['success'])).toBe(0);
   expect(scoreFacts('No warnings were raised.', ['warn'])).toBe(0);
   expect(scoreFacts('No other model failed; order_items errored.', ['error'])).toBe(1);
-  expect(scoreFacts('Nothing else to report. order_items failed.', ['error'])).toBe(1);
+  expect(scoreFacts('No other model failed.', ['error'])).toBe(0);
+  expect(scoreFacts('5 passed, 0 failed.', ['error'])).toBe(0);
+  expect(scoreFacts('0 errors, 0 warnings.', ['error', 'warn'])).toBe(0);
+  expect(scoreFacts('Nothing else. orders failed.', ['error'])).toBe(1);
+  expect(scoreFacts('10 failed.', ['error'])).toBe(1);
+  expect(scoreFacts('The 2:00 run failed.', ['error'])).toBe(1);
   expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
 });
 

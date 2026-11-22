@@ -93,7 +93,8 @@ const STATUS_WORDS = new Map<string, RegExp>([
 ]);
 // A negator up to two words before a status ("none failed", "no errors", "didn't skip")
 // denies it. Sentence punctuation ends the window.
-const NEGATED = /\b(?:no|none|nothing|not|never|without|zero|\w+n['’]t)\s+(?:[\w'’]+\s+){0,2}$/;
+// A bare 0 ("5 passed, 0 failed") negates too; 0 inside 10, 2.0, or 2:00 does not.
+const NEGATED = /(?:\b(?:no|none|nothing|not|never|without|zero|\w+n['’]t)|(?<![\d.:,])\b0)\s+(?:[\w'’]+\s+){0,2}$/;
 
 function mentionsStatus(text: string, pattern: RegExp): boolean {
   for (const match of text.matchAll(pattern)) {
