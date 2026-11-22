@@ -85,11 +85,12 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 }
 
 // dbt run statuses as a conversational answer words them.
-const STATUS_WORDS: Record<string, RegExp> = {
-  success: /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es)?)\b/,
-  error: /\b(?:error(?:ed|s)?|fail(?:ed|s|ure)?)\b/,
-  skipped: /\b(?:skip(?:ped|s)?)\b/,
-};
+const STATUS_WORDS = new Map<string, RegExp>([
+  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b/],
+  ['error', /\b(?:error(?:ed|s)?|fail(?:ed|s|ing|ures?)?)\b/],
+  ['skipped', /\b(?:skip(?:ped|s)?)\b/],
+  ['warn', /\bwarn(?:ed|s|ings?)?\b/],
+]);
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::00)?(?:\.0+)?Z$/i;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const MONTH_NAMES = [
@@ -137,7 +138,7 @@ function containsWord(text: string, word: string): boolean {
 function mentionsFact(text: string, fact: string): boolean {
   const wanted = fact.toLowerCase();
   if (containsWord(text, wanted)) return true;
-  if (STATUS_WORDS[wanted]?.test(text)) return true;
+  if (STATUS_WORDS.get(wanted)?.test(text)) return true;
   if (wanted.includes('_') && containsWord(text, wanted.replaceAll('_', ' '))) return true;
   return mentionsTimestamp(text, fact);
 }

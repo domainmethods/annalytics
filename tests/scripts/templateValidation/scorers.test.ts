@@ -184,6 +184,15 @@ it('rejects a run time on the wrong side of noon', () => {
   expect(scoreFacts('On Oct 2, 2 among 5 models passed.', ['2026-10-02T02:00:00Z'])).toBe(0);
 });
 
+it('accepts other status wordings and afternoon runs', () => {
+  expect(scoreFacts('users finished with warnings', ['users', 'warn'])).toBe(1);
+  expect(scoreFacts('two failures, the rest passing', ['error', 'success'])).toBe(1);
+  expect(scoreFacts('the model named constructor ran', ['constructor'])).toBe(1);
+  expect(scoreFacts('It ran at 2 PM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 14:00 UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Oct 4.', ['2026-10-04T14:00:00Z'])).toBe(0);
+});
+
 it('accepts ISO timestamp variants', () => {
   const fact = ['2026-10-02T02:00:00Z'];
   expect(scoreFacts('Started 2026-10-02T02:00Z.', fact)).toBe(1);
