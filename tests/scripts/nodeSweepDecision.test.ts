@@ -72,6 +72,42 @@ describe('pickWithinEpsilon', () => {
     });
   });
 
+  describe('reference (Stage 2 inherits the best Stage 1 saw)', () => {
+    // The 2026-11-22 dbtStatus shape: Stage 1's best was 1.000, its winner 0.955,
+    // ε = 0.057. Against Stage 2's own best (0.963) the 0.931 point was viable;
+    // against the shared bar it is not, so the pick stays within ε of 1.000.
+    const stage2 = [
+      pt({ label: 'minimal', metric: 0.958, e2e: 0.958, p95LatencyMs: 1106 }),
+      pt({ label: 'low', metric: 0.963, e2e: 0.963, p95LatencyMs: 1395 }),
+      pt({ label: 'high', metric: 0.955, e2e: 0.955, p95LatencyMs: 3692 }),
+      pt({ label: 'default', metric: 0.931, e2e: 0.931, p95LatencyMs: 977 }),
+    ];
+
+    it('stacks the two allowances without a reference', () => {
+      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency').label).toBe('default');
+    });
+
+    it('gates against the earlier stage best so the losses cannot stack', () => {
+      const pick = pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', undefined, { metric: 1, e2e: 1 });
+      expect(pick.label).toBe('minimal');
+      expect(1 - pick.metric).toBeLessThanOrEqual(0.0573);
+    });
+
+    it('applies the reference to the e2e gate independently', () => {
+      const cands = [
+        pt({ label: 'slow', metric: 0.9, e2e: 8.0, p95LatencyMs: 2000 }),
+        pt({ label: 'fast', metric: 0.9, e2e: 7.85, p95LatencyMs: 400 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency').label).toBe('fast');
+      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency', undefined, { metric: 0.9, e2e: 8.1 }).label).toBe('slow');
+    });
+
+    it('is a no-op when the reference is below the stage best', () => {
+      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', undefined, { metric: 0.5, e2e: 0.5 }).label)
+        .toBe('default');
+    });
+  });
+
   it('throws on an empty candidate set rather than returning a bogus point', () => {
     expect(() => pickWithinEpsilon([], 0.02, 0.1, 'cost')).toThrow(/no candidates/i);
   });
