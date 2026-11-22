@@ -222,6 +222,8 @@ it.each([
   'Start from private_dataset. Then join the rest.',
   // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.
   'FROM private_dataset. Customers',
+  // Deliberate gap: BigQuery allows all-digit dataset names, but an unquoted run of digits reads as a number.
+  'FROM 2024.01',
   'Access Denied: Table tv_thelook.distribution_centers: Permission bigquery.tables.update denied on table tv_thelook.distribution_centers',
   'Missing permissions bigquery.jobs.create',
   // A prose number before a code fence is not joined to the fence's language tag.
