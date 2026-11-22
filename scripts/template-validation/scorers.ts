@@ -108,13 +108,21 @@ function mentionsTimestamp(text: string, fact: string): boolean {
   const date = new RegExp([
     `\\b${monthWord}\\s+0?${d}(?:st|nd|rd|th)?\\b`,
     `\\b0?${d}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${monthWord}\\b`,
-    `\\b${year}-${month}-${day}\\b`,
+    `\\b${year}-${month}-${day}(?:\\b|(?=t\\d))`,
     `\\b0?${Number(month)}/0?${d}\\b`,
   ].join('|'));
   const h = Number(hour);
-  const hour12 = String(h % 12 === 0 ? 12 : h % 12);
-  const meridiem = h < 12 ? 'a\\.?m\\.?' : 'p\\.?m\\.?';
-  const clock = [`\\b0?${h}:${minute}\\b`, `\\b${hour12}:${minute}\\s*${meridiem}`];
+  const hour24 = h < 10 ? `0?${h}` : String(h);
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const hour12 = h12 < 10 ? `0?${h12}` : String(h12);
+  const am = '(?:a\\.m\\.|am)(?!\\w)';
+  const pm = '(?:p\\.m\\.|pm)(?!\\w)';
+  const meridiem = h < 12 ? am : pm;
+  const clock = [
+    // A 24-hour time, unless a meridiem follows it (then the 12-hour branch decides).
+    `(?:\\b|(?<=\\dt))${hour24}:${minute}(?::\\d{2}(?:\\.\\d+)?)?(?![:.]?\\d)(?!\\s*(?:${am}|${pm}))`,
+    `\\b${hour12}:${minute}\\s*${meridiem}`,
+  ];
   if (minute === '00') clock.push(`\\b${hour12}\\s*${meridiem}`);
   return date.test(text) && new RegExp(clock.join('|')).test(text);
 }
