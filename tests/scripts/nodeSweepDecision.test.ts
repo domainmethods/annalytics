@@ -102,6 +102,16 @@ describe('pickWithinEpsilon', () => {
       expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency', { metric: 0.9, e2e: 8.1 }).label).toBe('slow');
     });
 
+    it('falls back to the stage own bar, not the fastest point, when the reference excludes everything', () => {
+      // Stage 1 fell back, so its best (1.0) is out of reach for every Stage 2 point.
+      const cands = [
+        pt({ label: 'high', metric: 0.90, e2e: 0.90, p95LatencyMs: 3000 }),
+        pt({ label: 'low', metric: 0.89, e2e: 0.89, p95LatencyMs: 1500 }),
+        pt({ label: 'default', metric: 0.70, e2e: 0.70, p95LatencyMs: 900 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.05, 0.05, 'latency', { metric: 1, e2e: 1 }).label).toBe('low');
+    });
+
     it('is a no-op when the reference is below the stage best', () => {
       expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 0.5, e2e: 0.5 }).label)
         .toBe('default');

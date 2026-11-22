@@ -31,7 +31,8 @@ import type { PointScore } from './node-sweep-types.js';
  * rather than crashing. In Stage 2 the Stage 1 winner, carried in at the anchor
  * level, usually keeps the viable set non-empty. It can still empty if Stage 1
  * itself fell back, or if a Stage 2 point raises one axis's best far enough to push
- * the anchor out of ε there.
+ * the anchor out of ε there; then the stage's own bests are tried before the full
+ * pool, so the pick is never worse than gating without a reference.
  */
 export function pickWithinEpsilon(
   candidates: PointScore[],
@@ -45,11 +46,17 @@ export function pickWithinEpsilon(
     throw new Error('pickWithinEpsilon: no candidates to choose from');
   }
 
-  const bestMetric = Math.max(...candidates.map((c) => c.metric), reference?.metric ?? -Infinity);
-  const bestE2e = Math.max(...candidates.map((c) => c.e2e), reference?.e2e ?? -Infinity);
-  const viable = candidates.filter(
-    (c) => c.metric >= bestMetric - metricEps && c.e2e >= bestE2e - e2eEps,
+  const ownBestMetric = Math.max(...candidates.map((c) => c.metric));
+  const ownBestE2e = Math.max(...candidates.map((c) => c.e2e));
+  const within = (bestMetric: number, bestE2e: number) =>
+    candidates.filter((c) => c.metric >= bestMetric - metricEps && c.e2e >= bestE2e - e2eEps);
+  let viable = within(
+    Math.max(ownBestMetric, reference?.metric ?? -Infinity),
+    Math.max(ownBestE2e, reference?.e2e ?? -Infinity),
   );
+  // If the shared bar excludes everything, keep the stage's own quality gate rather
+  // than letting the latency tie-break pick the fastest point at any quality.
+  if (viable.length === 0 && reference) viable = within(ownBestMetric, ownBestE2e);
   const pool = viable.length > 0 ? viable : candidates;
 
   if (tieBreak === 'cost') {
