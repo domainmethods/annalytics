@@ -86,7 +86,7 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 
 // dbt run statuses as a conversational answer words them.
 const STATUS_WORDS = new Map<string, RegExp>([
-  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b/g],
+  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing))\b/g],
   ['error', /\b(?:error(?:ed|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
   ['skipped', /\b(?:skip(?:ped|s)?)\b/g],
   ['warn', /\bwarn(?:ed|s|ings?)?\b/g],
@@ -96,9 +96,13 @@ const STATUS_WORDS = new Map<string, RegExp>([
 // A standalone 0 ("5 passed, 0 failed", "*0* failed") negates too; 0 in 10, 2.0, model-0, or WARN=0 does not.
 const NEGATED = /(?:\b(?:no|none|nothing|not|never|without|zero|\w+n['’]t)|(?<=^|\s)[([*`"'“‘]*0[*`"'”’]*)\s+(?:[\w'’]+\s+){0,2}$/;
 
+// A zero count after the status ("ERROR=0", "errors: none") denies it too.
+const ZERO_COUNT = /^\s*[:=]\s*[*`"']*(?:0|none|zero)(?!\w|\.\d)/;
+
 function mentionsStatus(text: string, pattern: RegExp): boolean {
   for (const match of text.matchAll(pattern)) {
-    if (!NEGATED.test(text.slice(0, match.index))) return true;
+    const after = text.slice(match.index + match[0].length);
+    if (!NEGATED.test(text.slice(0, match.index)) && !ZERO_COUNT.test(after)) return true;
   }
   return false;
 }

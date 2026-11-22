@@ -205,6 +205,10 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('*0 failed*', ['error'])).toBe(0);
   expect(scoreFacts('`0` failed', ['error'])).toBe(0);
   expect(scoreFacts('*0* failed', ['error'])).toBe(0);
+  expect(scoreFacts('Errors: 0, warnings: none.', ['error', 'warn'])).toBe(0);
+  expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['warn', 'error'])).toBe(0);
+  expect(scoreFacts('PASS=5 ERROR=0.5', ['error'])).toBe(1);
+  expect(scoreFacts('the pass rate was 50%', ['success'])).toBe(0);
   expect(scoreFacts('WARN="0" ERROR=1', ['error'])).toBe(1);
   expect(scoreFacts('models[0] failed', ['error'])).toBe(1);
   expect(scoreFacts('the run (warnings: 0) failed', ['error'])).toBe(1);
@@ -217,6 +221,14 @@ it('denies a status the answer negates', () => {
 // A fix should flip this assertion deliberately.
 it('pairs a date and a time of day from different clauses', () => {
   expect(scoreFacts('The 2:30 AM run on Oct 3 failed; the 2 AM run on Oct 4 passed.', ['2026-10-03T02:00:00Z'])).toBe(1);
+});
+
+it('accepts midnight and day-first dates', () => {
+  expect(scoreFacts('It ran at 12 AM UTC on Oct 2.', ['2026-10-02T00:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 00:00 UTC on 2 Oct.', ['2026-10-02T00:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 12 PM UTC on Oct 2.', ['2026-10-02T00:00:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 2 AM UTC on the 2nd of October.', ['2026-10-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on 10/2.', ['2026-10-02T02:00:00Z'])).toBe(1);
 });
 
 it('accepts other status wordings and afternoon runs', () => {
