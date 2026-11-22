@@ -5,10 +5,9 @@
  * describe how much a mean moves between runs, not how much one case moves.
  * With paired differences d_i = runA[i] - runB[i], the band is
  * `z * sqrt(sum(d_i^2)) / n`: the standard error of the mean difference
- * between two single-run means, at z = 2 (about 95%). The two runs are
- * replicates of one baseline, so the spread is measured around 0, not
- * around the observed mean difference; centering on that mean would hide a
- * run-wide drift. The band is also never below the observed drift |mean(d)|.
+ * between two single-run means, at z = 2 (about 95%). The runs are
+ * replicates, so the spread is measured around 0, and the band is never
+ * below |mean(d)|, so a uniform drift can't shrink it.
  * A single flipped case on a 40-case corpus therefore moves ε by ~0.03
  * instead of setting it to that case's whole swing, which made every
  * candidate tie.
