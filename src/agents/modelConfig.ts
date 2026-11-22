@@ -124,7 +124,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     thinkingLevels: ['low', 'medium', 'high'],
     inputPricePerMTok: 1.50,
     outputPricePerMTok: 7.50,
-    status: 'candidate',
+    status: 'default-eligible',
   },
   'pro/4-neon': {
     tier: 'pro',
