@@ -6,11 +6,13 @@
  * With paired differences d_i = runA[i] - runB[i], the band is
  * `z * sqrt(sum(d_i^2)) / n`: the standard error of the mean difference
  * between two single-run means, at z = 2 (about 95%). The runs are
- * replicates, so the spread is measured around 0, and the band is never
- * below |mean(d)|, so a uniform drift can't shrink it.
- * A single flipped case on a 40-case corpus therefore moves ε by ~0.03
- * instead of setting it to that case's whole swing, which made every
- * candidate tie.
+ * replicates, so the spread is measured around 0 rather than the sample
+ * mean (which would cancel a uniform drift), and the band is floored at
+ * |mean(d)| so a uniform drift is never understated.
+ * On a 40-case corpus, one case that swings by s sets ε to s / 20: about
+ * 0.033 for a 2/3 swing (one of three facts) and 0.05 for a full 0→1 flip.
+ * The old max-per-case band set ε to s itself, which made every candidate
+ * tie.
  *
  * Inputs MUST be id-aligned by the caller (runA[i] and runB[i] are the same
  * corpus case); see node-sweep.ts for the alignment step. Fewer than two
