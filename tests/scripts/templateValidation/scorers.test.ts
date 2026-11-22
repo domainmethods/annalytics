@@ -184,6 +184,17 @@ it('rejects a run time on the wrong side of noon', () => {
   expect(scoreFacts('On Oct 2, 2 among 5 models passed.', ['2026-10-02T02:00:00Z'])).toBe(0);
 });
 
+it('denies a status the answer negates', () => {
+  expect(scoreFacts('All models passed, none failed.', ['error'])).toBe(0);
+  expect(scoreFacts('There were no errors.', ['error'])).toBe(0);
+  expect(scoreFacts("dbt didn't skip any models.", ['skipped'])).toBe(0);
+  expect(scoreFacts('The run was not successful.', ['success'])).toBe(0);
+  expect(scoreFacts('No warnings were raised.', ['warn'])).toBe(0);
+  expect(scoreFacts('No other model failed; order_items errored.', ['error'])).toBe(1);
+  expect(scoreFacts('Nothing else to report. order_items failed.', ['error'])).toBe(1);
+  expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
+});
+
 it('accepts other status wordings and afternoon runs', () => {
   expect(scoreFacts('users finished with warnings', ['users', 'warn'])).toBe(1);
   expect(scoreFacts('two failures, the rest passing', ['error', 'success'])).toBe(1);

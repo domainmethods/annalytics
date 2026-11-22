@@ -86,11 +86,22 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 
 // dbt run statuses as a conversational answer words them.
 const STATUS_WORDS = new Map<string, RegExp>([
-  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b/],
-  ['error', /\b(?:error(?:ed|s)?|fail(?:ed|s|ing|ures?)?)\b/],
-  ['skipped', /\b(?:skip(?:ped|s)?)\b/],
-  ['warn', /\bwarn(?:ed|s|ings?)?\b/],
+  ['success', /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b/g],
+  ['error', /\b(?:error(?:ed|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
+  ['skipped', /\b(?:skip(?:ped|s)?)\b/g],
+  ['warn', /\bwarn(?:ed|s|ings?)?\b/g],
 ]);
+// A negator up to two words before a status ("none failed", "no errors", "didn't skip")
+// denies it. Sentence punctuation ends the window.
+const NEGATED = /\b(?:no|none|nothing|not|never|without|zero|\w+n['’]t)\s+(?:[\w'’]+\s+){0,2}$/;
+
+function mentionsStatus(text: string, pattern: RegExp): boolean {
+  for (const match of text.matchAll(pattern)) {
+    if (!NEGATED.test(text.slice(0, match.index))) return true;
+  }
+  return false;
+}
+// Only :00 seconds parse; a fact with other seconds falls back to whole-word matching.
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::00)?(?:\.0+)?Z$/i;
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const MONTH_NAMES = [
@@ -137,8 +148,9 @@ function containsWord(text: string, word: string): boolean {
 
 function mentionsFact(text: string, fact: string): boolean {
   const wanted = fact.toLowerCase();
+  const status = STATUS_WORDS.get(wanted);
+  if (status) return mentionsStatus(text, status);
   if (containsWord(text, wanted)) return true;
-  if (STATUS_WORDS.get(wanted)?.test(text)) return true;
   if (wanted.includes('_') && containsWord(text, wanted.replaceAll('_', ' '))) return true;
   return mentionsTimestamp(text, fact);
 }
