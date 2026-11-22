@@ -205,6 +205,12 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
 });
 
+// Known leniency: the date and the time of day may come from different clauses.
+// A fix should flip this assertion deliberately.
+it('pairs a date and a time of day from different clauses', () => {
+  expect(scoreFacts('The 2:30 AM run on Oct 3 failed; the 2 AM run on Oct 4 passed.', ['2026-10-03T02:00:00Z'])).toBe(1);
+});
+
 it('accepts other status wordings and afternoon runs', () => {
   expect(scoreFacts('users finished with warnings', ['users', 'warn'])).toBe(1);
   expect(scoreFacts('two failures, the rest passing', ['error', 'success'])).toBe(1);
