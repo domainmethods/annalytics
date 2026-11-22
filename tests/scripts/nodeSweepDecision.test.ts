@@ -113,6 +113,7 @@ describe('pickWithinEpsilon', () => {
     });
 
     it('is a no-op when the reference is below the stage best', () => {
+      // Same pick as the no-reference case above: the stage's own best sets the bar.
       expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 0.5, e2e: 0.5 }).label)
         .toBe('default');
     });
