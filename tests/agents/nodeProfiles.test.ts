@@ -2,8 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // flash/3 nodes — the un-measured minimal/low roles still pinned to flash-preview.
 const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
-// Classifier nodes — provisional flash-lite/3.5@low (tv-v1 pilot, 2026-11-19).
-const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier','ambiguityClassifier'] as const;
+// Classifier nodes on flash-lite/3.5@low (slackIntake measured on tv-v1 2026-11-22,
+// ambiguityClassifier provisional). followUpClassifier is tested separately.
+const CLASSIFIER_LITE_NODES = ['slackIntake','ambiguityClassifier'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
@@ -22,6 +23,12 @@ describe('nodeProfiles', () => {
     }
   });
 
+  it('defaults followUpClassifier to gemini-4-hydrogen at high thinking', async () => {
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('followUpClassifier')).toBe('gemini-4-hydrogen');
+    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('high');
+  });
+
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
     const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     for (const n of PRO_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-pro-preview');
@@ -33,8 +40,9 @@ describe('nodeProfiles', () => {
     for (const n of ['dbtStatus', 'chart', 'summaryOverride'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
-    // low — light open judgment over provided context, plus the classifiers (tv-v1 pilot)
-    for (const n of ['slackIntake', 'followUpClassifier', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
+    // low — light open judgment over provided context, plus slackIntake/ambiguityClassifier
+    // (followUpClassifier is measured at high; see its own test)
+    for (const n of ['slackIntake', 'ambiguityClassifier','clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
     // default — hard reasoning nodes stay model-managed

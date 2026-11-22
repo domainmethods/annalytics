@@ -82,11 +82,13 @@ requires enough cases to bound ε.
 `scripts/universal-sweep.ts` sizes them with **exact-match accuracy and no LLM judge** —
 immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both scored
 1.000 at every rung on the 2026-06-08 corpus, which was too easy to separate models.
-The harder tv-v1 pilot intake items (2026-11-19) *provisionally* moved the template
-default (`CLASSIFIER_LITE`) to `flash-lite/3.5`@low: 0.975 vs 0.950 for
-`flash-lite/3.1`@minimal. That is a one-item gap inside ε, so it is an owner judgment
-call, not a sizing result, and not precedent for changing defaults on pilot data (see
-the governance Evidence Log, 2026-11-19). The frozen tv-v1 sweep confirms or reverts it.
+The frozen tv-v1 sweep (2026-11-22, ε 0.01) measured both, plus `ambiguityClassifier`.
+`slackIntake` stays at `flash-lite/3.5`@low and `followUpClassifier` moved to
+`flash/4-hydrogen`@high. Both are owner overrides of the sweep's cost tie-break,
+made for model-sunset risk rather than for score. `ambiguityClassifier` stays
+provisional because its ε was 0.054 (governance Evidence Log, 2026-11-22).
+**The sweep does not see Google's deprecation schedule.** Check
+https://aistudio.google.com/docs/deprecations before applying a sweep pick as a default.
 For intake, latency matters as much as accuracy: models that blow the 8s
 `INTAKE_TIMEOUT_MS` lose to smaller ones, so higher thinking is not free here.
 Keep corpora template-safe (generic metrics, no client names/IDs); `benchmarks/results/`
