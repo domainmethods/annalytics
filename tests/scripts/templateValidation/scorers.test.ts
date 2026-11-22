@@ -211,6 +211,11 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['warn', 'error'])).toBe(0);
   expect(scoreFacts('PASS=5 ERROR=0.5', ['error'])).toBe(1);
   expect(scoreFacts('the pass rate was 50%', ['success'])).toBe(0);
+  expect(scoreFacts('the error rate was 0%', ['error'])).toBe(0);
+  expect(scoreFacts('the failure rate fell to 2%', ['error'])).toBe(0);
+  expect(scoreFacts('the skip rate held at 10%', ['skipped'])).toBe(0);
+  expect(scoreFacts('the warning rates are flat', ['warn'])).toBe(0);
+  expect(scoreFacts('the error rate was 0%, but orders failed', ['error'])).toBe(1);
   expect(scoreFacts('PASS=5 WARN=0 ERROR=0', ['success'])).toBe(1);
   expect(scoreFacts('All models pass.', ['success'])).toBe(1);
   expect(scoreFacts('PASS=0', ['success'])).toBe(0);
@@ -238,6 +243,12 @@ it('accepts midnight and day-first dates', () => {
   expect(scoreFacts('It ran at 12 PM UTC on Oct 2.', ['2026-10-02T00:00:00Z'])).toBe(0);
   expect(scoreFacts('It ran at 2 AM UTC on the 2nd of October.', ['2026-10-02T02:00:00Z'])).toBe(1);
   expect(scoreFacts('It ran at 2 AM UTC on 10/2.', ['2026-10-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Sept 2.', ['2026-09-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Sept. 2.', ['2026-09-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Sep 2.', ['2026-09-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on 2 Sept.', ['2026-09-02T02:00:00Z'])).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Sept 2.', ['2026-10-02T02:00:00Z'])).toBe(0);
+  expect(scoreFacts('It ran at 2 AM UTC on Octt 2.', ['2026-10-02T02:00:00Z'])).toBe(0);
 });
 
 it('accepts other status wordings and afternoon runs', () => {

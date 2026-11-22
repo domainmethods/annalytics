@@ -39,7 +39,9 @@ describe('computeEpsilon', () => {
 
   it('honors a custom floor and z', () => {
     expect(computeEpsilon([0.9, 0.8], [0.9, 0.8], 0.05)).toBe(0.05);
-    expect(computeEpsilon([0.9, 0.8, 0.7], [0.9, 0.6, 0.7], 0.01, 1)).toBeCloseTo(0.06667, 4);
+    // Balanced diffs (+0.2, -0.2, 0) have mean 0, so the band is z * sqrt(0.08) / 3 and scales with z alone.
+    expect(computeEpsilon([0.9, 0.6, 0.7], [0.7, 0.8, 0.7], 0.01, 1)).toBeCloseTo(0.09428, 4);
+    expect(computeEpsilon([0.9, 0.6, 0.7], [0.7, 0.8, 0.7], 0.01, 3)).toBeCloseTo(0.28284, 4);
   });
 
   it('throws with fewer than two shared cases instead of returning the floor', () => {

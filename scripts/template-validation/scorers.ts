@@ -85,11 +85,14 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
 }
 
 // dbt run statuses as a conversational answer words them.
+// A status word naming a rate ("pass rate", "error rate was 0%") reports a metric, not a status.
+const NOT_A_RATE = /(?!\s+rates?\b)/.source;
+const statusPattern = (words: string) => new RegExp(`\\b(?:${words})\\b${NOT_A_RATE}`, 'g');
 const STATUS_WORDS = new Map<string, RegExp>([
-  ['success', /\b(?:success(?:es|ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?)\b(?!\s+rates?\b)/g],
-  ['error', /\b(?:error(?:ed|ing|s)?|fail(?:ed|s|ing|ures?)?)\b/g],
-  ['skipped', /\b(?:skip(?:ped|ping|s)?)\b/g],
-  ['warn', /\bwarn(?:ed|s|ings?)?\b/g],
+  ['success', statusPattern('success(?:es|ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es|ing)?')],
+  ['error', statusPattern('error(?:ed|ing|s)?|fail(?:ed|s|ing|ures?)?')],
+  ['skipped', statusPattern('skip(?:ped|ping|s)?')],
+  ['warn', statusPattern('warn(?:ed|s|ings?)?')],
 ]);
 // A negator up to two words before a status ("none failed", "no errors", "didn't skip")
 // denies it. Sentence punctuation ends the window.
@@ -121,7 +124,9 @@ function mentionsTimestamp(text: string, fact: string): boolean {
   const [, year, month, day, hour, minute] = match;
   const monthIndex = Number(month) - 1;
   const d = String(Number(day));
-  const monthWord = `(?:${MONTHS[monthIndex]}\\.?|${MONTH_NAMES[monthIndex]})`;
+  // September also abbreviates as "Sept".
+  const abbreviation = monthIndex === 8 ? 'sept?' : MONTHS[monthIndex];
+  const monthWord = `(?:${abbreviation}\\.?|${MONTH_NAMES[monthIndex]})`;
   const date = new RegExp([
     `\\b${monthWord}\\s+0?${d}(?:st|nd|rd|th)?\\b`,
     `\\b0?${d}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${monthWord}\\b`,
