@@ -6,8 +6,8 @@ describe('computeEpsilon', () => {
     expect(computeEpsilon([0.9, 0.8, 0.7], [0.9, 0.8, 0.7])).toBe(0.01);
   });
 
-  it('measures noise on the mean: 2 * sd(paired diffs) / sqrt(n)', () => {
-    // diffs = [0, 0.2, 0] → mean 0.0667, sample sd = 0.11547, ε = 2 * 0.11547 / √3
+  it('measures noise on the mean: 2 * sqrt(sum of squared paired diffs) / n', () => {
+    // diffs = [0, 0.2, 0] → ε = 2 * 0.2 / 3
     expect(computeEpsilon([0.9, 0.8, 0.7], [0.9, 0.6, 0.7])).toBeCloseTo(0.13333, 4);
   });
 
@@ -21,12 +21,16 @@ describe('computeEpsilon', () => {
     expect(eps).toBeLessThan(0.05);
   });
 
-  it('grows with the number of noisy cases', () => {
+  it('grows with the number of noisy cases, including same-direction flips', () => {
     const runA = Array.from({ length: 40 }, () => 1);
-    const oneFlip = [...runA];
-    oneFlip[0] = 0;
-    const tenFlips = runA.map((v, i) => (i < 10 ? 0 : v));
-    expect(computeEpsilon(runA, tenFlips)).toBeGreaterThan(computeEpsilon(runA, oneFlip));
+    const flipped = (k: number) => runA.map((v, i) => (i < k ? 0 : v));
+    const eps = [1, 10, 20, 30, 40].map(k => computeEpsilon(runA, flipped(k)));
+    for (let i = 1; i < eps.length; i++) expect(eps[i]).toBeGreaterThan(eps[i - 1]);
+  });
+
+  it('never collapses on a uniform run-to-run shift', () => {
+    // Every case moved by 0.5; centering on the observed mean would return the floor.
+    expect(computeEpsilon([1, 1, 1, 1], [0.5, 0.5, 0.5, 0.5])).toBeCloseTo(0.5, 10);
   });
 
   it('honors a custom floor and z', () => {

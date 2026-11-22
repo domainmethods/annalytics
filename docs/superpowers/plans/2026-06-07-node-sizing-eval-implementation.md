@@ -672,7 +672,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ### Task 7: ε calibration helper (pure)
 
-> **Superseded 2026-11-21:** `computeEpsilon` now returns `2·sd(paired diffs)/√n` (noise on the mean), not the max per-item difference below. See the governance Evidence Log.
+> **Superseded 2026-11-21:** `computeEpsilon` now returns `2·√Σd²/n` over paired diffs (noise on the mean), not the max per-item difference below. See the governance Evidence Log.
 
 **Files:** Create `scripts/node-sweep-calibrate.ts`; Test `tests/scripts/nodeSweepCalibrate.test.ts`.
 

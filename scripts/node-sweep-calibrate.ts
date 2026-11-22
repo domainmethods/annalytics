@@ -4,8 +4,11 @@
  * Candidates are ranked on their mean score over the corpus, so the band must
  * describe how much a mean moves between runs, not how much one case moves.
  * With paired differences d_i = runA[i] - runB[i], the band is
- * `z * sd(d) / sqrt(n)`: the spread of the mean difference between two
- * single-run means, at z = 2 (about 95%). A single flipped case on a 40-case
+ * `z * sqrt(sum(d_i^2)) / n`: the standard error of the mean difference
+ * between two single-run means, at z = 2 (about 95%). The two runs are
+ * replicates of one baseline, so the spread is measured around 0, not
+ * around the observed mean difference; centering on that mean would hide a
+ * run-wide drift. The band is also never below the observed drift |mean(d)|. A single flipped case on a 40-case
  * corpus therefore moves ε by ~0.03 instead of setting it to that case's
  * whole swing, which made every candidate tie.
  *
@@ -18,6 +21,6 @@ export function computeEpsilon(runA: number[], runB: number[], floor = 0.01, z =
   if (n < 2) return floor;
   const diffs = Array.from({ length: n }, (_, i) => runA[i] - runB[i]);
   const mean = diffs.reduce((sum, d) => sum + d, 0) / n;
-  const variance = diffs.reduce((sum, d) => sum + (d - mean) ** 2, 0) / (n - 1);
-  return Math.max((z * Math.sqrt(variance)) / Math.sqrt(n), floor);
+  const sumSq = diffs.reduce((sum, d) => sum + d * d, 0);
+  return Math.max(Math.abs(mean), (z * Math.sqrt(sumSq)) / n, floor);
 }
