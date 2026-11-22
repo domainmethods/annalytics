@@ -58,8 +58,10 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 // Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
 // for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  // MEASURED — tv-v1, 2026-11-22. Both picks are owner overrides of the sweep's cost
-  // tie-break for model-sunset risk; see the classifier notes above.
+  // MEASURED (model only; thinking level not walked on the frozen set) — tv-v1,
+  // 2026-11-22. slackIntake's @low is from the pilot; followUpClassifier's @high is the
+  // Stage 1 anchor. Both picks are owner overrides of the sweep's cost tie-break for
+  // model-sunset risk; see the classifier notes above.
   slackIntake: CLASSIFIER_LITE, followUpClassifier: FOLLOW_UP_HYDROGEN,
   // PROVISIONAL — tv-v1 2026-11-22 not applicable (ε 0.054 > 0.05).
   ambiguityClassifier: CLASSIFIER_LITE,
