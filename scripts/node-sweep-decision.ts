@@ -28,8 +28,10 @@ import type { PointScore } from './node-sweep-types.js';
  * If ε is tight enough that no single point sits near both bests at once (a
  * best-metric point can have a poor e2e and vice-versa), the viable set is empty;
  * we fall back to the full pool so the tie-break still yields a defensible choice
- * rather than crashing. In Stage 2 that cannot happen in practice: the Stage 1
- * winner is carried into Stage 2 at the anchor level and already cleared the same bar.
+ * rather than crashing. In Stage 2 the Stage 1 winner, carried in at the anchor
+ * level, usually keeps the viable set non-empty. It can still empty if Stage 1
+ * itself fell back, or if a Stage 2 point raises one axis's best far enough to push
+ * the anchor out of ε there.
  */
 export function pickWithinEpsilon(
   candidates: PointScore[],
