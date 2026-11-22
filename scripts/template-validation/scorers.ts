@@ -84,10 +84,59 @@ export function scoreSummaryNumbers(summary: string, rows: Record<string, unknow
   return count === 0 ? 1 : matches / count;
 }
 
+// dbt run statuses as a conversational answer words them.
+const STATUS_WORDS: Record<string, RegExp> = {
+  success: /\b(?:success(?:ful(?:ly)?)?|succeed(?:ed|s)?|pass(?:ed|es)?)\b/,
+  error: /\b(?:error(?:ed|s)?|fail(?:ed|s|ure)?)\b/,
+  skipped: /\b(?:skip(?:ped|s)?)\b/,
+};
+const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::00)?(?:\.0+)?Z$/i;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+// A UTC timestamp counts when the answer names its date and its time of day in any common form.
+function mentionsTimestamp(text: string, fact: string): boolean {
+  const match = ISO_TIMESTAMP.exec(fact);
+  if (!match) return false;
+  const [, year, month, day, hour, minute] = match;
+  const monthIndex = Number(month) - 1;
+  const d = String(Number(day));
+  const monthWord = `(?:${MONTHS[monthIndex]}\\.?|${MONTH_NAMES[monthIndex]})`;
+  const date = new RegExp([
+    `\\b${monthWord}\\s+0?${d}(?:st|nd|rd|th)?\\b`,
+    `\\b0?${d}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${monthWord}\\b`,
+    `\\b${year}-${month}-${day}\\b`,
+    `\\b0?${Number(month)}/0?${d}\\b`,
+  ].join('|'));
+  const h = Number(hour);
+  const hour12 = String(h % 12 === 0 ? 12 : h % 12);
+  const meridiem = h < 12 ? 'a\\.?m\\.?' : 'p\\.?m\\.?';
+  const clock = [`\\b0?${h}:${minute}\\b`, `\\b${hour12}:${minute}\\s*${meridiem}`];
+  if (minute === '00') clock.push(`\\b${hour12}\\s*${meridiem}`);
+  return date.test(text) && new RegExp(clock.join('|')).test(text);
+}
+
+// Whole-word containment, so "success" doesn't match inside "unsuccessful".
+function containsWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\w])${escaped}(?![\\w])`).test(text);
+}
+
+function mentionsFact(text: string, fact: string): boolean {
+  const wanted = fact.toLowerCase();
+  if (containsWord(text, wanted)) return true;
+  if (STATUS_WORDS[wanted]?.test(text)) return true;
+  if (wanted.includes('_') && containsWord(text, wanted.replaceAll('_', ' '))) return true;
+  return mentionsTimestamp(text, fact);
+}
+
 export function scoreFacts(text: string, requiredFacts: string[]): number {
   const normalized = text.toLowerCase();
   return requiredFacts.length === 0 ? 1
-    : requiredFacts.filter(fact => normalized.includes(fact.toLowerCase())).length / requiredFacts.length;
+    : requiredFacts.filter(fact => mentionsFact(normalized, fact)).length / requiredFacts.length;
 }
 
 export function scoreTeachingCandidate(candidate: TeachingCandidate, item: TeachingCandidateItem): number {

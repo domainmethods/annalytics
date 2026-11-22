@@ -154,6 +154,25 @@ it('scores required facts with case-insensitive containment', () => {
   expect(scoreFacts('', [])).toBe(1);
 });
 
+it('accepts run facts worded conversationally', () => {
+  const facts = ['users', 'success', '2026-10-02T02:00:00Z'];
+  expect(scoreFacts('Yes, users passed in the 2 AM UTC run on Oct 2.', facts)).toBe(1);
+  expect(scoreFacts('users succeeded at 02:00 UTC on October 2nd', facts)).toBe(1);
+  expect(scoreFacts('users: success, 2026-10-02T02:00:00Z', facts)).toBe(1);
+  expect(scoreFacts('order items failed and products were skipped', ['order_items', 'error', 'products', 'skipped']))
+    .toBe(1);
+});
+
+it('keeps run facts strict about the run and the status', () => {
+  const fact = ['2026-10-03T02:30:00Z'];
+  expect(scoreFacts('It ran at 2:30 AM UTC on Oct 3.', fact)).toBe(1);
+  expect(scoreFacts('It ran at 2 AM UTC on Oct 3.', fact)).toBe(0);
+  expect(scoreFacts('It ran at 2:30 AM UTC on Oct 13.', fact)).toBe(0);
+  expect(scoreFacts('It ran at 12:30 AM UTC on Oct 3.', fact)).toBe(0);
+  expect(scoreFacts('The run on Oct 3 was unsuccessful.', ['success'])).toBe(0);
+  expect(scoreFacts('Everything passed.', ['error', 'skipped'])).toBe(0);
+});
+
 it('halves the score when required models are missing', () => {
   const candidate: TeachingCandidate = {
     candidateId: 'candidate',
