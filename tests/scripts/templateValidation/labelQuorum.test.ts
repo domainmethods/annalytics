@@ -802,6 +802,26 @@ describe('promotion runs', () => {
     }
   });
 
+  it('drafts supervisor items the frozen set does not already hold', async () => {
+    const base = baseProvenance();
+    const mutant = '/* mutant */';
+    deps.execute = vi.fn(async (sql: string) => ({ columnNames: ['n'], rows: [{ n: sql.includes(mutant) ? 2 : 1 }] }));
+    deps.runLabeler = vi.fn(async (_cfg, { prompt }) => {
+      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql: string }[];
+      return {
+        cached: false,
+        value: prompt.startsWith('Mutate')
+          ? { items: inputs.map(({ candidateSql }) => ({ mutations: [`${candidateSql} ${mutant}`] })) }
+          : { labels: inputs.map(({ candidateSql }) => ({ expectedVerdict: candidateSql.includes(mutant) ? 'FAIL' : 'PASS' })) },
+      };
+    });
+    const result = await promote({ nodes: ['supervisor'], targetCounts: { supervisor: base.perNode.supervisor.accepted + 2 } });
+    // Re-drafting a frozen PASS item would quarantine it as a duplicate and leave the target unmet.
+    expect(result.perNode.supervisor).toMatchObject({
+      accepted: base.perNode.supervisor.accepted + 2, quarantined: base.perNode.supervisor.quarantined,
+    });
+  });
+
   it('shows the frozen items to the drafter without their labels', async () => {
     const seeds = loadItems('slackIntake', root);
     await promote();

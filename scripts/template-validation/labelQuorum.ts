@@ -345,11 +345,13 @@ async function draftInputs(
 
 async function supervisorDrafts(
   references: SqlGeneratorItem[], count: number, deps: LabelRunDeps, context: string, client: LabelClient,
+  seeds: Input[] = [],
 ): Promise<Draft[]> {
   if (!count) return [];
   const passing: Draft[] = [];
   const failing: Draft[] = [];
-  const seen = new Set<string>();
+  // Retained items count as seen, so a promotion drafts past the references the frozen set already used.
+  const seen = new Set(seeds.map(hashItemInput));
   const add = (target: Draft[], draft: Draft) => {
     const hash = hashItemInput(draft.input);
     if (!seen.has(hash)) {
@@ -496,7 +498,7 @@ export async function runLabelQuorum(
       if (!references && !existsSync(join(deps.root, 'items', 'sqlGenerator.jsonl'))) {
         throw new Error('Supervisor requires accepted sqlGenerator items. Check tv:setup and the template warehouse.');
       }
-      drafts = await supervisorDrafts(references ?? loadItems('sqlGenerator', deps.root), count, quorumDeps, context, client);
+      drafts = await supervisorDrafts(references ?? loadItems('sqlGenerator', deps.root), count, quorumDeps, context, client, seeds);
     } else {
       drafts = await draftInputs(node, categorySlots(count, seeds), drafter, context, fixtures, client, seeds);
     }
