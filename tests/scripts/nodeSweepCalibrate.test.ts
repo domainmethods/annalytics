@@ -30,7 +30,11 @@ describe('computeEpsilon', () => {
 
   it('never collapses on a uniform run-to-run shift', () => {
     // Every case moved by 0.5; centering on the observed mean would return the floor.
-    expect(computeEpsilon([1, 1, 1, 1], [0.5, 0.5, 0.5, 0.5])).toBeCloseTo(0.5, 10);
+    // At n = 40 the standard-error term is only 2 * sqrt(10) / 40 ≈ 0.16, so the
+    // 0.5 here comes from the |mean(d)| bound.
+    const runA = Array.from({ length: 40 }, () => 1);
+    const runB = runA.map(v => v - 0.5);
+    expect(computeEpsilon(runA, runB)).toBeCloseTo(0.5, 10);
   });
 
   it('honors a custom floor and z', () => {
