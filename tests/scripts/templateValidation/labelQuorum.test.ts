@@ -753,16 +753,19 @@ it('reports a 1-of-40 chart corpus as underfilled even when its candidate scores
 describe('promotion runs', () => {
   const promoted = { category: 'simple', text: 'Which warehouse ships the most returns?' };
   const baseVersion = 'tv-v1';
-  const promote = (overrides: Partial<Parameters<typeof runLabelQuorum>[0]> = {}) =>
-    run({ promote: true, targetCounts: { slackIntake: 41 }, ...overrides });
+  const promote = (overrides: Partial<Parameters<typeof runLabelQuorum>[0]> = {}) => run({
+    promote: true, targetCounts: { slackIntake: loadItems('slackIntake', root).length + 1 }, ...overrides,
+  });
 
   beforeEach(() => {
     for (const dir of ['items', 'fixtures', 'quarantine']) {
       cpSync(join('benchmarks/template-validation', dir), join(root, dir), { recursive: true });
     }
-    const frozen = JSON.parse(readFileSync('benchmarks/template-validation/provenance.json', 'utf8'));
+    // Strip promotion fields so the live set reads as an unpromoted base, whatever version is committed.
+    const { promotedFrom: _promotedFrom, ...frozen } = JSON.parse(readFileSync('benchmarks/template-validation/provenance.json', 'utf8')) as Provenance;
+    const perNode = Object.fromEntries(Object.entries(frozen.perNode).map(([node, { labeledIn: _labeledIn, ...entry }]) => [node, entry]));
     writeFileSync(join(root, 'provenance.json'), JSON.stringify({
-      ...frozen, version: baseVersion, drafter: 'claude',
+      ...frozen, perNode, version: baseVersion, drafter: 'claude',
       members: labelers.map(cfg => ({ id: cfg.id, family: cfg.family, requestedModel: cfg.model, cliVersion: 'test', reportedModels: [] })),
     }));
     writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
@@ -793,7 +796,7 @@ describe('promotion runs', () => {
     expect(items.at(-1)).toMatchObject({ text: promoted.text });
     expect(readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8')).toBe(priorQuarantine);
     for (const node of NODE_IDS.filter(node => node !== 'slackIntake')) {
-      expect(result.perNode[node]).toEqual({ ...base.perNode[node], labeledIn: baseVersion });
+      expect(result.perNode[node]).toEqual({ labeledIn: baseVersion, ...base.perNode[node] });
       expect(readFileSync(join(root, 'items', `${node}.jsonl`), 'utf8')).toBe(before[node]);
       expect(loadItems(node, root, result.perNode[node].itemsSha256)).toHaveLength(result.perNode[node].accepted);
     }
@@ -821,8 +824,16 @@ describe('promotion runs', () => {
     await expect(promote()).rejects.toThrow('Promotion needs the quorum and drafter that labeled tv-v1');
   });
 
-  it('refuses a full run and a missing frozen set', async () => {
+  it('keeps an earlier labeledIn on a node carried forward twice', async () => {
+    const base = baseProvenance();
+    base.perNode.chart = { ...base.perNode.chart, labeledIn: 'tv-v0' };
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify(base));
+    expect((await promote()).perNode.chart.labeledIn).toBe('tv-v0');
+  });
+
+  it('refuses a full run, no nodes, and a missing frozen set', async () => {
     await expect(promote({ nodes: [...NODE_IDS] })).rejects.toThrow('a full run relabels every node');
+    await expect(promote({ nodes: [] })).rejects.toThrow('Promotion needs at least one node');
     rmSync(join(root, 'provenance.json'));
     await expect(promote()).rejects.toThrow('Promotion needs a frozen template set');
   });

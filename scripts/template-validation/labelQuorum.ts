@@ -420,6 +420,7 @@ export async function runLabelQuorum(
   const nodes = [...new Set(opts.nodes)].sort((a, b) => Number(a === 'supervisor') - Number(b === 'supervisor'));
   const partial = !NODE_IDS.every(node => nodes.includes(node));
   if (opts.promote && !partial) throw new Error('Promotion grows selected nodes; a full run relabels every node');
+  if (opts.promote && !nodes.length) throw new Error('Promotion needs at least one node');
   const base = opts.promote ? promotionBase(deps.root, provenancePath, version) : undefined;
   if (!partial) refuseOverwrite(provenancePath, version);
   const usable = deps.labelers.filter(cfg => cfg.enabled !== false);
