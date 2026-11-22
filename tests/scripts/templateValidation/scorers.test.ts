@@ -202,6 +202,10 @@ it('denies a status the answer negates', () => {
   expect(scoreFacts('>0 failed.', ['error'])).toBe(1);
   expect(scoreFacts('PASS=5 WARN=0 ERROR=1.', ['error'])).toBe(1);
   expect(scoreFacts('(0 failed)', ['error'])).toBe(0);
+  expect(scoreFacts('*0 failed*', ['error'])).toBe(0);
+  expect(scoreFacts('`0` failed', ['error'])).toBe(0);
+  expect(scoreFacts('*0* failed', ['error'])).toBe(0);
+  expect(scoreFacts('"0 failed"', ['error'])).toBe(0);
   expect(scoreFacts('It did not stop: orders failed.', ['error'])).toBe(1);
 });
 
