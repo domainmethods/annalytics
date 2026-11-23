@@ -649,7 +649,7 @@ describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () 
     expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
     expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
     expect(lastBlocks()[0].text.text).toContain('55%');
-    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', usedUniqueKeyCount: 1 });
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', usedUniqueKeyCount: 1, surface: 'override_table', traceId: 'trace-abc' });
   });
 
   it('Table override on a legacy context without compositionUniqueKeys renders rank-only for COUNT(DISTINCT)', async () => {
@@ -683,6 +683,7 @@ describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () 
     expect(JSON.stringify(lastBlocks())).toContain("Couldn't generate a summary");
     expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
     expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', surface: 'override_summary_fallback', traceId: 'trace-abc' });
   });
 
   it('Summary LLM path is unchanged by the flag (same prompt, same blocks, no Share)', async () => {

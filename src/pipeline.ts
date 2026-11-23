@@ -620,7 +620,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           result: queryResult,
           maxDisplayRows: MAX_DISPLAY_ROWS,
           uniqueKeys: pipelineTables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase())),
-        }, logger)
+        }, logger, { surface: 'answer', traceId })
       : undefined;
     const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions, composition);
 

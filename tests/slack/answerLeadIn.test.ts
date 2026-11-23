@@ -242,8 +242,10 @@ describe('leader share', () => {
   it('never adds a share to the headline fallback', () => {
     const blocks = buildAnswerCaptionBlocks({
       rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel',
-      composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250', shares: [], topIndex: 0, usedUniqueKeys: [] },
+      composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
+        shares: channelRows.map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
     }) as any[];
+    expect(blocks).toHaveLength(1);
     expect(blocks[0].text.text).toBe('Sessions by channel');
   });
 

@@ -79,11 +79,12 @@ export async function notifyContextUnavailable(
  * the unique keys the original proof relied on; a legacy context without them
  * verifies with none, so a COUNT(DISTINCT) answer stays rank-only.
  */
-function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig): EligibleComposition | undefined {
+function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig, surface: 'override_table' | 'override_summary_fallback'): EligibleComposition | undefined {
   if (!config.answerSharesEnabled) return undefined;
   return verifyAnswerComposition(
     { sql: ctx.generatedSql, result, maxDisplayRows: MAX_DISPLAY_ROWS, uniqueKeys: ctx.compositionUniqueKeys ?? [] },
     rootLogger,
+    { surface, traceId: ctx.traceId },
   );
 }
 
@@ -122,7 +123,7 @@ export async function handleTableOverride(
     // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
     // message consistent with the original answer's layout.
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table');
-    const composition = overrideComposition(ctx, result, config);
+    const composition = overrideComposition(ctx, result, config, 'override_table');
     const blocks: KnownBlock[] = [
       ...verificationCaveatBlocks(ctx),
       ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
@@ -204,7 +205,7 @@ export async function handleSummaryOverride(
         ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
-        ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config)),
+        ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config, 'override_summary_fallback')),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];

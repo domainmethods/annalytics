@@ -911,7 +911,7 @@ describe('answer shares (ANSWER_SHARES_ENABLED)', () => {
     await runPipeline({ ...baseInput, config: sharesOn });
     const logs = compositionLogs();
     expect(logs).toHaveLength(1);
-    expect(logs[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', rowCount: 3, usedUniqueKeyCount: 0 });
+    expect(logs[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', rowCount: 3, usedUniqueKeyCount: 0, surface: 'answer', traceId: expect.any(String) });
     const text = JSON.stringify(logs[0]);
     expect(text).not.toContain('Direct');
     expect(text).not.toContain('198');
@@ -964,8 +964,67 @@ describe('answer shares (ANSWER_SHARES_ENABLED)', () => {
 
   it('flag off: blocks equal the Phase 1 output and nothing is verified or logged', async () => {
     await runPipeline(baseInput);
-    const phase1 = buildResponseBlocks('table', { ...baseQualityResult.sqlResult, sql: COUNT_SQL }, queryResultOf(pairs) as any, 'trace-abc', 'thread-1', 'status-1', []);
-    expect(postedBlocks()).toEqual(phase1);
+    expect(postedBlocks()).toMatchInlineSnapshot(`
+      [
+        {
+          "text": {
+            "text": "*Direct* has the highest n (198), followed by Organic (120).",
+            "type": "mrkdwn",
+          },
+          "type": "section",
+        },
+        {
+          "block_id": "anna_view_table",
+          "rows": [
+            [
+              {
+                "text": "ch",
+                "type": "raw_text",
+              },
+              {
+                "text": "n",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Direct",
+                "type": "raw_text",
+              },
+              {
+                "text": "198",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Organic",
+                "type": "raw_text",
+              },
+              {
+                "text": "120",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Unassigned",
+                "type": "raw_text",
+              },
+              {
+                "text": "42",
+                "type": "raw_text",
+              },
+            ],
+          ],
+          "type": "table",
+        },
+        {
+          "elements": [],
+          "type": "actions",
+        },
+      ]
+    `);
     expect(JSON.stringify(postedBlocks())).not.toContain('"Share"');
     expect(compositionLogs()).toHaveLength(0);
     expect(verifyComposition).not.toHaveBeenCalled();
