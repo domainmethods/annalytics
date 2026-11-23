@@ -342,27 +342,14 @@ describe('computeLeadIn — review hardening', () => {
 
 describe('buildAnswerCaptionBlocks', () => {
   it('renders the lead-in as a section when eligible', () => {
-    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, headline: 'sessions by channel' });
+    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL });
     expect(blocks).toEqual([
       { type: 'section', text: { type: 'mrkdwn', text: '*Direct* has the highest session count (198), followed by Unassigned (42).' } },
     ]);
   });
 
-  it('falls back to the headline when the lead-in is ineligible', () => {
-    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel, last 30 days' });
-    expect(blocks).toEqual([
-      { type: 'section', text: { type: 'mrkdwn', text: 'Sessions by channel, last 30 days' } },
-    ]);
-  });
-
-  it('escapes Slack control syntax in the headline fallback', () => {
-    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions <!here> & <https://x.example|more>' });
-    expect(blocks).toEqual([{ type: 'section', text: { type: 'mrkdwn', text: 'Sessions &lt;!here&gt; &amp; &lt;https://x.example|more&gt;' } }]);
-  });
-
-  it('renders nothing when ineligible and there is no headline', () => {
+  it('renders nothing when the lead-in is ineligible (no model-text fallback)', () => {
     expect(captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL })).toEqual([]);
-    expect(captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: '   ' })).toEqual([]);
   });
 });
 
@@ -384,14 +371,13 @@ describe('leader share', () => {
     expect(withShare(channelRows, 1)).toBe('*Direct* has the highest session count (198), followed by Unassigned (42).');
   });
 
-  it('never adds a share to the headline fallback', () => {
+  it('renders nothing when the lead-in is silent, even with an eligible composition', () => {
     const blocks = captionWithInferredTypes({
-      rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel',
+      rows: channelRows, columnNames: COLS, truncated: true, sql: SQL,
       composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
         shares: channelRows.map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
-    }) as any[];
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0].text.text).toBe('Sessions by channel');
+    });
+    expect(blocks).toEqual([]);
   });
 
   it('derives the share from composition.topIndex', () => {

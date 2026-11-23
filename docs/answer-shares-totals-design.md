@@ -141,7 +141,7 @@ With one source, no joins, and no row-reducing operator before the outer `GROUP 
 ### 5.4 Lead-in (extends Phase 1)
 - Phase 1: "Direct has the most sessions (198), followed by Unassigned (42)."
 - Phase 2, when eligible: "Direct has the most sessions (198, **47% of the total**), followed by Unassigned (42)." Only the leader's share is quoted. The rest are in the column, which keeps the sentence short (cognitive-load finding). Wording ownership stays with the Phase 1 builder (`computeLeadIn` / `buildAnswerCaptionBlocks` in `src/slack/answerLeadIn.ts`, whose `LeadInInput` already carries `rows`, `columnNames`, `truncated`, `sql`). Phase 2 adds one optional field, `leaderShareLabel?: string`, and `computeLeadIn` appends `, <label> of the total` only when the field is present **and** its own ranked leader is the same row as the verifier's top-share row (a cross-check: both are deterministic, so disagreement means a bug, and the sentence then stays rank-only). Its doc comment ("never a share or total") is updated to say "only from a `verifyComposition` proof".
-- When Phase 1's lead-in is ineligible but composition is eligible (both are deterministic, so this should be rare), the table still gets Share + Total. The LLM headline fallback caption is never edited to add numbers.
+- When Phase 1's lead-in is ineligible but composition is eligible (both are deterministic, so this should be rare), the table still gets Share + Total. The table then has no caption: since 2026-11-23 the LLM headline is never shown above a table, so no model text ever carries a share.
 
 ## 6. Test plan
 

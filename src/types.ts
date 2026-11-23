@@ -54,12 +54,6 @@ export interface ResponseContext {
   generatedSql: string;
   explanation: string;
   /**
-   * The generator's one-line label for the answer, re-shown as the table
-   * caption when the Table override re-renders. Omitted when empty and absent
-   * on legacy records (Firestore rejects undefined).
-   */
-  headline?: string;
-  /**
    * dbt unique keys (`project.dataset.table.column`; column lower-cased, table case kept) a verified
    * composition proof relied on (COUNT(DISTINCT) on a key, or a many-to-one
    * LEFT JOIN onto a keyed table), so the Table override re-verifies the same

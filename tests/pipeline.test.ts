@@ -249,15 +249,9 @@ describe('runPipeline', () => {
     }));
   });
 
-  it('persists the generator headline for the Table re-render caption, omitting it when blank', async () => {
-    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '  Revenue by region ' } } as any);
+  it('does not persist the generator headline (no table caption reads it)', async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: 'Revenue by region' } } as any);
     await runPipeline(baseInput);
-    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ headline: 'Revenue by region' }));
-
-    mockSaveCtx.mockClear();
-    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '   ' } } as any);
-    await runPipeline(baseInput);
-    // Firestore rejects undefined, so a blank headline is omitted, not set to undefined.
     expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('headline');
   });
 
@@ -809,9 +803,10 @@ describe('buildResponseBlocks', () => {
       expect(ids).toEqual(expect.arrayContaining(['override_summary_trace-1', 'override_csv_trace-1', 'show_sql_trace-1', 'thumbs_up_trace-1']));
     });
 
-    it('falls back to the headline when the result was truncated (and keeps the row notice)', () => {
+    it('shows no caption when the result was truncated, never the model headline (and keeps the row notice)', () => {
       const blocks = render('table', { truncated: true, totalRows: 5000 });
-      expect((blocks[0] as any).text.text).toBe('Sessions by channel');
+      expect((blocks[0] as any).block_id).toBe('anna_view_table');
+      expect(JSON.stringify(blocks)).not.toContain('Sessions by channel');
       expect(JSON.stringify(blocks)).toMatch(/Showing 2 of 5,?000/);
     });
   });
