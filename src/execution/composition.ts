@@ -57,7 +57,10 @@ const fail = (reason: CompositionRejectReason): never => {
 
 const DIMENSION_TYPES = new Set(['STRING', 'BOOL']);
 const MEASURE_TYPES = new Set(['INT64', 'NUMERIC', 'BIGNUMERIC', 'FLOAT64']);
-const LEGACY_TYPES: Record<string, string> = { INTEGER: 'INT64', FLOAT: 'FLOAT64', BOOLEAN: 'BOOL' };
+// Same aliases shares.ts accepts (isNumericColumnType), so the two type tables can't drift apart.
+const LEGACY_TYPES: Record<string, string> = { INTEGER: 'INT64', FLOAT: 'FLOAT64', BOOLEAN: 'BOOL', DECIMAL: 'NUMERIC', BIGDECIMAL: 'BIGNUMERIC' };
+// Substring match on purpose: names with no separator (conversionrate, bounceRate, avgTime)
+// must still be caught. It costs eligibility on names like generated_revenue, never correctness.
 const NON_ADDITIVE_COLUMN_RE = /(rate|ratio|pct|percent|share|avg|average|mean|median|p\d{2}|_per_|users?|visitors?|unique)/i;
 const CAST_TARGETS = new Set(['INT64', 'NUMERIC', 'FLOAT64']);
 /** BigQuery built-in aggregate (or grouping) function names that parse as plain `function` nodes. */

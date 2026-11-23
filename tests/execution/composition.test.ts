@@ -152,6 +152,13 @@ describe('verifyComposition: eligible (§6 A-rows)', () => {
     expect(v.total).toBe('360');
   });
 
+  it('DECIMAL/BIGDECIMAL aliases are eligible, matching isNumericColumnType', () => {
+    for (const type of ['DECIMAL', 'BIGDECIMAL']) {
+      const v = expectEligible(`SELECT ch, COUNT(*) AS n FROM ${T} GROUP BY ch`, result(three, { types: ['STRING', type] }));
+      expect(v.total).toBe('360');
+    }
+  });
+
   it('legacy REST type names (BOOLEAN/FLOAT) are eligible', () => {
     const v = expectEligible(
       `SELECT is_new, SUM(x) AS n FROM ${T} GROUP BY is_new`,
@@ -309,7 +316,7 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     );
   });
 
-  it.each(['SUM(conversion_rate)', 'SUM(daily_users)', 'SUM(pct_new)', 'SUM(t.avg_time)'])('R-13: %s', (measure) => {
+  it.each(['SUM(conversion_rate)', 'SUM(daily_users)', 'SUM(pct_new)', 'SUM(t.avg_time)', 'SUM(conversionrate)', 'SUM(bounceRate)', 'SUM(generated_revenue)'])('R-13: %s', (measure) => {
     expectReject(`SELECT ch, ${measure} AS n FROM ${T} t GROUP BY ch`, result(three), 'sum_non_additive_column');
   });
 
