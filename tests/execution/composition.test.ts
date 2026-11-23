@@ -320,6 +320,18 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     expectReject(`SELECT ch, ${measure} AS n FROM ${T} t GROUP BY ch`, result(three), 'sum_non_additive_column');
   });
 
+  it.each([
+    ['a CTE', `WITH t AS (SELECT ch, conversion_rate AS amt FROM ${T}) SELECT ch, SUM(amt) AS n FROM t GROUP BY ch`],
+    ['a subquery', `SELECT ch, SUM(amt) AS n FROM (SELECT ch, avg_order_value AS amt FROM ${T}) GROUP BY ch`],
+    ['two CTE levels', `WITH a AS (SELECT ch, bounce_rate AS x FROM ${T}), b AS (SELECT ch, x AS amt FROM a) SELECT ch, SUM(amt) AS n FROM b GROUP BY ch`],
+  ])('R-13b: a non-additive column renamed in %s', (_label, sql) => {
+    expectReject(sql, result(three), 'sum_non_additive_column');
+  });
+
+  it('R-13c: an additive column passed through a CTE beside a rate stays eligible', () => {
+    expectEligible(`WITH t AS (SELECT ch, revenue AS amt, bounce_rate FROM ${T}) SELECT ch, SUM(amt) AS n FROM t GROUP BY ch`, result(three));
+  });
+
   it('R-14: pre-computed share, 3 columns', () => {
     const res: QueryResult = {
       rows: [{ ch: 'a', n: 1, pct: 0.5 }, { ch: 'b', n: 1, pct: 0.5 }],

@@ -727,6 +727,15 @@ function verify(input: CompositionInput): CompositionVerdict {
     usedKeys.add(distinctKey(arg, own, joins === null, chain, base, keys) ?? fail('count_distinct'));
   }
 
+  // S4 through the chain: a CTE or subquery can rename a non-additive column (`conversion_rate AS amt`),
+  // so trace the SUM's names to the base columns and run the lexicon over every level.
+  if (kind === 'sum') {
+    const measNames = referencedNames(exprs[measIdx], fromQualifiers(sel)).map(n => n ?? fail('sum_non_additive_column'));
+    for (const n of lineage(new Set(measNames), [sel, ...chain], 1)) {
+      if (NON_ADDITIVE_COLUMN_RE.test(n)) fail('sum_non_additive_column');
+    }
+  }
+
   // S7
   if ([sel.where, ...chain.map(s => s.where)].some(hasSubquery)) fail('where_subquery');
 

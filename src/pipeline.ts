@@ -614,6 +614,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     const format = chooseFormat(queryResult);
     // Verified shares: only a composition proof over the FULL result (never the
     // display slice) earns a Share column; anything unproven renders Phase 1.
+    // Table only on purpose: a summary-format result is never eligible (governance caveat (a)).
     const composition = config.answerSharesEnabled && format === 'table'
       ? verifyAnswerComposition({
           sql: qualityResult.sqlResult.sql,
