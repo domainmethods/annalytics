@@ -87,6 +87,8 @@ function escapeRegExp(text: string): string {
  * after an outer ORDER BY whose FIRST key is the measure (by name or 1-based
  * position) descending — a genuine top-N. A DESC elsewhere (a window, a CTE, a
  * tiebreaker, the label column) proves nothing, and any OFFSET may skip the top.
+ * QUALIFY or any window (OVER) also means silence: a ranked filter such as
+ * `QUALIFY ROW_NUMBER() OVER (ORDER BY n) <= 3` cuts rows with no LIMIT at all.
  */
 function limitIsSafe(sql: string, rowCount: number, measureCol: string, measurePos: number): boolean {
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string
@@ -101,7 +103,7 @@ function limitIsSafe(sql: string, rowCount: number, measureCol: string, measureP
       return m[0] === "'" || m[0] === '"' ? "''" : ' ';
     },
   );
-  if (/\bOFFSET\b/i.test(code)) return false;
+  if (/\bOFFSET\b/i.test(code) || /\bQUALIFY\b/i.test(code) || /\bOVER\s*\(/i.test(code)) return false;
   const limits = code.match(/\bLIMIT\b/gi) ?? [];
   if (limits.length === 0) return true;
   // A LIMIT inside a CTE or subquery may have cut the rows that were aggregated, so the

@@ -568,6 +568,14 @@ function joinRefs(n: unknown, j: Joins): string[] {
  * right column of the group, or (through the left source's lineage, at any
  * level) on a linked left column, rejects. This is deliberately coarse: a
  * WHERE on a right sibling rejects too.
+ *
+ * Worked example (customers.id and regions.id unique):
+ *   FROM orders o LEFT JOIN customers c ON o.customer_id = c.id, GROUP BY c.region
+ *     group {c.*, o.customer_id}: WHERE c.tier or WHERE o.customer_id rejects
+ *     (it filters the dimension); WHERE o.status passes.
+ *   ... LEFT JOIN regions r ON c.region_id = r.id, GROUP BY r.name
+ *     group {r.*, c.region_id} reaches namespace c, so {c.*, o.customer_id} is
+ *     absorbed: WHERE c.tier now rejects too; WHERE o.status still passes.
  */
 function checkJoinWhereOnDimension(levels: Node[], dimExpr: unknown, where: unknown, j: Joins): void {
   const left = (r: string) => (r.startsWith('0\0') ? r.slice(2) : null);

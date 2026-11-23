@@ -126,6 +126,13 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     expect(lead(channelRows, COLS, { sql: `${SQL} LIMIT 100 OFFSET 1` })).toBeNull();
   });
 
+  it('a QUALIFY or window filter (it can keep a bottom-N with no LIMIT)', () => {
+    expect(lead(channelRows, COLS, { sql: `SELECT a, b FROM t GROUP BY 1 QUALIFY ROW_NUMBER() OVER (ORDER BY b ASC) <= 4` })).toBeNull();
+    expect(lead(channelRows, COLS, { sql: `SELECT a, b FROM (SELECT a, b, ROW_NUMBER() OVER(ORDER BY b) AS rn FROM t) WHERE rn <= 4` })).toBeNull();
+    // A window keyword only inside a string or comment is inert.
+    expect(lead(channelRows, COLS, { sql: `${SQL} -- QUALIFY OVER (` })).not.toBeNull();
+  });
+
   it('a DESC that exists only in a comment', () => {
     expect(lead(channelRows, COLS, { sql: `SELECT a, b FROM t ORDER BY 2 -- DESC\n LIMIT 5` })).toBeNull();
   });
