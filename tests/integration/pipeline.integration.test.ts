@@ -18,6 +18,7 @@ const {
   function createDocRef(collectionName: string, docId: string) {
     const path = `${collectionName}/${docId}`;
     return {
+      path,
       get: vi.fn(async () => ({
         exists: firestoreStore.has(path),
         data: () => firestoreStore.get(path),
@@ -41,6 +42,18 @@ const {
   }
 
   const mockDb = {
+    // Minimal sequential transaction over the same store (enough for the
+    // label write in recordAmbiguityLabel; no contention is simulated).
+    runTransaction: vi.fn(async (fn: (tx: any) => Promise<unknown>) =>
+      fn({
+        get: (ref: any) => ref.get(),
+        set: (ref: any, data: any) => { firestoreStore.set(ref.path, data); },
+        update: (ref: any, data: any) => {
+          firestoreStore.set(ref.path, { ...firestoreStore.get(ref.path), ...data });
+        },
+        delete: (ref: any) => { firestoreStore.delete(ref.path); },
+      }),
+    ),
     doc: vi.fn((path: string) => ({
       get: vi.fn(async () => ({
         exists: firestoreStore.has(path),
@@ -429,9 +442,10 @@ describe('Pipeline — Integration', () => {
 
     await runPipeline(makeInput());
 
-    // Two Gemini calls: clarification, then label-only ambiguity classification.
-    // No SQL generation or supervisor call runs while the pipeline is suspended.
-    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+    // Two Gemini calls: clarification, then label-only ambiguity classification
+    // (in the background, after the reply). No SQL generation or supervisor call
+    // runs while the pipeline is suspended.
+    await vi.waitFor(() => expect(mockGenerateContent).toHaveBeenCalledTimes(2));
     // No BigQuery calls
     expect(mockCreateQueryJob).not.toHaveBeenCalled();
 
@@ -447,9 +461,13 @@ describe('Pipeline — Integration', () => {
       'Time period unclear',
       'Product scope unclear',
     ]);
-    expect(savedState.ambiguityType).toBe('user_intent');
-    expect(savedState.ambiguityDomain).toBe('revenue');
-    expect(savedState.ambiguityQuestion).toBe('Which time period?');
+    // The label lands after the reply, on the same pending clarification.
+    await vi.waitFor(() =>
+      expect(firestoreStore.get(clarificationKeys[0]).ambiguityType).toBe('user_intent'),
+    );
+    const labeled = firestoreStore.get(clarificationKeys[0]);
+    expect(labeled.ambiguityDomain).toBe('revenue');
+    expect(labeled.ambiguityQuestion).toBe('Which time period?');
 
     // Slack was updated with clarification blocks
     const updateCalls = mockClient.chat.update.mock.calls;
