@@ -231,17 +231,15 @@ export function computeLeadIn(input: LeadInInput): string | null {
 
 /**
  * The caption above a result table: the computed lead-in when it is provable,
- * otherwise the generator's one-line headline (what the table represents), else
- * nothing.
+ * else nothing. The generator `headline` is never used here: it is written
+ * before execution, so a number in it could disagree with the table below.
  */
-export function buildAnswerCaptionBlocks(input: Omit<LeadInInput, 'leaderShare'> & { headline?: string; composition?: EligibleComposition }): KnownBlock[] {
-  const { composition, headline, ...leadInput } = input;
+export function buildAnswerCaptionBlocks(input: Omit<LeadInInput, 'leaderShare'> & { composition?: EligibleComposition }): KnownBlock[] {
+  const { composition, ...leadInput } = input;
   const leaderShare = (composition && composition.shares.length === leadInput.rows.length && composition.topIndex !== null && composition.shares[composition.topIndex]
     ? { label: composition.shares[composition.topIndex].label, rowIndex: composition.topIndex }
     : undefined);
-  // The headline is model text: escaped so "<!here>" or link syntax renders as written.
-  const fallback = headline?.trim();
-  const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) }) ?? (fallback ? escapeMrkdwn(fallback) : undefined);
+  const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) });
   if (!text) return [];
   return [{ type: 'section', text: { type: 'mrkdwn', text: boundedText(text) } } as SectionBlock];
 }

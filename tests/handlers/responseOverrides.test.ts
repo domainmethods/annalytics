@@ -605,12 +605,12 @@ describe('override re-renders hide the button for the view on screen', () => {
     expect(updated).toContain('*US* has the highest revenue (1000), followed by EU (500).');
   });
 
-  it('Table override: falls back to the persisted headline when the lead-in is ineligible', async () => {
+  it('Table override: shows no caption when the lead-in is ineligible, even with a legacy persisted headline', async () => {
     mockGetCtx.mockResolvedValue({ ...baseCtx, headline: 'Revenue by region' });
     mockExecute.mockResolvedValue({ ...queryResult, truncated: true });
     await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
     const updated = lastBlocksJson();
-    expect(updated).toContain('Revenue by region');
+    expect(updated).not.toContain('Revenue by region');
     expect(updated).not.toContain('has the highest');
   });
 

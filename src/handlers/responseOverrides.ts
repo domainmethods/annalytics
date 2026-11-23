@@ -135,7 +135,6 @@ export async function handleTableOverride(
         truncated: result.truncated,
         sql: ctx.generatedSql,
         ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
-        ...(ctx.headline ? { headline: ctx.headline } : {}),
         ...(composition ? { composition } : {}),
       }),
       ...buildTableBlocks(displayRows, result.columnNames, composition),

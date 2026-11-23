@@ -650,8 +650,6 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
-      // Firestore rejects undefined: persist the headline only when present.
-      ...(qualityResult.sqlResult.headline?.trim() ? { headline: qualityResult.sqlResult.headline.trim() } : {}),
       // Only the keys a proof relied on, so the Table override re-verifies identically.
       ...(composition?.usedUniqueKeys.length ? { compositionUniqueKeys: composition.usedUniqueKeys } : {}),
       tablesUsed: qualityResult.sqlResult.tablesUsed,
@@ -858,7 +856,6 @@ export function buildResponseBlocks(
           columnNames: result.columnNames,
           truncated: result.truncated,
           sql: gen.sql,
-          headline: gen.headline,
           ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
           ...(composition ? { composition } : {}),
         }),
