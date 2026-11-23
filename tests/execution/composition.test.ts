@@ -455,6 +455,15 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     expectReject(sql, result(three), 'where_on_dimension');
   });
 
+  it.each([
+    ['C2-1', `SELECT ch, COUNT(*) AS n FROM ${T} s WHERE TO_JSON_STRING(s) LIKE '%Direct%' GROUP BY ch`],
+    ['C2-2', `SELECT ch, COUNT(*) AS n FROM ${T} WHERE TO_JSON_STRING(sessions) LIKE '%Direct%' GROUP BY ch`],
+    ['C2-3', `SELECT ch, COUNT(*) AS n FROM (SELECT LOWER(channel) AS ch FROM ${T}) t WHERE TO_JSON_STRING(t) LIKE '%direct%' GROUP BY ch`],
+    ['C2-4', `SELECT ch, COUNT(*) AS n FROM (SELECT TO_JSON_STRING(t) AS j, LOWER(channel) AS ch FROM ${T} t) WHERE j LIKE '%Direct%' GROUP BY ch`],
+  ])('S8 review probe %s: a WHERE on a whole-row range variable', (_id, sql) => {
+    expectReject(sql, result(three), 'where_on_dimension');
+  });
+
   it('S8 review probe R2a: a WHERE on a second alias of the dimension\'s base column', () => {
     expectReject(`${R2A_CTE} WHERE b != 'Direct' GROUP BY a`, result(three, { names: ['a', 'n'] }), 'where_on_dimension');
   });

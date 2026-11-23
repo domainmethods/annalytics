@@ -290,8 +290,20 @@ function rowPreservingChain(s: Node, scope: Cte[]): Node[] {
   return [s, ...resolveSource(s.from, scope)];
 }
 
-/** Names an expression references; an unrecognised reference fails closed. */
+/**
+ * Names an expression references; an unrecognised reference fails closed. So
+ * does an unqualified reference to the select's own FROM item (`s`,
+ * `sessions`, a derived alias `t`): in BigQuery that is the whole row as a
+ * STRUCT, so it carries every column, the dimension included.
+ */
 function namesOf(n: unknown, ownQualifiers: Set<string>): string[] {
+  some(n, o => {
+    if (o.type === 'column_ref' && isEmpty(o.table)) {
+      const name = refName(o);
+      if (name === null || ownQualifiers.has(name.toLowerCase())) fail('where_on_dimension');
+    }
+    return false;
+  });
   return referencedNames(n, ownQualifiers).map(x => x ?? fail('where_on_dimension'));
 }
 
