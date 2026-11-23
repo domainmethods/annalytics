@@ -37,7 +37,7 @@ export type EligibleComposition = {
   shares: ShareCell[];
   /** Row with the unique max basisPoints; null on a tie. */
   topIndex: number | null;
-  /** Unique keys the proof relied on: deduped, lower-cased, sorted. */
+  /** Unique keys the proof relied on: deduped, column lower-cased (table case kept, see `uniqueKeyCase`), sorted. */
   usedUniqueKeys: string[];
 };
 
