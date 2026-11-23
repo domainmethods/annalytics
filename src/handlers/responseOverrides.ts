@@ -9,6 +9,7 @@ import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideB
 import { buildAnswerCaptionBlocks } from '../slack/answerLeadIn.js';
 import { summarizeResults } from '../agents/summaryAgent.js';
 import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
+import { MAX_DISPLAY_ROWS } from '../slack/limits.js';
 import { rootLogger } from '../logging.js';
 
 export class ResponseContextNotFoundError extends Error {
@@ -101,7 +102,6 @@ export async function handleTableOverride(
     const ctx = await loadContext(channel, compoundKey);
     const { result } = await reExecuteSql(ctx, config);
 
-    const MAX_DISPLAY_ROWS = 20;
     const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
     const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
     // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
@@ -181,7 +181,6 @@ export async function handleSummaryOverride(
       await client.chat.update({ channel, ts: messageTs, text: summary, blocks });
     } else {
       // Fallback to table format when Flash summarization fails
-      const MAX_DISPLAY_ROWS = 20;
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       const blocks: KnownBlock[] = [

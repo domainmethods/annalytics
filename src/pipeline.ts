@@ -13,6 +13,7 @@ import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { executeQuery } from './execution/runner.js';
 import { chooseFormat } from './execution/formatter.js';
 import { buildThreadContext } from './slack/threadContext.js';
+import { MAX_DISPLAY_ROWS } from './slack/limits.js';
 import { buildClarificationBlocks } from './slack/clarificationBlocks.js';
 import {
   buildSingleValueBlocks,
@@ -807,7 +808,6 @@ export function buildResponseBlocks(
 ): KnownBlock[] {
   const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
 
-  const MAX_DISPLAY_ROWS = 20;
 
   // Which override buttons this result shape warrants — single source of truth
   // shared with the toggle-restore handlers in app.ts. The raw SQL is no longer

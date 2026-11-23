@@ -7,6 +7,9 @@ export const TABLE_COLUMN_LIMIT = 20;
 export const TABLE_ROW_LIMIT = 100;
 export const TABLE_TEXT_LIMIT = 10000;
 
+/** Rows shown in a Slack table/summary answer; the rest are in the CSV export. */
+export const MAX_DISPLAY_ROWS = 20;
+
 // Slack rejects messages over 50 blocks. Cap SQL so the answer, SQL, and
 // controls always fit together (10 sections ≈ 29,000 characters of SQL).
 export const MAX_SQL_SECTIONS = 10;

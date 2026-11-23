@@ -28,6 +28,8 @@ export interface ValidationResult {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   columnNames: string[];
+  /** BigQuery type per column, aligned with columnNames; REPEATED adds a `[]` suffix. Absent when the schema is unavailable or misaligned. */
+  columnTypes?: string[];
   totalRows: number;          // full result count from the results response (at least rows.length)
   bytesProcessed: number;
   truncated: boolean;         // true if the result holds more rows than were returned

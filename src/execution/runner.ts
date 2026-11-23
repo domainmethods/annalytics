@@ -1,6 +1,8 @@
 import { BigQuery, type QueryResultsOptions } from '@google-cloud/bigquery';
 import type { QueryResult } from '../types.js';
 
+type SchemaField = { name?: string; type?: string; mode?: string };
+
 let bigquery: BigQuery;
 
 export function initBigQueryClient(projectId?: string): void {
@@ -39,7 +41,7 @@ export async function executeQuery(
   const rows: Record<string, unknown>[] = [];
   let reportedTotal: number | undefined;
   let hasMore = false;
-  let lastSchemaFields: Array<{ name?: string }> | undefined;
+  let lastSchemaFields: SchemaField[] | undefined;
   const wrapIntegers = {
     integerTypeCastFunction: (value: string) => {
       const integer = Number(value);
@@ -53,7 +55,7 @@ export async function executeQuery(
     rows.push(...(page as Record<string, unknown>[]));
     const total = parseCount(response?.totalRows);
     if (total !== undefined) reportedTotal = total;
-    if (response?.schema?.fields) lastSchemaFields = response.schema.fields as Array<{ name?: string }>;
+    if (response?.schema?.fields) lastSchemaFields = response.schema.fields as SchemaField[];
     const remaining = options.maxRows - rows.length;
     if (response?.jobComplete === false) {
       // Still running: the API long-polls (~10s) per call, so retry the same
@@ -80,12 +82,20 @@ export async function executeQuery(
   // An empty result still has a schema; keep its column names so empty results
   // compare by arity instead of collapsing to zero columns.
   const fields = lastSchemaFields ?? stats.query?.schema?.fields;
-  const schemaNames = fields?.map((field: { name?: string }) => field.name ?? '') ?? [];
+  const schemaNames = fields?.map((field: SchemaField) => field.name ?? '') ?? [];
   const columnNames = rows.length > 0 ? Object.keys(rows[0]) : schemaNames.every(Boolean) ? schemaNames : [];
+
+  // Types are only trustworthy when the schema lines up with the columns, in order.
+  const typesAlign = !!fields && fields.length === columnNames.length && columnNames.length > 0 &&
+    fields.every((f: SchemaField, i: number) => f.name === columnNames[i] && typeof f.type === 'string' && f.type !== '');
+  const columnTypes = typesAlign
+    ? fields.map((f: SchemaField) => `${f.type}${f.mode === 'REPEATED' ? '[]' : ''}`)
+    : undefined;
 
   return {
     rows,
     columnNames,
+    ...(columnTypes ? { columnTypes } : {}),
     totalRows,
     bytesProcessed,
     // Truncated when the result holds more rows than we returned. Without a
