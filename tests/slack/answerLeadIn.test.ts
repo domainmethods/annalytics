@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { computeLeadIn as rawLeadIn, buildAnswerCaptionBlocks as rawCaption } from '../../src/slack/answerLeadIn.js';
+import { computeLeadIn, buildAnswerCaptionBlocks } from '../../src/slack/answerLeadIn.js';
 
-// The caption needs the BigQuery schema. Fixtures that don't pass one get the
+// The caption needs the BigQuery schema. The *WithInferredTypes helpers give fixtures that don't pass one the
 // types BigQuery would report for their cells: numeric-shaped → NUMERIC, else STRING.
 type WithTypes = { rows: Record<string, unknown>[]; columnNames: string[]; columnTypes?: string[] };
 const isNumericCell = (v: unknown) => typeof v === 'number' || typeof v === 'bigint' || (typeof v === 'object' && v !== null) || (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v));
@@ -9,8 +9,8 @@ function typed<T extends WithTypes>(input: T): T {
   if ('columnTypes' in input) return input;
   return { ...input, columnTypes: input.columnNames.map((c) => (input.rows.every((r) => isNumericCell(r[c])) ? 'NUMERIC' : 'STRING')) };
 }
-const computeLeadIn = (input: Parameters<typeof rawLeadIn>[0]) => rawLeadIn(typed(input));
-const buildAnswerCaptionBlocks = (input: Parameters<typeof rawCaption>[0]) => rawCaption(typed(input));
+const leadInWithInferredTypes = (input: Parameters<typeof computeLeadIn>[0]) => computeLeadIn(typed(input));
+const captionWithInferredTypes = (input: Parameters<typeof buildAnswerCaptionBlocks>[0]) => buildAnswerCaptionBlocks(typed(input));
 
 const COLS = ['session_default_channel_grouping', 'session_count'];
 const channelRows = [
@@ -23,7 +23,7 @@ const channelRows = [
 const SQL = 'SELECT session_default_channel_grouping, COUNT(DISTINCT session_key) AS session_count FROM t GROUP BY 1 ORDER BY 2 DESC';
 
 const lead = (rows: Record<string, unknown>[], cols = COLS, opts: { truncated?: boolean; sql?: string } = {}) =>
-  computeLeadIn({ rows, columnNames: cols, truncated: opts.truncated ?? false, sql: opts.sql ?? SQL });
+  leadInWithInferredTypes({ rows, columnNames: cols, truncated: opts.truncated ?? false, sql: opts.sql ?? SQL });
 
 describe('computeLeadIn — eligible shapes', () => {
   it('names the top row and the runner-up with their values', () => {
@@ -233,20 +233,20 @@ describe('computeLeadIn — review hardening', () => {
   const zipRows = [{ city: 'Springfield', zip: '99999' }, { city: 'Shelbyville', zip: '10001' }];
   const zipSql = 'SELECT city, zip FROM t';
   it('never treats a numeric-looking STRING column as a measure', () => {
-    expect(rawLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql, columnTypes: ['STRING', 'STRING'] })).toBeNull();
+    expect(computeLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql, columnTypes: ['STRING', 'STRING'] })).toBeNull();
   });
 
   it('stays silent when the column types are missing or misaligned', () => {
-    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL })).toBeNull();
-    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING'] })).toBeNull();
-    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', 'INT64'] })).not.toBeNull();
+    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL })).toBeNull();
+    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING'] })).toBeNull();
+    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', 'INT64'] })).not.toBeNull();
   });
 
   it('accepts numeric measure types, including legacy aliases', () => {
     for (const t of ['INT64', 'INTEGER', 'NUMERIC', 'FLOAT', 'BIGNUMERIC']) {
-      expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', t] })).not.toBeNull();
+      expect(leadInWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', t] })).not.toBeNull();
     }
-    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['DATE', 'INT64'] })).toBeNull();
+    expect(leadInWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['DATE', 'INT64'] })).toBeNull();
   });
 
   it('does not let a quote inside a backticked identifier hide an inner LIMIT', () => {
@@ -267,33 +267,33 @@ describe('computeLeadIn — review hardening', () => {
 
 describe('buildAnswerCaptionBlocks', () => {
   it('renders the lead-in as a section when eligible', () => {
-    const blocks = buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, headline: 'sessions by channel' });
+    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, headline: 'sessions by channel' });
     expect(blocks).toEqual([
       { type: 'section', text: { type: 'mrkdwn', text: '*Direct* has the highest session count (198), followed by Unassigned (42).' } },
     ]);
   });
 
   it('falls back to the headline when the lead-in is ineligible', () => {
-    const blocks = buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel, last 30 days' });
+    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel, last 30 days' });
     expect(blocks).toEqual([
       { type: 'section', text: { type: 'mrkdwn', text: 'Sessions by channel, last 30 days' } },
     ]);
   });
 
   it('escapes Slack control syntax in the headline fallback', () => {
-    const blocks = buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions <!here> & <https://x.example|more>' });
+    const blocks = captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions <!here> & <https://x.example|more>' });
     expect(blocks).toEqual([{ type: 'section', text: { type: 'mrkdwn', text: 'Sessions &lt;!here&gt; &amp; &lt;https://x.example|more&gt;' } }]);
   });
 
   it('renders nothing when ineligible and there is no headline', () => {
-    expect(buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL })).toEqual([]);
-    expect(buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: '   ' })).toEqual([]);
+    expect(captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL })).toEqual([]);
+    expect(captionWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: '   ' })).toEqual([]);
   });
 });
 
 describe('leader share', () => {
   const withShare = (rows: Record<string, unknown>[], rowIndex: number, opts: { truncated?: boolean } = {}) =>
-    computeLeadIn({ rows, columnNames: COLS, truncated: opts.truncated ?? false, sql: SQL, leaderShare: { label: '79%', rowIndex } });
+    leadInWithInferredTypes({ rows, columnNames: COLS, truncated: opts.truncated ?? false, sql: SQL, leaderShare: { label: '79%', rowIndex } });
 
   it('inserts the share inside the leader parentheses', () => {
     expect(withShare(channelRows, 0)).toBe('*Direct* has the highest session count (198, 79% of the total), followed by Unassigned (42).');
@@ -310,7 +310,7 @@ describe('leader share', () => {
   });
 
   it('never adds a share to the headline fallback', () => {
-    const blocks = buildAnswerCaptionBlocks({
+    const blocks = captionWithInferredTypes({
       rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel',
       composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
         shares: channelRows.map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
@@ -320,7 +320,7 @@ describe('leader share', () => {
   });
 
   it('derives the share from composition.topIndex', () => {
-    const blocks = buildAnswerCaptionBlocks({
+    const blocks = captionWithInferredTypes({
       rows: channelRows, columnNames: COLS, truncated: false, sql: SQL,
       composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
         shares: channelRows.map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
@@ -329,7 +329,7 @@ describe('leader share', () => {
   });
 
   it('adds no share when the composition is not aligned with the rows', () => {
-    const blocks = buildAnswerCaptionBlocks({
+    const blocks = captionWithInferredTypes({
       rows: channelRows, columnNames: COLS, truncated: false, sql: SQL,
       composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
         shares: [...channelRows, channelRows[0]].map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
