@@ -43,6 +43,8 @@ import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlo
 import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
 import { handleDbtStatus } from './agents/dbtStatusAgent.js';
 import { getRunHistoryForModel, getLatestRun } from './state/dbtRunHistory.js';
+import { verifyAnswerComposition } from './execution/answerComposition.js';
+import type { EligibleComposition } from './execution/composition.js';
 
 export interface PipelineConfig {
   geminiApiKey: string;
@@ -64,6 +66,8 @@ export interface PipelineConfig {
     timeoutHours: number;
     onNegativeFeedback?: boolean;
   };
+  /** Verified Share column / Total row on table answers (ANSWER_SHARES_ENABLED). */
+  answerSharesEnabled?: boolean;
 }
 
 interface FallbackTableRef {
@@ -116,6 +120,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
       timeoutHours: config.escalation.timeoutHours,
       onNegativeFeedback: config.escalation.onNegativeFeedback,
     },
+    answerSharesEnabled: config.answerShares.enabled,
   };
 }
 
@@ -607,7 +612,17 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     // the clarifier never made; the answer and its saved context show both.
     const answerAssumptions = mergeAssumptions(assumptions, qualityResult.sqlResult.assumptions);
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
+    // Verified shares: only a composition proof over the FULL result (never the
+    // display slice) earns a Share column; anything unproven renders Phase 1.
+    const composition = config.answerSharesEnabled && format === 'table'
+      ? verifyAnswerComposition({
+          sql: qualityResult.sqlResult.sql,
+          result: queryResult,
+          maxDisplayRows: MAX_DISPLAY_ROWS,
+          uniqueKeys: pipelineTables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase())),
+        }, logger)
+      : undefined;
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions, composition);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
@@ -636,6 +651,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       explanation: qualityResult.sqlResult.explanation,
       // Firestore rejects undefined: persist the headline only when present.
       ...(qualityResult.sqlResult.headline?.trim() ? { headline: qualityResult.sqlResult.headline.trim() } : {}),
+      // Only the keys a proof relied on, so the Table override re-verifies identically.
+      ...(composition?.usedUniqueKeys.length ? { compositionUniqueKeys: composition.usedUniqueKeys } : {}),
       tablesUsed: qualityResult.sqlResult.tablesUsed,
       confidence,
       clarificationConfidence: clarification.confidence,
@@ -805,6 +822,7 @@ export function buildResponseBlocks(
   threadTs: string,
   statusMsgTs: string,
   assumptions?: string[],
+  composition?: EligibleComposition,
 ): KnownBlock[] {
   const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
 
@@ -841,8 +859,9 @@ export function buildResponseBlocks(
           truncated: result.truncated,
           sql: gen.sql,
           headline: gen.headline,
+          ...(composition ? { composition } : {}),
         }),
-        ...buildTableBlocks(displayRows, result.columnNames),
+        ...buildTableBlocks(displayRows, result.columnNames, composition),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         ...assumptionBlocks,
         buildFeedbackActions(traceId, threadTs, statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),

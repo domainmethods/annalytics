@@ -41,6 +41,7 @@ const baseConfig: AppConfig = {
     onNegativeFeedback: true,
   },
   fastPath: { enabled: false, maxBytesProcessed: 1e9, requireSupervisor: true },
+  answerShares: { enabled: false },
   whatsapp: {
     enabled: false,
     graphApiVersion: 'v23.0',

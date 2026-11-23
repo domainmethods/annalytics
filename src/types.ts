@@ -59,6 +59,13 @@ export interface ResponseContext {
    * on legacy records (Firestore rejects undefined).
    */
   headline?: string;
+  /**
+   * dbt unique keys (`project.dataset.table.column`, lower-cased) a verified
+   * composition proof relied on, so the Table override re-verifies the same
+   * COUNT(DISTINCT) shares. Omitted when no key was used and absent on legacy
+   * records (Firestore rejects undefined).
+   */
+  compositionUniqueKeys?: string[];
   tablesUsed: string[];
   confidence: 'high' | 'medium' | 'low';
   // R9.3: Store all three confidence values for observability

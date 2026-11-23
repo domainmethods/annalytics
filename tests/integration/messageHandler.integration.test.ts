@@ -146,6 +146,7 @@ const config = {
     queryTimeoutMs: 30000,
     maxResultRows: 1000,
   },
+  answerShares: { enabled: false },
   escalation: { mode: 'channel', channelId: undefined, analystUserId: undefined, timeoutHours: 4 },
 } as unknown as AppConfig;
 

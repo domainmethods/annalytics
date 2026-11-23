@@ -480,6 +480,7 @@ const overrideConfig = {
   queryTimeoutMs: config.limits.queryTimeoutMs,
   maxResultRows: config.limits.maxResultRows,
   geminiApiKey: config.gemini.apiKey,
+  answerSharesEnabled: config.answerShares.enabled,
 };
 
 function overrideViewer(body: unknown): OverrideViewer | undefined {

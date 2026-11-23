@@ -219,3 +219,24 @@ describe('numeric startup settings', () => {
 it.each([['ESCALATION_REMINDER_MINUTES', 525600], ['ESCALATION_TIMEOUT_HOURS', 8760], ['RESPONSE_CONTEXT_RETENTION_DAYS', 36500]] as const)('%s duration boundary', (name, max) => {
  vi.unstubAllEnvs(); baseEnv(); vi.stubEnv(name, String(max)); expect(() => loadConfig()).not.toThrow(); vi.stubEnv(name, String(max + 1)); expect(() => loadConfig()).toThrow(name); vi.unstubAllEnvs();
 });
+
+describe('loadConfig answerShares', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    baseEnv();
+  });
+
+  it('defaults to disabled when ANSWER_SHARES_ENABLED is unset', () => {
+    expect(loadConfig().answerShares).toEqual({ enabled: false });
+  });
+
+  it('is enabled when ANSWER_SHARES_ENABLED="true"', () => {
+    vi.stubEnv('ANSWER_SHARES_ENABLED', 'true');
+    expect(loadConfig().answerShares.enabled).toBe(true);
+  });
+
+  it('throws fail-fast on an invalid ANSWER_SHARES_ENABLED value', () => {
+    vi.stubEnv('ANSWER_SHARES_ENABLED', 'yes');
+    expect(() => loadConfig()).toThrow(/ANSWER_SHARES_ENABLED must be "true" or "false"/);
+  });
+});

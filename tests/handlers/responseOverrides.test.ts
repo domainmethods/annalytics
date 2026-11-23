@@ -26,6 +26,8 @@ import {
   formatValue,
 } from '../../src/handlers/responseOverrides.js';
 import { rootLogger } from '../../src/logging.js';
+import { buildTableBlocks } from '../../src/slack/blocks.js';
+import { verifyComposition } from '../../src/execution/composition.js';
 
 const mockGetCtx = vi.mocked(getSlackResponseContext);
 const mockValidate = vi.mocked(validateSql);
@@ -607,5 +609,104 @@ describe('override re-renders hide the button for the view on screen', () => {
     expect(updated).not.toContain('override_table_');
     expect(updated).toContain('override_summary_');
     expect(updated).not.toContain('override_csv_');
+  });
+});
+
+describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () => {
+  const DISTINCT_SQL = 'SELECT ch, COUNT(DISTINCT session_key) AS n FROM `proj.ds.sessions` GROUP BY ch';
+  const COUNT_SQL = 'SELECT ch, COUNT(*) AS n FROM `proj.ds.sessions` GROUP BY ch';
+  const sharesResult = {
+    rows: [{ ch: 'Direct', n: 198 }, { ch: 'Organic', n: 120 }, { ch: 'Unassigned', n: 42 }],
+    columnNames: ['ch', 'n'],
+    columnTypes: ['STRING', 'INT64'],
+    totalRows: 3,
+    bytesProcessed: 2048,
+    truncated: false,
+  };
+  const sharesOn = { ...overrideConfig, answerSharesEnabled: true };
+  const keyedCtx = { ...baseCtx, generatedSql: DISTINCT_SQL, compositionUniqueKeys: ['proj.ds.sessions.session_key'] };
+  const lastBlocks = () => mockClient.chat.update.mock.calls.at(-1)[0].blocks as any[];
+  const tableCells = () => lastBlocks().find((b) => b.type === 'table').rows.map((r: any[]) => r.map((c) => c.text));
+  const compositionLogs = () => vi.mocked(rootLogger.info).mock.calls.filter(([, msg]) => msg === 'answer.composition');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(keyedCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(sharesResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('Table override renders the same Share column and Total row as the original answer', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    const original = buildTableBlocks(
+      sharesResult.rows, sharesResult.columnNames,
+      verifyComposition({ sql: DISTINCT_SQL, result: sharesResult, maxDisplayRows: 20, uniqueKeys: ['proj.ds.sessions.session_key'] }) as any,
+    );
+    expect(lastBlocks().find((b) => b.type === 'table')).toEqual(original[0]);
+    expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
+    expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
+    expect(lastBlocks()[0].text.text).toContain('55%');
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', usedUniqueKeyCount: 1 });
+  });
+
+  it('Table override on a legacy context without compositionUniqueKeys renders rank-only for COUNT(DISTINCT)', async () => {
+    const { compositionUniqueKeys: _omit, ...legacy } = keyedCtx;
+    mockGetCtx.mockResolvedValue(legacy);
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+    expect(lastBlocks()[0].text.text).toContain('has the highest');
+  });
+
+  it('Table override with the flag off renders the Phase 1 table even with stored keys', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(compositionLogs()).toHaveLength(0);
+  });
+
+  it('Table override: a 21-row result gets no Share column and no lead-in share', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, generatedSql: COUNT_SQL });
+    const rows = Array.from({ length: 21 }, (_, i) => ({ ch: `c${i}`, n: 100 - i }));
+    mockExecute.mockResolvedValue({ ...sharesResult, rows, totalRows: 21 });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, reason: 'row_count' });
+    expect(JSON.stringify(lastBlocks())).not.toContain('"Share"');
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+  });
+
+  it('Summary fallback table carries Share and Total', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(JSON.stringify(lastBlocks())).toContain("Couldn't generate a summary");
+    expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
+    expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
+  });
+
+  it('Summary LLM path is unchanged by the flag (same prompt, same blocks, no Share)', async () => {
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const offPrompt = mockGenerateContent.mock.calls[0][0];
+    const offBlocks = lastBlocks();
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(keyedCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(sharesResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(mockGenerateContent.mock.calls[0][0]).toEqual(offPrompt);
+    expect(lastBlocks()).toEqual(offBlocks);
+    expect(JSON.stringify(lastBlocks())).not.toContain('Share');
+    expect(compositionLogs()).toHaveLength(0);
+  });
+
+  it('CSV export never contains a Share column', async () => {
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', [], mockClient, sharesOn);
+    const csv = mockClient.filesUploadV2.mock.calls[0][0].file.toString('utf-8');
+    expect(csv.split('\n')[0]).toBe('ch,n');
+    expect(csv).not.toContain('Share');
+    expect(csv).not.toContain('%');
   });
 });

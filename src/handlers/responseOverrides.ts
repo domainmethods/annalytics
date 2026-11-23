@@ -4,13 +4,15 @@ import { getSlackResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
-import type { ResponseContext } from '../types.js';
+import type { QueryResult, ResponseContext } from '../types.js';
 import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks, currentViewFromBlocks, RESULT_SUMMARY_BLOCK_ID } from '../slack/blocks.js';
 import { buildAnswerCaptionBlocks } from '../slack/answerLeadIn.js';
 import { summarizeResults } from '../agents/summaryAgent.js';
 import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
 import { MAX_DISPLAY_ROWS } from '../slack/limits.js';
 import { rootLogger } from '../logging.js';
+import { verifyAnswerComposition } from '../execution/answerComposition.js';
+import type { EligibleComposition } from '../execution/composition.js';
 
 export class ResponseContextNotFoundError extends Error {
   constructor() {
@@ -72,6 +74,19 @@ export async function notifyContextUnavailable(
     .catch(error => rootLogger.warn({ error: (error as Error).message }, 'override.context_unavailable_notice_failed'));
 }
 
+/**
+ * The verified composition for a re-rendered table, behind the flag. Re-uses
+ * the unique keys the original proof relied on; a legacy context without them
+ * verifies with none, so a COUNT(DISTINCT) answer stays rank-only.
+ */
+function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig): EligibleComposition | undefined {
+  if (!config.answerSharesEnabled) return undefined;
+  return verifyAnswerComposition(
+    { sql: ctx.generatedSql, result, maxDisplayRows: MAX_DISPLAY_ROWS, uniqueKeys: ctx.compositionUniqueKeys ?? [] },
+    rootLogger,
+  );
+}
+
 async function reExecuteSql(ctx: ResponseContext, config: OverrideConfig) {
   const validation = await validateSql(ctx.generatedSql, config.maxBytesProcessed);
   if (!validation.valid) {
@@ -107,6 +122,7 @@ export async function handleTableOverride(
     // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
     // message consistent with the original answer's layout.
     const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table');
+    const composition = overrideComposition(ctx, result, config);
     const blocks: KnownBlock[] = [
       ...verificationCaveatBlocks(ctx),
       ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
@@ -116,8 +132,9 @@ export async function handleTableOverride(
         truncated: result.truncated,
         sql: ctx.generatedSql,
         ...(ctx.headline ? { headline: ctx.headline } : {}),
+        ...(composition ? { composition } : {}),
       }),
-      ...buildTableBlocks(displayRows, result.columnNames),
+      ...buildTableBlocks(displayRows, result.columnNames, composition),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
     ];
@@ -187,7 +204,7 @@ export async function handleSummaryOverride(
         ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
-        ...buildTableBlocks(displayRows, result.columnNames),
+        ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config)),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
