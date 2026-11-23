@@ -38,7 +38,7 @@ import { executeQuery } from '../src/execution/runner.js';
 import { chooseFormat } from '../src/execution/formatter.js';
 import { buildThreadContext } from '../src/slack/threadContext.js';
 import { saveResponseContext, getLatestNegativeFeedback } from '../src/state/responseContext.js';
-import { saveClarificationState } from '../src/state/clarificationState.js';
+import { recordAmbiguityLabel, saveClarificationState } from '../src/state/clarificationState.js';
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
@@ -61,6 +61,7 @@ const mockBuildThread = vi.mocked(buildThreadContext);
 const mockSaveCtx = vi.mocked(saveResponseContext);
 const mockGetNegative = vi.mocked(getLatestNegativeFeedback);
 const mockSaveClarification = vi.mocked(saveClarificationState);
+const mockRecordAmbiguity = vi.mocked(recordAmbiguityLabel);
 const mockReleaseLock = vi.mocked(releaseThreadLock);
 const mockGetSummaries = vi.mocked(getTeachingSummaries);
 const mockGetSampleRows = vi.mocked(getSampleRows);
@@ -295,11 +296,33 @@ describe('runPipeline', () => {
     );
     expect(mockQualityLoop).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
-    expect(mockSaveClarification).toHaveBeenCalledWith(expect.objectContaining({
-      ambiguityType: 'user_intent',
-      ambiguityDomain: 'revenue',
-    }));
+    expect(mockSaveClarification.mock.calls[0][0]).not.toHaveProperty('ambiguityType');
+    await vi.waitFor(() => expect(mockRecordAmbiguity).toHaveBeenCalledWith(
+      'clarify_C123:thread-1', 'status-1',
+      { ambiguityType: 'user_intent', ambiguityDomain: 'revenue', ambiguityQuestion: 'Which time period?' },
+    ));
     expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('LOW confidence: posts and saves the clarification without waiting for the ambiguity label', async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+    mockClassifyAmbiguity.mockReturnValue(new Promise(() => {}));
+
+    await runPipeline(baseInput);
+
+    expect(mockClient.chat.update).toHaveBeenCalledWith(expect.objectContaining({ ts: 'status-1', text: 'Which period?' }));
+    expect(mockSaveClarification).toHaveBeenCalledTimes(1);
+    expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+    expect(mockRecordAmbiguity).not.toHaveBeenCalled();
+  });
+
+  it('LOW confidence: a failed ambiguity label write does not affect the clarification', async () => {
+    mockClassify.mockResolvedValue({ ...highClarification, confidence: 'low', clarifying_questions: ['Which period?'], ambiguities: ['period'] });
+    mockRecordAmbiguity.mockRejectedValueOnce(new Error('firestore down'));
+
+    await expect(runPipeline(baseInput)).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(mockRecordAmbiguity).toHaveBeenCalledTimes(1));
+    expect(mockSaveClarification).toHaveBeenCalledTimes(1);
   });
 
   it("LOW confidence: keeps the user's wording in clarification state on a refinement (#44)", async () => {

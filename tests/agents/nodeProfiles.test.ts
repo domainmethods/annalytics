@@ -23,12 +23,16 @@ describe('nodeProfiles', () => {
     }
   });
 
-  it('defaults followUpClassifier and ambiguityClassifier to gemini-4-hydrogen at low thinking', async () => {
+  it('defaults followUpClassifier to gemini-4-hydrogen at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    for (const n of ['followUpClassifier', 'ambiguityClassifier'] as const) {
-      expect(resolveNodeModel(n)).toBe('gemini-4-hydrogen');
-      expect(getNodeProfile(n).thinkingLevel).toBe('low');
-    }
+    expect(resolveNodeModel('followUpClassifier')).toBe('gemini-4-hydrogen');
+    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('low');
+  });
+
+  it('defaults ambiguityClassifier to gemini-4-hydrogen at high thinking', async () => {
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('ambiguityClassifier')).toBe('gemini-4-hydrogen');
+    expect(getNodeProfile('ambiguityClassifier').thinkingLevel).toBe('high');
   });
 
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
@@ -42,9 +46,9 @@ describe('nodeProfiles', () => {
     for (const n of ['dbtStatus', 'chart', 'summaryOverride'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
-    // low — light open judgment over provided context, plus the classifiers
-    // (both Hydrogen classifiers are also tested on their own)
-    for (const n of ['slackIntake', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
+    // low — light open judgment over provided context, plus slackIntake
+    // (the Hydrogen classifiers are tested on their own)
+    for (const n of ['slackIntake', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
     // default — hard reasoning nodes stay model-managed

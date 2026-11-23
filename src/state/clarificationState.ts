@@ -75,3 +75,31 @@ export async function deleteClarificationState(
   const db = getDb();
   await db.collection(COLLECTION).doc(clarificationId).delete();
 }
+
+export interface AmbiguityLabel {
+  ambiguityType: 'user_intent' | 'org_knowledge';
+  ambiguityDomain: string;
+  ambiguityQuestion: string;
+}
+
+/**
+ * Attach the ambiguity label to a clarification after it was posted. The label is
+ * computed off the reply path, so the user may already have answered (state gone) or
+ * a later clarification may have replaced this one under the same id. Writes only
+ * while the doc is still the same pending clarification; returns whether it wrote.
+ */
+export async function recordAmbiguityLabel(
+  clarificationId: string,
+  clarifyingMessageTs: string,
+  label: AmbiguityLabel,
+): Promise<boolean> {
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(clarificationId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() as Partial<ClarificationState> : undefined;
+    if (data?.state !== 'awaiting_reply' || data.clarifyingMessageTs !== clarifyingMessageTs) return false;
+    tx.update(ref, { ...label });
+    return true;
+  });
+}
