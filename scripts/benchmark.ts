@@ -64,18 +64,6 @@ function formatDate(d: Date): string {
 
 const MAX_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB cost gate for benchmark
 
-function fullQualityLoopObservability(): Pick<
-  BenchmarkResult,
-  'pipelineMode' | 'supervisorDecision' | 'supervisorTriggers' | 'fastPathIneligibleReasons'
-> {
-  return {
-    pipelineMode: 'full_quality_loop',
-    supervisorDecision: 'required',
-    supervisorTriggers: ['benchmark_quality_loop'],
-    fastPathIneligibleReasons: ['benchmark_quality_loop'],
-  };
-}
-
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.R_OK);
@@ -190,7 +178,6 @@ async function main() {
           generatedSql: null,
           confidence: 'low',
           qualityVerdict: 'exhausted',
-          ...fullQualityLoopObservability(),
           retryCount: 0,
           validationResults: { l1: false, l2: false, l3: false, l4: false },
           validationHistory: [],
@@ -220,8 +207,6 @@ async function main() {
           latencyMs: {
             clarification: clarifyMs,
             generation: 0,
-            validation: 0,
-            supervisor: 0,
             total: totalMs,
           },
           groundingCitations: [],
@@ -294,7 +279,6 @@ async function main() {
         generatedSql: quality.sqlResult.sql,
         confidence: quality.finalConfidence,
         qualityVerdict: quality.verdict,
-        ...fullQualityLoopObservability(),
         retryCount: quality.retryCount,
         validationResults: validationResultsFromFailures(
           quality.failureHistory,
@@ -334,8 +318,6 @@ async function main() {
         latencyMs: {
           clarification: clarifyMs,
           generation: loopMs,
-          validation: 0,
-          supervisor: 0,
           total: totalMs,
         },
         groundingCitations: quality.sqlResult.groundingCitations.map(c => c.sourceFile),
@@ -353,7 +335,6 @@ async function main() {
         generatedSql: null,
         confidence: 'low',
         qualityVerdict: 'exhausted',
-        ...fullQualityLoopObservability(),
         retryCount: 0,
         validationResults: { l1: false, l2: false, l3: false, l4: false },
         validationHistory: [],
@@ -383,8 +364,6 @@ async function main() {
         latencyMs: {
           clarification: 0,
           generation: 0,
-          validation: 0,
-          supervisor: 0,
           total: totalMs,
         },
         groundingCitations: [],

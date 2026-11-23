@@ -36,7 +36,7 @@
       "expectedSqlContains": ["analytics.fct_orders", "order_status = 'completed'"],
       "sqlShapePassed": false,
       "clarificationPassed": null,
-      "latencyMs": { "clarification": 10, "generation": 50, "validation": 0, "supervisor": 0, "total": 60 },
+      "latencyMs": { "clarification": 10, "generation": 50, "total": 60 },
       "groundingCitations": []
     },
     {
@@ -57,7 +57,7 @@
       "sqlShapePassed": null,
       "expectedClarificationConfidence": "low",
       "clarificationPassed": false,
-      "latencyMs": { "clarification": 8, "generation": 0, "validation": 0, "supervisor": 0, "total": 8 },
+      "latencyMs": { "clarification": 8, "generation": 0, "total": 8 },
       "groundingCitations": []
     }
   ],
