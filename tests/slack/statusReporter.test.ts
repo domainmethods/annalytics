@@ -182,10 +182,12 @@ describe('createStatusReporter', () => {
         await status.set('Researching the best approach...');
         await vi.advanceTimersByTimeAsync(10_000);
       });
-      const written = texts.length;
       await vi.advanceTimersByTimeAsync(120_000);
 
-      expect(texts).toHaveLength(written);
+      expect(texts).toEqual([
+        'Researching the best approach...',
+        'Researching the best approach... (10s)',
+      ]);
     });
 
     it('writes later statuses without the elapsed time once the region has ended', async () => {
@@ -229,10 +231,12 @@ describe('createStatusReporter', () => {
           await vi.advanceTimersByTimeAsync(10_000);
         });
       });
-      const written = texts.length;
       await vi.advanceTimersByTimeAsync(120_000);
 
-      expect(texts).toHaveLength(written);
+      expect(texts).toEqual([
+        'Researching the best approach...',
+        'Researching the best approach... (10s)',
+      ]);
     });
 
     it('returns what the work returns', async () => {
