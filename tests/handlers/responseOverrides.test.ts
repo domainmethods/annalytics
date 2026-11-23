@@ -675,7 +675,7 @@ describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () 
   });
 
   it('Table override drops a stored key the loaded dbt metadata no longer declares', async () => {
-    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, { ...sharesOn, currentUniqueKeys: () => [] });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, { ...sharesOn, currentUniqueKeys: () => ['proj.ds.other.id'] });
     expect(tableCells()[0]).toEqual(['ch', 'n']);
     expect(JSON.stringify(lastBlocks())).not.toContain('%');
     expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, surface: 'override_table' });
