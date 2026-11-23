@@ -57,7 +57,7 @@ const fail = (reason: CompositionRejectReason): never => {
 
 const DIMENSION_TYPES = new Set(['STRING', 'BOOL']);
 const MEASURE_TYPES = new Set(['INT64', 'NUMERIC', 'BIGNUMERIC', 'FLOAT64']);
-// Same aliases shares.ts accepts (isNumericColumnType), so the two type tables can't drift apart.
+// Mirrors the aliases shares.ts accepts (isNumericColumnType); the two tables are separate, so keep them in step.
 const LEGACY_TYPES: Record<string, string> = { INTEGER: 'INT64', FLOAT: 'FLOAT64', BOOLEAN: 'BOOL', DECIMAL: 'NUMERIC', BIGDECIMAL: 'BIGNUMERIC' };
 // Substring match on purpose: names with no separator (conversionrate, bounceRate, avgTime)
 // must still be caught. It costs eligibility on names like generated_revenue, never correctness.

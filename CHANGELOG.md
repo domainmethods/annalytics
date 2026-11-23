@@ -17,7 +17,7 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ### Changed
 
-- Answer cards are easier to read (#244). A table answer now leads with a caption that names the top row and runner-up, computed from the table itself and silent whenever the ranking can't be proven (a cut, tied or time-series result); otherwise the existing headline is shown. The button for the view already on screen is hidden, the assumptions line reads as one clause list, and the refine button now reads "Change assumptions". Model-written headlines, including on single-value answers, are now shown as plain text, so Slack link or mention syntax in one renders literally. 👍/👎, refine, Show SQL and the "Showing X of Y rows" note are unchanged.
+- Answer cards are easier to read (#244). A table answer now leads with a caption that names the top row and runner-up, computed from the table itself and silent whenever the ranking can't be proven (a cut, tied or time-series result); otherwise the existing headline is shown. The button for the view already on screen is hidden, the assumptions line reads as one clause list, and the refine button now reads "Change assumptions". In model-written headlines, including on single-value answers, Slack link or mention syntax now renders literally. 👍/👎, refine, Show SQL and the "Showing X of Y rows" note are unchanged.
 
 ### Added
 
