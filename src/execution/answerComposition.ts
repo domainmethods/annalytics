@@ -16,7 +16,7 @@ export type CompositionSurface = 'answer' | 'override_table' | 'override_summary
 export function verifyAnswerComposition(
   input: CompositionInput,
   logger: CompositionLogger,
-  meta?: { surface: CompositionSurface; traceId?: string },
+  meta: { surface: CompositionSurface; traceId?: string },
 ): EligibleComposition | undefined {
   let composition: EligibleComposition | undefined;
   let fields: Record<string, unknown>;
@@ -33,7 +33,7 @@ export function verifyAnswerComposition(
     fields = { eligible: false, reason: 'verifier_error' };
   }
   try {
-    logger.info({ event: 'answer.composition', ...(meta ? { surface: meta.surface, ...(meta.traceId ? { traceId: meta.traceId } : {}) } : {}), ...fields, rowCount: input.result?.rows?.length ?? 0 }, 'answer.composition');
+    logger.info({ event: 'answer.composition', surface: meta.surface, ...(meta.traceId ? { traceId: meta.traceId } : {}), ...fields, rowCount: input.result?.rows?.length ?? 0 }, 'answer.composition');
   } catch {
     // Telemetry must never affect the answer.
   }

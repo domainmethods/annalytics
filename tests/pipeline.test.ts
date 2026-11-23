@@ -793,7 +793,7 @@ describe('buildResponseBlocks', () => {
       buildResponseBlocks(
         format,
         { ...baseQualityResult.sqlResult, sql: 'SELECT channel, COUNT(*) AS sessions FROM t GROUP BY 1', headline } as any,
-        { rows, columnNames: ['channel', 'sessions'], totalRows: 2, bytesProcessed: 0, truncated: false, ...result } as any,
+        { rows, columnNames: ['channel', 'sessions'], columnTypes: ['STRING', 'INT64'], totalRows: 2, bytesProcessed: 0, truncated: false, ...result } as any,
         'trace-1', 'T1', 'S1', [],
       );
 

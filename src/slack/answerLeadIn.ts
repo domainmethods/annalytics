@@ -26,7 +26,7 @@ export interface LeadInInput {
   truncated: boolean;
   /** The executed SQL, checked for a LIMIT that may have cut rows. */
   sql: string;
-  /** BigQuery type per column (aligned with columnNames). When present, the measure must be numeric and the label a STRING. */
+  /** BigQuery type per column (aligned with columnNames). Required for a caption: the measure must be numeric and the label a STRING. */
   columnTypes?: string[];
   /** The leader's proven share label and its index in the ORIGINAL row order. */
   leaderShare?: { label: string; rowIndex: number };
@@ -128,12 +128,11 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const measureCol = columnNames.filter((c) => rows.every((r) => readMeasure(r[c]) !== null));
   const labelCol = columnNames.filter((c) => rows.every((r) => readLabel(r[c]) !== null));
   if (measureCol.length !== 1 || labelCol.length !== 1 || measureCol[0] === labelCol[0]) return null;
+  // Without the schema a numeric-looking STRING (a zip code) could pass as the measure, so unknown types mean silence.
   const types = input.columnTypes;
-  if (types && types.length === columnNames.length) {
-    // A numeric-looking STRING (a zip code) is not a measure.
-    if (!isNumericColumnType(types[columnNames.indexOf(measureCol[0])])) return null;
-    if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
-  }
+  if (!types || types.length !== columnNames.length) return null;
+  if (!isNumericColumnType(types[columnNames.indexOf(measureCol[0])])) return null;
+  if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
   if (!limitIsSafe(sql, rows.length, measureCol[0], columnNames.indexOf(measureCol[0]) + 1)) return null;
 
   const ranked = rows

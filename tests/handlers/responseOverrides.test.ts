@@ -70,6 +70,7 @@ const baseCtx = {
 const queryResult = {
   rows: [{ region: 'US', revenue: 1000 }, { region: 'EU', revenue: 500 }],
   columnNames: ['region', 'revenue'],
+  columnTypes: ['STRING', 'INT64'],
   totalRows: 2,
   bytesProcessed: 2048,
   truncated: false,

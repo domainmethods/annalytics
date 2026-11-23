@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { computeLeadIn, buildAnswerCaptionBlocks } from '../../src/slack/answerLeadIn.js';
+import { computeLeadIn as rawLeadIn, buildAnswerCaptionBlocks as rawCaption } from '../../src/slack/answerLeadIn.js';
+
+// The caption needs the BigQuery schema. Fixtures that don't pass one get the
+// types BigQuery would report for their cells: numeric-shaped → NUMERIC, else STRING.
+type WithTypes = { rows: Record<string, unknown>[]; columnNames: string[]; columnTypes?: string[] };
+const isNumericCell = (v: unknown) => typeof v === 'number' || typeof v === 'bigint' || (typeof v === 'object' && v !== null) || (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v));
+function typed<T extends WithTypes>(input: T): T {
+  if ('columnTypes' in input) return input;
+  return { ...input, columnTypes: input.columnNames.map((c) => (input.rows.every((r) => isNumericCell(r[c])) ? 'NUMERIC' : 'STRING')) };
+}
+const computeLeadIn = (input: Parameters<typeof rawLeadIn>[0]) => rawLeadIn(typed(input));
+const buildAnswerCaptionBlocks = (input: Parameters<typeof rawCaption>[0]) => rawCaption(typed(input));
 
 const COLS = ['session_default_channel_grouping', 'session_count'];
 const channelRows = [
@@ -221,9 +232,14 @@ describe('computeLeadIn — review hardening', () => {
 
   const zipRows = [{ city: 'Springfield', zip: '99999' }, { city: 'Shelbyville', zip: '10001' }];
   const zipSql = 'SELECT city, zip FROM t';
-  it('treats a numeric-looking STRING column as a measure only without types', () => {
-    expect(computeLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql })).not.toBeNull();
-    expect(computeLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql, columnTypes: ['STRING', 'STRING'] })).toBeNull();
+  it('never treats a numeric-looking STRING column as a measure', () => {
+    expect(rawLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql, columnTypes: ['STRING', 'STRING'] })).toBeNull();
+  });
+
+  it('stays silent when the column types are missing or misaligned', () => {
+    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL })).toBeNull();
+    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING'] })).toBeNull();
+    expect(rawLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', 'INT64'] })).not.toBeNull();
   });
 
   it('accepts numeric measure types, including legacy aliases', () => {
