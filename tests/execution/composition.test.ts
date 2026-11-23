@@ -614,3 +614,329 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     expectReject(`SELECT ch, COUNT(*) AS n FROM ${T} GROUP BY ch LIMIT @n`, result(three), 'limit_applied');
   });
 });
+
+const F = '`proj.ds.fact`';
+const D = '`proj.ds.dim`';
+const SK = 'proj.ds.sessions.session_key';
+const DK = 'proj.ds.dim.k';
+const FSK = 'proj.ds.fact.session_key';
+const lab = (pairs: Pair[] = three) => result(pairs, { names: ['label', 'n'] });
+
+function verifyK(sql: string, res: QueryResult, uniqueKeys: string[]): CompositionVerdict {
+  return verifyComposition({ sql, result: res, maxDisplayRows: 20, uniqueKeys });
+}
+
+function expectRejectK(sql: string, res: QueryResult, keys: string[], reason: string): void {
+  expect(verifyK(sql, res, keys)).toEqual({ eligible: false, reason });
+}
+
+function expectEligibleK(sql: string, res: QueryResult, keys: string[]) {
+  const v = verifyK(sql, res, keys);
+  if (!v.eligible) throw new Error(`expected eligible, got ${v.reason}`);
+  return v;
+}
+
+describe('verifyComposition v1.1: COUNT(DISTINCT unique key)', () => {
+  const CD = (from: string, col = 'session_key') => `SELECT ch, COUNT(DISTINCT ${col}) n FROM ${from} GROUP BY ch`;
+
+  it('U1: COUNT(DISTINCT unique key) is a count and records the key', () => {
+    const v = expectEligibleK(CD(T), result(three), [SK]);
+    expect(v.measureKind).toBe('count');
+    expect(v.total).toBe('360');
+    expect(v.usedUniqueKeys).toEqual([SK]);
+  });
+
+  it('U1: keys and column names match case-insensitively; usedUniqueKeys is lower-cased', () => {
+    const v = expectEligibleK(CD('`Proj.DS.Sessions`', 'Session_Key'), result(three), ['PROJ.DS.SESSIONS.SESSION_KEY']);
+    expect(v.usedUniqueKeys).toEqual([SK]);
+  });
+
+  it('U1: an unquoted 3-part name and an own-qualified column match', () => {
+    expectEligibleK('SELECT ch, COUNT(DISTINCT s.session_key) n FROM proj.ds.sessions s GROUP BY ch', result(three), [SK]);
+  });
+
+  it('U2: without the key it stays count_distinct', () => {
+    expectRejectK(CD(T), result(three), [], 'count_distinct');
+  });
+
+  it('U3: the key on a different table stays count_distinct', () => {
+    expectRejectK(CD(T), result(three), ['proj.ds.events.session_key'], 'count_distinct');
+  });
+
+  it.each([
+    ['SELECT * with a WHERE', `WITH s AS (SELECT * FROM ${T} WHERE d >= '2024-01-01') ${CD('s')}`],
+    ['the column un-renamed with a WHERE', `WITH s AS (SELECT ch, session_key FROM ${T} WHERE d >= '2024-01-01') ${CD('s')}`],
+    ['a derived table, qualified', `SELECT ch, COUNT(DISTINCT t.session_key) n FROM (SELECT ch, session_key AS session_key FROM ${T}) t GROUP BY ch`],
+    ['two passthrough CTEs', `WITH a AS (SELECT * FROM ${T}), b AS (SELECT ch, a.session_key FROM a) ${CD('b')}`],
+  ])('U4: the key through a passthrough source (%s) is eligible', (_id, sql) => {
+    expect(expectEligibleK(sql, result(three), [SK]).usedUniqueKeys).toEqual([SK]);
+  });
+
+  it.each([
+    ['renames', `WITH s AS (SELECT ch, user_id AS session_key FROM ${T}) ${CD('s')}`],
+    ['transforms', `WITH s AS (SELECT ch, LOWER(session_key) AS session_key FROM ${T}) ${CD('s')}`],
+    ['produces it twice', `WITH s AS (SELECT *, user_id AS session_key FROM ${T}) ${CD('s')}`],
+    ['drops it', `WITH s AS (SELECT ch FROM ${T}) ${CD('s')}`],
+    ['takes it from another qualifier', `WITH s AS (SELECT ch, x.session_key FROM ${T} t) ${CD('s')}`],
+  ])('U4: a CTE that %s the key gives count_distinct', (_id, sql) => {
+    expectRejectK(sql, result(three), [SK], 'count_distinct');
+  });
+
+  it('U4: a CTE with GROUP BY gives row_source', () => {
+    expectRejectK(`WITH s AS (SELECT ch, session_key FROM ${T} GROUP BY ch, session_key) ${CD('s')}`, result(three), [SK], 'row_source');
+  });
+
+  it('U5: a 2-part reference never matches', () => {
+    expectRejectK(CD('`ds.sessions`'), result(three), [SK], 'count_distinct');
+    expectRejectK(CD('ds.sessions'), result(three), [SK], 'count_distinct');
+    expectRejectK(CD('sessions'), result(three), [SK], 'count_distinct');
+  });
+
+  it.each([
+    ['an expression', CD(T, 'LOWER(session_key)')],
+    ['a struct-field (foreign qualifier)', CD(T, 'x.session_key')],
+  ])('COUNT(DISTINCT %s) stays count_distinct', (_id, sql) => {
+    expectRejectK(sql, result(three), [SK], 'count_distinct');
+  });
+
+  // A case-insensitive collation merges distinct key values ('A', 'a') that may sit in different groups.
+  it.each([
+    ['on the COUNT(DISTINCT) argument', CD(T, "session_key COLLATE 'und:ci'")],
+    ['in a passthrough CTE, aliased', `WITH s AS (SELECT ch, session_key COLLATE 'und:ci' AS session_key FROM ${T}) ${CD('s')}`],
+    ['in a passthrough CTE, unaliased', `WITH s AS (SELECT ch, session_key COLLATE 'und:ci' FROM ${T}) ${CD('s')}`],
+  ])('COLLATE %s gives count_distinct', (_id, sql) => {
+    expectRejectK(sql, result(three), [SK], 'count_distinct');
+  });
+
+  it('U10: a CTE named like a unique-keyed base table never matches the key', () => {
+    expectRejectK(`WITH sessions AS (SELECT * FROM \`proj.ds.events\`) ${CD('sessions')}`, result(three), [SK], 'count_distinct');
+  });
+
+  it('R-8/R-9/R-10 with keys present: other columns and APPROX stay count_distinct', () => {
+    expectRejectK(`SELECT ch, COUNT(DISTINCT user_pseudo_id) AS n FROM ${T} GROUP BY ch`, result(three), [SK], 'count_distinct');
+    expectRejectK(`SELECT ch, APPROX_COUNT_DISTINCT(session_key) AS n FROM ${T} GROUP BY ch`, result(three), [SK], 'count_distinct');
+  });
+
+  it('a plain COUNT(*) records no keys even when keys are supplied', () => {
+    expect(expectEligibleK(`SELECT ch, COUNT(*) n FROM ${T} GROUP BY ch`, result(three), [SK]).usedUniqueKeys).toEqual([]);
+  });
+});
+
+describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
+  const J = (join: string, tail = 'GROUP BY d.label', measure = 'COUNT(*)') =>
+    `SELECT d.label, ${measure} AS n FROM ${F} f ${join} ${tail}`;
+  const ON = `LEFT JOIN ${D} d ON f.k = d.k`;
+
+  it('U6: LEFT JOIN on a unique right key is eligible and records the key', () => {
+    const v = expectEligibleK(J(ON), lab(), [DK]);
+    expect(v.measureKind).toBe('count');
+    expect(v.usedUniqueKeys).toEqual([DK]);
+  });
+
+  it.each([
+    ['USING', `LEFT JOIN ${D} d USING (k)`],
+    ['LEFT OUTER JOIN', `LEFT OUTER JOIN ${D} d ON f.k = d.k`],
+    ['reversed ON', `LEFT JOIN ${D} d ON d.k = f.k`],
+    ['parenthesised ON', `LEFT JOIN ${D} d ON (f.k = d.k)`],
+    ['unquoted 3-part names', `LEFT JOIN proj.ds.dim d ON f.k = d.k`],
+  ])('U7: %s is eligible', (_id, join) => {
+    expect(expectEligibleK(J(join), lab(), [DK]).usedUniqueKeys).toEqual([DK]);
+  });
+
+  it('U6: SUM across the join and an ordinal GROUP BY are eligible', () => {
+    const v = expectEligibleK(J(ON, 'GROUP BY 1', 'SUM(f.revenue)'), lab(), [DK]);
+    expect(v.measureKind).toBe('sum');
+  });
+
+  it('Ruling 3: a NULL label from unmatched rows is a legitimate group', () => {
+    expect(expectEligibleK(J(ON), lab([['a', 3], [null, 2]]), [DK]).total).toBe('5');
+  });
+
+  it.each([
+    ['right key not unique', ON, []],
+    ['only the left key unique', ON, ['proj.ds.fact.k']],
+    ['INNER JOIN', `INNER JOIN ${D} d ON f.k = d.k`, [DK]],
+    ['plain JOIN', `JOIN ${D} d ON f.k = d.k`, [DK]],
+    ['RIGHT JOIN', `RIGHT JOIN ${D} d ON f.k = d.k`, [DK]],
+    ['FULL JOIN', `FULL OUTER JOIN ${D} d ON f.k = d.k`, [DK]],
+    ['CROSS JOIN', `CROSS JOIN ${D} d`, [DK]],
+    ['comma join', `, ${D} d`, [DK]],
+    ['AND-compound ON', `LEFT JOIN ${D} d ON f.k = d.k AND f.x = d.x`, [DK]],
+    ['<> ON', `LEFT JOIN ${D} d ON f.k <> d.k`, [DK]],
+    ['ON on two right columns', `LEFT JOIN ${D} d ON d.k = d.k2`, [DK]],
+    ['ON on two left columns', `LEFT JOIN ${D} d ON f.k = f.k2`, [DK]],
+    ['ON on a struct field of the key', `LEFT JOIN ${D} d ON f.k = d.k.x`, [DK]],
+    ['ON on an unqualified column', `LEFT JOIN ${D} d ON k = d.k`, [DK]],
+    ['ON against a literal', `LEFT JOIN ${D} d ON d.k = 'a'`, [DK]],
+    ['USING two columns', `LEFT JOIN ${D} d USING (k, j)`, [DK, 'proj.ds.dim.j']],
+    ['a subquery on the right side', `LEFT JOIN (SELECT * FROM ${D}) d ON f.k = d.k`, [DK]],
+    ['a 2-part right table', `LEFT JOIN \`ds.dim\` d ON f.k = d.k`, [DK]],
+    ['a second join whose right key is not unique', `${ON} LEFT JOIN \`proj.ds.e\` e ON d.e = e.id`, [DK]],
+    ['a second join keyed on a later source', `LEFT JOIN ${D} d ON e.id = d.k LEFT JOIN \`proj.ds.e\` e ON f.e = e.id`, [DK, 'proj.ds.e.id']],
+    ['an UNNEST join', `LEFT JOIN UNNEST(f.arr) d`, [DK]],
+  ])('U8: %s gives row_source', (_id, join, keys) => {
+    expectRejectK(J(join), lab(), keys, 'row_source');
+  });
+
+  it.each(['proj.rec.arr', '`proj.rec.arr`'])('U8: a correlated array path %s (head = an earlier alias) gives row_source', (path) => {
+    expectRejectK(
+      `SELECT x.label, COUNT(*) n FROM ${F} proj LEFT JOIN ${path} x ON proj.k = x.k GROUP BY x.label`,
+      lab(), ['proj.rec.arr.k'], 'row_source',
+    );
+  });
+
+  it('U8: a right side that is a CTE name gives row_source', () => {
+    expectRejectK(`WITH dim AS (SELECT * FROM ${D}) ${J('LEFT JOIN dim d ON f.k = d.k')}`, lab(), [DK], 'row_source');
+  });
+
+  it('U8: a join inside a CTE still gives row_source', () => {
+    expectRejectK(
+      `WITH s AS (SELECT f.*, d.label FROM ${F} f LEFT JOIN ${D} d ON f.k = d.k) SELECT label, COUNT(*) n FROM s GROUP BY label`,
+      lab(), [DK], 'row_source',
+    );
+  });
+
+  it('a second join on a unique key is eligible; usedUniqueKeys is sorted', () => {
+    const v = expectEligibleK(J(`${ON} LEFT JOIN \`proj.ds.e\` e ON d.e = e.id`), lab(), [DK, 'proj.ds.e.id']);
+    expect(v.usedUniqueKeys).toEqual([DK, 'proj.ds.e.id']);
+  });
+
+  it('Ruling 5: usedUniqueKeys is deduped, lower-cased and sorted', () => {
+    const v = expectEligibleK(
+      J(`LEFT JOIN ${D} d ON f.k = d.k LEFT JOIN ${D} d2 ON f.k2 = d2.k`, 'GROUP BY d.label', 'COUNT(DISTINCT f.session_key)'),
+      lab(), ['PROJ.DS.FACT.SESSION_KEY', DK],
+    );
+    expect(v.usedUniqueKeys).toEqual([DK, FSK]);
+  });
+
+  it('U9: COUNT(DISTINCT f.session_key) across a valid LEFT JOIN with both keys unique', () => {
+    const v = expectEligibleK(J(ON, 'GROUP BY d.label', 'COUNT(DISTINCT f.session_key)'), lab(), [FSK, DK]);
+    expect(v.measureKind).toBe('count');
+    expect(v.usedUniqueKeys).toEqual([DK, FSK]);
+  });
+
+  it.each([
+    ['the left key not unique', 'COUNT(DISTINCT f.session_key)', [DK]],
+    ['a right-side unique key (repeats across fact rows)', 'COUNT(DISTINCT d.k)', [FSK, DK]],
+    ['an unqualified column in a join', 'COUNT(DISTINCT session_key)', [FSK, DK]],
+  ])('U9: COUNT(DISTINCT) with %s gives count_distinct', (_id, measure, keys) => {
+    expectRejectK(J(ON, 'GROUP BY d.label', measure), lab(), keys, 'count_distinct');
+  });
+
+  it('U9: the left source may be a passthrough CTE', () => {
+    const v = expectEligibleK(
+      `WITH s AS (SELECT * FROM ${F} WHERE d >= '2024') SELECT d.label, COUNT(DISTINCT f.session_key) n FROM s f ${ON} GROUP BY d.label`,
+      lab(), [FSK, DK],
+    );
+    expect(v.usedUniqueKeys).toEqual([DK, FSK]);
+  });
+
+  it.each([
+    ['WHERE f.d', "WHERE f.d >= '2024-01-01'"],
+    ['WHERE f.label (a different base column)', "WHERE f.label = 'x'"],
+    ['WHERE on a right sibling', "WHERE d.region = 'EU'"],
+    ['WHERE on the join key', "WHERE f.k IN ('a', 'b')"],
+  ])('Ruling 2: %s with dimension d.label is eligible', (_id, where) => {
+    expectEligibleK(J(ON, `${where} GROUP BY d.label`), lab(), [DK]);
+  });
+
+  it.each([
+    ['WHERE d.label', "WHERE d.label = 'x' GROUP BY d.label"],
+    ['an unqualified WHERE label', "WHERE label = 'x' GROUP BY d.label"],
+    ['an unqualified WHERE on any column', "WHERE region = 'x' GROUP BY d.label"],
+    ['a foreign qualifier (struct access)', "WHERE label.x = 'x' GROUP BY d.label"],
+    ['Ruling 1: TO_JSON_STRING(d) in a WHERE', "WHERE TO_JSON_STRING(d) LIKE '%x%' GROUP BY d.label"],
+    ['Ruling 1: TO_JSON_STRING(f) in a WHERE', "WHERE TO_JSON_STRING(f) LIKE '%x%' GROUP BY d.label"],
+  ])('Ruling 2: %s rejects with where_on_dimension', (_id, tail) => {
+    expectRejectK(J(ON, tail), lab(), [DK], 'where_on_dimension');
+  });
+
+  it('Ruling 1: TO_JSON_STRING(d) inside the dimension rejects', () => {
+    expectRejectK(
+      `SELECT JSON_VALUE(TO_JSON_STRING(d), '$.label') AS label, COUNT(*) n FROM ${F} f ${ON} WHERE d.region = 'x' GROUP BY 1`,
+      lab(), [DK], 'where_on_dimension',
+    );
+  });
+
+  it('an unqualified dimension in a join rejects', () => {
+    expectRejectK(`SELECT label, COUNT(*) n FROM ${F} f ${ON} GROUP BY label`, lab(), [DK], 'where_on_dimension');
+  });
+
+  it('the join key equality links the dimension: WHERE f.k with dimension d.k rejects', () => {
+    expectRejectK(
+      `SELECT d.k, COUNT(*) n FROM ${F} f ${ON} WHERE f.k IN ('a', 'b') GROUP BY d.k`,
+      result(three, { names: ['k', 'n'] }), [DK], 'where_on_dimension',
+    );
+  });
+
+  it('the join key equality links through the left CTE WHERE', () => {
+    expectRejectK(
+      `WITH s AS (SELECT * FROM ${F} WHERE k != 'a') SELECT d.k, COUNT(*) n FROM s f ${ON} GROUP BY d.k`,
+      result(three, { names: ['k', 'n'] }), [DK], 'where_on_dimension',
+    );
+  });
+
+  it('a left-side dimension traced through a CTE WHERE rejects', () => {
+    expectRejectK(
+      `WITH s AS (SELECT k, channel AS ch FROM ${F} WHERE channel != 'x') SELECT f.ch, COUNT(*) n FROM s f ${ON} GROUP BY f.ch`,
+      result(three), [DK], 'where_on_dimension',
+    );
+  });
+
+  describe('Ruling 4: self-join', () => {
+    const SELF = 'FROM `proj.ds.t` c LEFT JOIN `proj.ds.t` p ON c.parent_id = p.id';
+    const TK = ['proj.ds.t.id'];
+
+    // The left and right rows may be the same row (`c.id = p.id`), so a WHERE on c could filter p's
+    // dimension; the left base table also appearing on the right fails closed.
+    it.each([
+      ['a WHERE on the other row', "WHERE c.label = 'x'"],
+      ['a WHERE on the dimension side', "WHERE p.label = 'x'"],
+      ['no WHERE', ''],
+    ])('a self-join on a unique right key with %s gives row_source (no crash, no bypass)', (_id, where) => {
+      expectRejectK(`SELECT p.label, COUNT(*) n ${SELF} ${where} GROUP BY p.label`, lab(), TK, 'row_source');
+    });
+
+    it('the left base table reached through a CTE and joined again gives row_source', () => {
+      expectRejectK(
+        `WITH c AS (SELECT * FROM \`proj.ds.t\`) SELECT p.label, COUNT(*) n FROM c LEFT JOIN \`proj.ds.t\` p ON c.id = p.id WHERE c.label = 'x' GROUP BY p.label`,
+        lab(), TK, 'row_source',
+      );
+    });
+
+    it('the same right table joined twice shares one namespace: a WHERE on d2.label rejects', () => {
+      expectRejectK(
+        `SELECT d.label, COUNT(*) n FROM ${F} f LEFT JOIN ${D} d ON f.k = d.k LEFT JOIN ${D} d2 ON f.k = d2.k WHERE d2.label = 'x' GROUP BY d.label`,
+        lab(), [DK], 'where_on_dimension',
+      );
+    });
+
+    it('the same right table joined twice is eligible with a WHERE on an unrelated column', () => {
+      expectEligibleK(
+        `SELECT d.label, COUNT(*) n FROM ${F} f LEFT JOIN ${D} d ON f.k = d.k LEFT JOIN ${D} d2 ON f.k2 = d2.k WHERE f.x = 'x' GROUP BY d.label`,
+        lab(), [DK],
+      );
+    });
+
+    it('a self-join whose right key is not unique gives row_source', () => {
+      expectRejectK(
+        'SELECT p.label, COUNT(*) n FROM `proj.ds.t` c LEFT JOIN `proj.ds.t` p ON c.id = p.parent_id GROUP BY p.label',
+        lab(), TK, 'row_source',
+      );
+    });
+
+    it('an unaliased self-join (colliding qualifiers) gives row_source', () => {
+      expectRejectK(
+        'SELECT t.label, COUNT(*) n FROM `proj.ds.t` LEFT JOIN `proj.ds.t` ON t.parent_id = t.id GROUP BY t.label',
+        lab(), TK, 'row_source',
+      );
+    });
+
+    it('an alias that collides with the other table name gives row_source', () => {
+      expectRejectK(
+        `SELECT fact.label, COUNT(*) n FROM ${F} LEFT JOIN ${D} fact ON fact.k = fact.k GROUP BY fact.label`,
+        lab(), [DK], 'row_source',
+      );
+    });
+  });
+});

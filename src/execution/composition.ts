@@ -20,7 +20,7 @@ export interface CompositionInput {
   sql: string;
   result: QueryResult;
   maxDisplayRows: number;
-  /** dbt-declared unique keys (`project.dataset.table.column`). Unused in v1. */
+  /** dbt-declared unique keys (`project.dataset.table.column`), matched case-insensitively. */
   uniqueKeys?: string[];
 }
 
@@ -34,7 +34,7 @@ export type EligibleComposition = {
   shares: ShareCell[];
   /** Row with the unique max basisPoints; null on a tie. */
   topIndex: number | null;
-  /** Unique keys a proof relied on; always [] in v1. */
+  /** Unique keys the proof relied on: deduped, lower-cased, sorted. */
   usedUniqueKeys: string[];
 };
 
@@ -66,6 +66,9 @@ const OUTER_KEYS = new Set(['type', 'columns', 'from', 'where', 'with', 'groupby
 const SOURCE_KEYS = new Set(['type', 'columns', 'from', 'where', 'orderby']);
 const TABLE_KEYS = new Set(['db', 'table', 'catalog', 'schema', 'surround', 'as', 'operator']);
 const DERIVED_KEYS = new Set(['expr', 'as', 'operator']);
+const JOIN_ITEM_KEYS = new Set([...TABLE_KEYS, 'join', 'on', 'using']);
+const LEFT_JOINS = new Set(['LEFT JOIN', 'LEFT OUTER JOIN']);
+const PLAIN_REF_KEYS = new Set(['type', 'table', 'column', 'subFields', 'collate']);
 
 function isObj(v: unknown): v is Node {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -127,17 +130,58 @@ function isColumnRef(n: unknown): n is Node {
  */
 function fromQualifiers(s: Node): Set<string> {
   const out = new Set<string>();
-  for (const item of Array.isArray(s.from) ? s.from : []) {
-    if (!isObj(item)) continue;
-    const alias = typeof item.as === 'string' ? item.as : isObj(item.as) && typeof item.as.value === 'string' ? item.as.value : null;
-    // An explicit alias hides the table name (`FROM t AS s`: `t.x` is a struct column `t`).
-    if (alias !== null && alias !== '') out.add(alias.toLowerCase());
-    else if (typeof item.table === 'string') {
-      out.add(item.table.toLowerCase());
-      out.add(item.table.split('.').pop()!.toLowerCase());
-    }
+  for (const item of Array.isArray(s.from) ? s.from : []) for (const q of itemQualifiers(item)) out.add(q);
+  return out;
+}
+
+/** The qualifiers of one FROM item (see fromQualifiers). */
+function itemQualifiers(item: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!isObj(item)) return out;
+  const alias = typeof item.as === 'string' ? item.as : isObj(item.as) && typeof item.as.value === 'string' ? item.as.value : null;
+  // An explicit alias hides the table name (`FROM t AS s`: `t.x` is a struct column `t`).
+  if (alias !== null && alias !== '') out.add(alias.toLowerCase());
+  else if (typeof item.table === 'string') {
+    out.add(item.table.toLowerCase());
+    out.add(lastSegment(item.table));
   }
   return out;
+}
+
+const lastSegment = (table: string) => table.split('.').pop()!.toLowerCase();
+
+/**
+ * A base-table reference's full `project.dataset.table` name, lower-cased:
+ * the (backtick-stripped) table when it has exactly three non-empty parts,
+ * else catalog/db, schema and table when all three exist; otherwise null.
+ */
+function fullName(item: Node): string | null {
+  if (typeof item.table !== 'string') return null;
+  const parts = item.table.split('.');
+  if (parts.length === 3) {
+    const unsplit = isEmpty(item.db) && isEmpty(item.schema) && isEmpty(item.catalog);
+    return unsplit && parts.every(x => x !== '') ? item.table.toLowerCase() : null;
+  }
+  const project = item.catalog ?? item.db;
+  if (parts.length !== 1 || item.table === '') return null;
+  return [project, item.schema].every(x => typeof x === 'string' && x !== '' && !x.includes('.'))
+    ? `${project as string}.${item.schema as string}.${item.table}`.toLowerCase()
+    : null;
+}
+
+/**
+ * A column_ref with no struct-field access and no COLLATE (a case-insensitive
+ * collation would merge distinct key values).
+ */
+function isPlainRef(n: unknown): n is Node {
+  return isColumnRef(n) && onlyKeys(n, PLAIN_REF_KEYS) && isEmpty(n.subFields) && isEmpty(n.collate);
+}
+
+/** `[qualifier, column]` (lower-cased) of a qualified plain column_ref; else null. */
+function plainQualifiedRef(n: unknown): [string, string] | null {
+  if (!isPlainRef(n) || typeof n.table !== 'string') return null;
+  const name = refName(n);
+  return name === null || name === '*' ? null : [n.table.toLowerCase(), name.toLowerCase()];
 }
 
 /**
@@ -203,8 +247,13 @@ function exprList(fn: Node): unknown[] {
 const isNumber = (n: unknown, pred: (v: number) => boolean) =>
   isObj(n) && n.type === 'number' && typeof n.value === 'number' && pred(n.value);
 
-/** S3 + S4: the measure is an allow-listed additive aggregate, optionally wrapped. */
-function measureKind(e: unknown, quals: Set<string>): 'count' | 'sum' {
+/**
+ * S3 + S4: the measure is an allow-listed additive aggregate, optionally
+ * wrapped. A `COUNT(DISTINCT arg)` is pushed to `distinctArgs` for the
+ * unique-key proof after S6; with no unique keys (`distinctArgs` null) it
+ * rejects at once.
+ */
+function measureKind(e: unknown, quals: Set<string>, distinctArgs: unknown[] | null): 'count' | 'sum' {
   if (!isObj(e)) return fail('measure_not_additive');
   if (e.type === 'cast') {
     const target = e.target;
@@ -214,17 +263,17 @@ function measureKind(e: unknown, quals: Set<string>): 'count' | 'sum' {
       || !onlyKeys(target[0], new Set(['dataType']))) {
       return fail('measure_not_additive');
     }
-    return measureKind(e.expr, quals);
+    return measureKind(e.expr, quals, distinctArgs);
   }
   if (e.type === 'function') {
     const name = builtinName(e);
     if (name === 'APPROX_COUNT_DISTINCT') return fail('count_distinct');
     const args = exprList(e);
     if (name === 'ROUND' && (args.length === 1 || (args.length === 2 && isNumber(args[1], v => Number.isInteger(v) && v >= 0)))) {
-      return measureKind(args[0], quals);
+      return measureKind(args[0], quals, distinctArgs);
     }
     if ((name === 'IFNULL' || name === 'COALESCE') && args.length === 2 && isNumber(args[1], v => v === 0)) {
-      return measureKind(args[0], quals);
+      return measureKind(args[0], quals, distinctArgs);
     }
     if (name === 'COUNTIF' && args.length === 1 && !hasSubquery(args[0]) && !hasAggregate(args[0])) return 'count';
     return fail('measure_not_additive');
@@ -236,7 +285,11 @@ function measureKind(e: unknown, quals: Set<string>): 'count' | 'sum' {
     const arg = args.expr;
     const distinct = !isEmpty(args.distinct);
     if (name === 'COUNT') {
-      if (distinct) return fail('count_distinct');
+      if (distinct) {
+        if (distinctArgs === null) return fail('count_distinct');
+        distinctArgs.push(arg);
+        return 'count';
+      }
       if (isObj(arg) && arg.type === 'star') return 'count';
       if (!isObj(arg) || hasSubquery(arg) || hasAggregate(arg)) return fail('measure_not_additive');
       return 'count';
@@ -260,7 +313,8 @@ function parseCtes(withClause: unknown): Cte[] {
     if (!isObj(c) || !onlyKeys(c, new Set(['name', 'stmt']))) return fail('row_source');
     const name = isObj(c.name) && typeof c.name.value === 'string' ? c.name.value.toLowerCase() : null;
     const ast = isObj(c.stmt) ? c.stmt.ast : null;
-    if (name === null || !isObj(ast)) return fail('row_source');
+    // A dotted CTE name could pass for a base table's full name (fail closed; BigQuery rejects it anyway).
+    if (name === null || name.includes('.') || !isObj(ast)) return fail('row_source');
     return { name, ast };
   });
 }
@@ -339,14 +393,194 @@ function lineage(names: Set<string>, levels: Node[], from: number): Set<string> 
  * S8: no WHERE on the chain (outer included) may touch the dimension. Each
  * WHERE's names and the dimension's names are both traced to base columns,
  * and any overlap at any level rejects. levels = [outer, ...source chain]; the
- * WHERE of levels[k] reads the outputs of levels[k + 1].
+ * WHERE of levels[k] reads the outputs of levels[k + 1]. The outer WHERE's
+ * names are passed in (`outerWhere`), so a join query can pass only those
+ * that read the left source.
  */
-function checkWhereOnDimension(levels: Node[], dimNames: Set<string>): void {
+function checkWhereOnDimension(levels: Node[], dimNames: Set<string>, outerWhere: Set<string>): void {
   const dimAll = lineage(dimNames, levels, 1);
   levels.forEach((level, k) => {
-    const whereAll = lineage(new Set(namesOf(level.where, fromQualifiers(level))), levels, k + 1);
+    const names = k === 0 ? outerWhere : new Set(namesOf(level.where, fromQualifiers(level)));
+    const whereAll = lineage(names, levels, k + 1);
     for (const n of whereAll) if (dimAll.has(n)) fail('where_on_dimension');
   });
+}
+
+/**
+ * The name `col` keeps when it passes through source select `s` un-renamed
+ * and untransformed: exactly one item produces it, as `*` (no EXCEPT/REPLACE,
+ * own qualifier or none) or as a plain own column ref of the same name.
+ * Anything else, including a struct-field item whose output name is not its
+ * ref name, is null (fail closed).
+ */
+function passthrough(s: Node, col: string): string | null {
+  const quals = fromQualifiers(s);
+  const ownOrNone = (t: unknown) => isEmpty(t) || (typeof t === 'string' && quals.has(t.toLowerCase()));
+  let found = 0;
+  for (const item of Array.isArray(s.columns) ? s.columns : []) {
+    if (!isObj(item) || !onlyKeys(item, new Set(['expr', 'as'])) || !isObj(item.expr)) return null;
+    const e = item.expr;
+    const alias = isEmpty(item.as) ? null : typeof item.as === 'string' ? item.as : isObj(item.as) && typeof item.as.value === 'string' ? item.as.value : undefined;
+    if (alias === undefined) return null;
+    // A struct-field item's output name is not its ref name; a COLLATE item is a transform.
+    if (isColumnRef(e) && !isPlainRef(e)) return null;
+    const name = isColumnRef(e) ? refName(e)?.toLowerCase() ?? null : null;
+    if (name === '*' && alias === null) {
+      if (!ownOrNone(e.table)) return null;
+      found++;
+      continue;
+    }
+    if ((alias ?? name)?.toLowerCase() !== col) continue;
+    if (name !== col || !ownOrNone(e.table) || quals.has(col)) return null;
+    found++;
+  }
+  return found === 1 ? col : null;
+}
+
+/**
+ * The unique key a `COUNT(DISTINCT arg)` relies on: `arg` is a plain column
+ * ref (qualified by one of `quals`, or unqualified when `allowBare`) that
+ * passes un-renamed through every row-preserving `chain` level to `base`,
+ * whose full name plus the column is a declared key. null when unproven.
+ */
+function distinctKey(arg: unknown, quals: Set<string>, allowBare: boolean, chain: Node[], base: Node, keys: Set<string>): string | null {
+  if (!isPlainRef(arg)) return null;
+  let col = refName(arg)?.toLowerCase() ?? null;
+  if (col === null || col === '*') return null;
+  if (isEmpty(arg.table) ? !allowBare || quals.has(col) : typeof arg.table !== 'string' || !quals.has(arg.table.toLowerCase())) return null;
+  for (const level of chain) {
+    col = passthrough(level, col);
+    if (col === null) return null;
+  }
+  const full = fullName(base);
+  const key = full === null ? null : `${full}.${col}`;
+  return key !== null && keys.has(key) ? key : null;
+}
+
+/** The base-table FROM item at the bottom of a resolved chain. */
+function baseOf(from: unknown, chain: Node[]): Node {
+  const items = chain.length > 0 ? chain[chain.length - 1].from : from;
+  return Array.isArray(items) && isObj(items[0]) ? items[0] : fail('row_source');
+}
+
+interface Joins {
+  /** Qualifiers per FROM item, pairwise disjoint. */
+  quals: Set<string>[];
+  /** S8 namespace per item: 0 for the left source, the table's last segment for a right base table. */
+  spaces: string[];
+  /** ON/USING equalities as pairs of `space\0column`. */
+  pairs: [string, string][];
+  usedKeys: string[];
+}
+
+const ref = (space: string, col: string) => `${space}\0${col}`;
+
+/**
+ * S6 for joins (outer select only): every `from[i > 0]` is a LEFT [OUTER] JOIN
+ * of a fully named base table on a single equality, or USING one column, whose
+ * right-side column is a declared unique key, so each left row matches at most
+ * one right row and the joined rows are exactly the left rows.
+ */
+function checkJoins(from: unknown[], keys: Set<string>): Joins {
+  const quals = from.map(itemQualifiers);
+  const seen = new Set<string>();
+  for (const q of quals) {
+    if (q.size === 0) fail('row_source');
+    for (const n of q) {
+      if (seen.has(n)) fail('row_source');
+      seen.add(n);
+    }
+  }
+  const spaces = ['0'];
+  const pairs: [string, string][] = [];
+  const usedKeys: string[] = [];
+  const srcOf = (qual: string) => quals.findIndex(q => q.has(qual));
+  for (let i = 1; i < from.length; i++) {
+    const item = from[i];
+    if (!isObj(item) || typeof item.join !== 'string' || !LEFT_JOINS.has(item.join.toUpperCase())) return fail('row_source');
+    if ('expr' in item || item.type === 'unnest' || !isEmpty(item.operator) || !onlyKeys(item, JOIN_ITEM_KEYS)) return fail('row_source');
+    const full = fullName(item) ?? fail('row_source');
+    // `LEFT JOIN f.rec.arr` whose head names an earlier range variable is a correlated array path (an UNNEST).
+    if (quals.slice(0, i).some(q => q.has(full.split('.')[0]))) fail('row_source');
+    spaces.push(`t:${lastSegment(full)}`);
+    let rightCol: string;
+    if (!isEmpty(item.on) && isEmpty(item.using)) {
+      const on = item.on;
+      if (!isObj(on) || on.type !== 'binary_expr' || on.operator !== '=' || !onlyKeys(on, new Set(['type', 'operator', 'left', 'right', 'parentheses']))) {
+        return fail('row_source');
+      }
+      const sides = [plainQualifiedRef(on.left), plainQualifiedRef(on.right)];
+      if (sides.some(x => x === null)) return fail('row_source');
+      const [a, b] = sides as [string, string][];
+      const [ia, ib] = [srcOf(a[0]), srcOf(b[0])];
+      const [right, left, il] = ia === i ? [a, b, ib] : ib === i ? [b, a, ia] : fail('row_source');
+      if (il < 0 || il >= i) return fail('row_source');
+      rightCol = right[1];
+      pairs.push([ref(spaces[i], rightCol), ref(spaces[il], left[1])]);
+    } else if (isEmpty(item.on) && Array.isArray(item.using) && item.using.length === 1) {
+      const u = item.using[0];
+      if (!isObj(u) || u.type !== 'default' || typeof u.value !== 'string' || !onlyKeys(u, new Set(['type', 'value']))) return fail('row_source');
+      rightCol = u.value.toLowerCase();
+      // USING may bind to any earlier source's column: link them all (over-approximation).
+      for (let j = 0; j < i; j++) pairs.push([ref(spaces[i], rightCol), ref(spaces[j], rightCol)]);
+    } else return fail('row_source');
+    const key = `${full}.${rightCol}`;
+    if (!keys.has(key)) fail('row_source');
+    usedKeys.push(key);
+  }
+  return { quals, spaces, pairs, usedKeys };
+}
+
+/**
+ * Every column an expression in a join query references, as `space\0column`.
+ * Each ref must be qualified by one of the select's FROM items; an unqualified
+ * ref (which could name any source's column, or a whole row), a foreign
+ * qualifier (a struct column), or a `*` fails closed.
+ */
+function joinRefs(n: unknown, j: Joins): string[] {
+  const out: string[] = [];
+  some(n, o => {
+    if (o.type !== 'column_ref') return false;
+    const name = refName(o)?.toLowerCase() ?? null;
+    const src = typeof o.table === 'string' ? j.quals.findIndex(q => q.has((o.table as string).toLowerCase())) : -1;
+    if (name === null || name === '*' || src < 0) fail('where_on_dimension');
+    out.push(ref(j.spaces[src], name!));
+    return false;
+  });
+  return out;
+}
+
+/**
+ * S8 for joins. Right-side columns are matched per table namespace (the same
+ * table joined twice shares one); left-side columns go through the left
+ * source's lineage. ON/USING equalities link a column to the dimension when
+ * the other side already reaches it, iterated to a fixpoint.
+ */
+function checkJoinWhereOnDimension(levels: Node[], dimExpr: unknown, where: unknown, j: Joins): void {
+  const left = (r: string) => (r.startsWith('0\0') ? r.slice(2) : null);
+  const dimRight = new Set<string>();
+  const dimLeft = new Set<string>();
+  const add = (r: string) => (left(r) === null ? dimRight : dimLeft).add(left(r) ?? r);
+  joinRefs(dimExpr, j).forEach(add);
+  const reaches = (r: string, leftAll: Set<string>) => {
+    const l = left(r);
+    return l === null ? dimRight.has(r) : [...lineage(new Set([l]), levels, 1)].some(n => leftAll.has(n));
+  };
+  for (let changed = true; changed;) {
+    changed = false;
+    const leftAll = lineage(dimLeft, levels, 1);
+    for (const [a, b] of j.pairs) {
+      for (const [x, y] of [[a, b], [b, a]]) {
+        if (reaches(x, leftAll) && !reaches(y, leftAll)) {
+          add(y);
+          changed = true;
+        }
+      }
+    }
+  }
+  const whereRefs = joinRefs(where, j);
+  if (whereRefs.some(r => left(r) === null && dimRight.has(r))) fail('where_on_dimension');
+  checkWhereOnDimension(levels, dimLeft, new Set(whereRefs.flatMap(r => left(r) ?? [])));
 }
 
 function verify(input: CompositionInput): CompositionVerdict {
@@ -424,7 +658,9 @@ function verify(input: CompositionInput): CompositionVerdict {
   if (hasAggregate(dimExpr) || hasSubquery(dimExpr)) fail('group_by_shape');
 
   // S3 + S4
-  const kind = measureKind(exprs[measIdx], fromQualifiers(sel));
+  const keys = new Set((input.uniqueKeys ?? []).map(k => k.toLowerCase()));
+  const distinctArgs: unknown[] | null = keys.size > 0 ? [] : null;
+  const kind = measureKind(exprs[measIdx], fromQualifiers(sel), distinctArgs);
 
   // S5
   const limit = sel.limit;
@@ -441,19 +677,34 @@ function verify(input: CompositionInput): CompositionVerdict {
   }
 
   // S6
-  const chain = resolveSource(sel.from, parseCtes(sel.with));
+  const scope = parseCtes(sel.with);
+  const joins = Array.isArray(sel.from) && sel.from.length > 1 ? checkJoins(sel.from, keys) : null;
+  const leftFrom = joins === null ? sel.from : [(sel.from as unknown[])[0]];
+  const chain = resolveSource(leftFrom, scope);
+  const base = baseOf(leftFrom, chain);
+  // The left base table joined again could be the same row as the right side, so
+  // a WHERE on one could filter the other's dimension: fail closed.
+  if (joins !== null && typeof base.table === 'string' && joins.spaces.includes(`t:${lastSegment(base.table)}`)) fail('row_source');
+  const usedKeys = new Set(joins?.usedKeys ?? []);
+  for (const arg of distinctArgs ?? []) {
+    const own = joins === null ? fromQualifiers(sel) : joins.quals[0];
+    usedKeys.add(distinctKey(arg, own, joins === null, chain, base, keys) ?? fail('count_distinct'));
+  }
 
   // S7
   if ([sel.where, ...chain.map(s => s.where)].some(hasSubquery)) fail('where_subquery');
 
   // S8
-  const dimNames = new Set<string>([dimension.toLowerCase()]);
-  if (aliases[dimIdx] !== null) dimNames.add(aliases[dimIdx]!.toLowerCase());
-  for (const n of referencedNames(dimExpr, fromQualifiers(sel))) {
-    if (n === null) fail('where_on_dimension');
-    dimNames.add(n!);
+  if (joins !== null) checkJoinWhereOnDimension([sel, ...chain], dimExpr, sel.where, joins);
+  else {
+    const dimNames = new Set<string>([dimension.toLowerCase()]);
+    if (aliases[dimIdx] !== null) dimNames.add(aliases[dimIdx]!.toLowerCase());
+    for (const n of referencedNames(dimExpr, fromQualifiers(sel))) {
+      if (n === null) fail('where_on_dimension');
+      dimNames.add(n!);
+    }
+    checkWhereOnDimension([sel, ...chain], dimNames, new Set(namesOf(sel.where, fromQualifiers(sel))));
   }
-  checkWhereOnDimension([sel, ...chain], dimNames);
 
   // V1–V3
   const computed = computeShares(rows.map(r => r[measure]), types![measIdx]);
@@ -468,7 +719,7 @@ function verify(input: CompositionInput): CompositionVerdict {
     total: computed.total,
     shares: computed.shares,
     topIndex: top.length === 1 ? top[0] : null,
-    usedUniqueKeys: [],
+    usedUniqueKeys: [...usedKeys].sort(),
   };
 }
 
