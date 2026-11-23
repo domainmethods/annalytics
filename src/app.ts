@@ -291,7 +291,7 @@ app.view(OTHER_NOTE_CALLBACK_ID, async ({ ack, body, view, client }) => {
   });
 });
 
-// "Wrong assumptions? Click to refine" button handler
+// "Change assumptions" button handler
 app.action('refine_assumptions', async ({ ack, body, client }) => {
   await ack();
   const message = (body as any).message;

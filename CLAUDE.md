@@ -139,7 +139,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
 | `feedback_notes` | `traceId_userId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
-| `refinement_targets` | `channel:threadTs_userId` | The answer a user picked to refine ("Wrong assumptions?" / "Not what I asked"); consumed by their next thread reply; `expiresAt` TTL (30m) |
+| `refinement_targets` | `channel:threadTs_userId` | The answer a user picked to refine ("Change assumptions" / "Not what I asked"); consumed by their next thread reply; `expiresAt` TTL (30m) |
 | `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 | `thread_participation` | `channel:threadTs` | Marks channel threads the bot replied in, written by mention replies and `/anna` status messages even when no answer is saved (greetings/help, errors), so unmentioned follow-ups there still reach the bot; checked before `response_context` (`expiresAt` TTL, same window as `response_context`) |
 | `whatsapp_event_dedupe` | event doc id | WhatsApp webhook delivery dedupe (gated prototype); `expiresAt` TTL |

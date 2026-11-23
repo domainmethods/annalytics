@@ -90,17 +90,28 @@ describe('verifyComposition: eligible (§6 A-rows)', () => {
   });
 
   it.each([
-    'ROUND(SUM(x), 2)',
-    'CAST(SUM(x) AS INT64)',
     'SAFE_CAST(SUM(x) AS NUMERIC)',
+    'CAST(SUM(x) AS FLOAT64)',
     'IFNULL(SUM(x), 0)',
     'COALESCE(SUM(x), 0)',
-    'ROUND(IFNULL(SUM(x), 0), 2)',
   ])('A4: allow-listed wrapper %s', (measure) => {
     const v = expectEligible(`SELECT ch, ${measure} AS n FROM ${T} GROUP BY ch`, result(three));
     expect(v.measureKind).toBe('sum');
     expect(v.total).toBe('360');
   });
+
+  it.each(['ROUND(COUNT(*))', 'ROUND(COUNT(*), 2)', 'CAST(COUNT(*) AS INT64)', 'ROUND(IFNULL(COUNT(*), 0))'])(
+    'A4: a scale-reducing wrapper over a count is a no-op: %s', (measure) => {
+      const v = expectEligible(`SELECT ch, ${measure} AS n FROM ${T} GROUP BY ch`, result(three));
+      expect(v.measureKind).toBe('count');
+    },
+  );
+
+  it.each(['ROUND(SUM(x))', 'ROUND(SUM(x), 2)', 'CAST(SUM(x) AS INT64)', 'SAFE_CAST(SUM(x) AS INT64)', 'ROUND(IFNULL(SUM(x), 0), 2)'])(
+    'R-11b: a scale-reducing wrapper over a SUM rounds each cell before the shares: %s', (measure) => {
+      expectReject(`SELECT ch, ${measure} AS n FROM ${T} GROUP BY ch`, result(three), 'measure_not_additive');
+    },
+  );
 
   it('A5: a LIMIT that did not bite', () => {
     const v = expectEligible(

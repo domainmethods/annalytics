@@ -263,14 +263,20 @@ function measureKind(e: unknown, quals: Set<string>, distinctArgs: unknown[] | n
       || !onlyKeys(target[0], new Set(['dataType']))) {
       return fail('measure_not_additive');
     }
-    return measureKind(e.expr, quals, distinctArgs);
+    const inner = measureKind(e.expr, quals, distinctArgs);
+    // INT64 rounds each cell separately, so over a SUM the shares stop bounding the error (0.4/0.4/1.4 → 0%/0%/100%).
+    // Over a count it changes nothing.
+    if (target[0].dataType.toUpperCase() === 'INT64' && inner !== 'count') return fail('measure_not_additive');
+    return inner;
   }
   if (e.type === 'function') {
     const name = builtinName(e);
     if (name === 'APPROX_COUNT_DISTINCT') return fail('count_distinct');
     const args = exprList(e);
     if (name === 'ROUND' && (args.length === 1 || (args.length === 2 && isNumber(args[1], v => Number.isInteger(v) && v >= 0)))) {
-      return measureKind(args[0], quals, distinctArgs);
+      // ROUND is a no-op on a count; over a SUM it rounds each cell separately, as INT64 does above.
+      const inner = measureKind(args[0], quals, distinctArgs);
+      return inner === 'count' ? inner : fail('measure_not_additive');
     }
     if ((name === 'IFNULL' || name === 'COALESCE') && args.length === 2 && isNumber(args[1], v => v === 0)) {
       return measureKind(args[0], quals, distinctArgs);

@@ -429,7 +429,7 @@ describe('handleCsvOverride idempotency', () => {
   it('preserves a refine-assumptions actions block while dropping only the CSV/override actions', async () => {
     const currentBlocks = [
       { type: 'context', elements: [{ type: 'mrkdwn', text: '🔍 *Assumptions:* x' }] },
-      { type: 'actions', elements: [{ type: 'button', action_id: 'refine_assumptions', text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' } }] },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'refine_assumptions', text: { type: 'plain_text', text: 'Change assumptions' } }] },
       { type: 'section', text: { type: 'mrkdwn', text: 'table here' } },
       { type: 'actions', elements: [
         { type: 'button', action_id: 'thumbs_up_trace-abc' },

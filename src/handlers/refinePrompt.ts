@@ -16,7 +16,7 @@ export const REFINE_LOOKUP_FAILED_TEXT =
 /**
  * Ask for a correction to one answer and remember which answer it was (#51),
  * so the user's next reply in the thread refines the answer they clicked, not
- * the newest one. Shared by the "Wrong assumptions?" button and the
+ * the newest one. Shared by the "Change assumptions" button and the
  * "Not what I asked" feedback reason.
  *
  * Returns false, without posting the prompt, when the target can't be saved:
