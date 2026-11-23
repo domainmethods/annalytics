@@ -119,7 +119,8 @@ function sqlCode(sql: string): string {
 }
 
 function measureKeyPattern(measureCol: string, measurePos: number): string {
-  return `(?:\`?(?:\\w+\\.)*\`?${escapeRegExp(measureCol)}\`?|${measurePos})`;
+  // Each qualifier may be backticked on its own (`t`.`n`) or the path as one (`t.n`).
+  return `(?:(?:\`?\\w+\`?\\.)*\`?${escapeRegExp(measureCol)}\`?|${measurePos})`;
 }
 
 /**
@@ -128,9 +129,26 @@ function measureKeyPattern(measureCol: string, measurePos: number): string {
  * lead with the opposite of the question.
  */
 function sortsMeasureAscending(code: string, measureCol: string, measurePos: number): boolean {
-  const outer = /\bORDER\s+BY\s+([^()]*)$/i.exec(code);
-  if (!outer) return false;
-  return new RegExp(`^${measureKeyPattern(measureCol, measurePos)}(?:\\s+ASC\\b|\\s*(?:,|\\bNULLS\\b|\\bLIMIT\\b|;|$))`, 'i').test(outer[1].trim());
+  const keys = outerOrderByKeys(code);
+  if (keys === null) return false;
+  return new RegExp(`^${measureKeyPattern(measureCol, measurePos)}(?:\\s+ASC\\b|\\s*(?:,|\\bNULLS\\b|\\bLIMIT\\b|;|$))`, 'i').test(keys.trim());
+}
+
+/**
+ * The text after the query's last ORDER BY at parenthesis depth 0, or null when there
+ * is none. Depth, not "no parentheses to the end", so a sort key like LOWER(c) after
+ * the measure can't hide the outer ORDER BY.
+ */
+function outerOrderByKeys(code: string): string | null {
+  let depth = 0;
+  let start = -1;
+  const re = /[()]|\bORDER\s+BY\s+/gi;
+  for (let m = re.exec(code); m !== null; m = re.exec(code)) {
+    if (m[0] === '(') depth++;
+    else if (m[0] === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0) start = m.index + m[0].length;
+  }
+  return start < 0 ? null : code.slice(start);
 }
 
 function limitIsSafe(code: string, rowCount: number, measureCol: string, measurePos: number): boolean {

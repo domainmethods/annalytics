@@ -189,9 +189,12 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
   it('an ascending sort on the measure (the question asked for the lowest)', () => {
     const rows = [{ c: 'Organic', bounce_rate: 0.2 }, { c: 'Paid', bounce_rate: 0.5 }, { c: 'Direct', bounce_rate: 0.9 }];
     const cols = ['c', 'bounce_rate'];
-    for (const order of ['ORDER BY bounce_rate', 'ORDER BY bounce_rate ASC', 'ORDER BY 2', 'ORDER BY t.bounce_rate ASC NULLS LAST, c', 'ORDER BY `bounce_rate` asc;']) {
+    for (const order of ['ORDER BY bounce_rate', 'ORDER BY bounce_rate ASC', 'ORDER BY 2', 'ORDER BY t.bounce_rate ASC NULLS LAST, c', 'ORDER BY `bounce_rate` asc;', 'ORDER BY bounce_rate ASC, LOWER(c)', 'ORDER BY `t`.`bounce_rate`']) {
       expect(lead(rows, cols, { sql: `SELECT c, bounce_rate FROM t ${order}` })).toBeNull();
     }
+    // Only the outer ORDER BY counts: an inner sort in a subquery neither silences nor hides it.
+    expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM (SELECT * FROM t ORDER BY bounce_rate DESC) ORDER BY bounce_rate' })).toBeNull();
+    expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM (SELECT * FROM t ORDER BY bounce_rate) ORDER BY bounce_rate DESC, LOWER(c)' })).not.toBeNull();
     // An ascending top-N cut is silent too (the LIMIT rule already requires DESC).
     expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM t ORDER BY bounce_rate LIMIT 3' })).toBeNull();
     // Descending, label-first and unordered queries keep their caption.
