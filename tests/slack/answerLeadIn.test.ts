@@ -124,6 +124,23 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     expect(lead(channelRows, COLS, { sql })).toBeNull();
   });
 
+  it('a LIMIT inside a CTE, even one larger than the final row count', () => {
+    const cte = `WITH s AS (SELECT * FROM t LIMIT 100)
+      SELECT session_default_channel_grouping, COUNT(*) AS session_count FROM s GROUP BY 1`;
+    expect(lead(channelRows, COLS, { sql: cte })).toBeNull();
+    expect(lead(channelRows, COLS, { sql: `${cte} ORDER BY 2 DESC LIMIT 5` })).toBeNull();
+  });
+
+  it('a non-literal LIMIT bound', () => {
+    expect(lead(channelRows, COLS, { sql: `${SQL} LIMIT @n` })).toBeNull();
+    expect(lead(channelRows, COLS, { sql: `${SQL} LIMIT (5)` })).toBeNull();
+  });
+
+  it('an apostrophe in a comment does not hide a later cutting LIMIT', () => {
+    const sql = `SELECT a, b FROM t WHERE c = 'x' -- don't include bots\n GROUP BY 1 LIMIT 5 -- it's capped`;
+    expect(lead(channelRows, COLS, { sql })).toBeNull();
+  });
+
   it('repeated labels (un-aggregated rows)', () => {
     expect(lead([{ c: 'Alice', n: 198 }, { c: 'Alice', n: 42 }], ['c', 'n'])).toBeNull();
   });

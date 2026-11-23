@@ -80,15 +80,24 @@ function escapeRegExp(text: string): string {
  * tiebreaker, the label column) proves nothing, and any OFFSET may skip the top.
  */
 function limitIsSafe(sql: string, rowCount: number, measureCol: string, measurePos: number): boolean {
-  const code = sql
-    .replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, "''")
-    .replace(/--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
+  // One pass, so a quote inside a comment ("-- don't") never opens a fake string
+  // that swallows a real LIMIT/OFFSET, and a comment marker inside a string is inert.
+  const code = sql.replace(
+    /--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,
+    (m) => (m[0] === "'" || m[0] === '"' ? "''" : ' '),
+  );
   if (/\bOFFSET\b/i.test(code)) return false;
-  const cutting = [...code.matchAll(/\bLIMIT\s+(\d+)/gi)].filter((m) => rowCount >= Number(m[1]));
-  if (cutting.length === 0) return true;
-  if (cutting.length > 1) return false;
+  const limits = code.match(/\bLIMIT\b/gi) ?? [];
+  if (limits.length === 0) return true;
+  // A LIMIT inside a CTE or subquery may have cut the rows that were aggregated, so the
+  // final row count proves nothing about it. Only one LIMIT is accepted: the query's
+  // trailing clause with a literal bound (LIMIT @n or LIMIT (5) proves nothing either).
+  if (limits.length > 1) return false;
+  const trailing = /\bLIMIT\s+(\d+)\s*;?\s*$/i.exec(code);
+  if (!trailing) return false;
+  if (rowCount < Number(trailing[1])) return true;
   const key = `(?:\`?(?:\\w+\\.)*\`?${escapeRegExp(measureCol)}\`?|${measurePos})`;
-  const topN = new RegExp(`\\bORDER\\s+BY\\s+${key}\\s+DESC\\b[^()]*?\\bLIMIT\\s+${cutting[0][1]}\\s*;?\\s*$`, 'i');
+  const topN = new RegExp(`\\bORDER\\s+BY\\s+${key}\\s+DESC\\b[^()]*?\\bLIMIT\\s+${trailing[1]}\\s*;?\\s*$`, 'i');
   return topN.test(code);
 }
 
