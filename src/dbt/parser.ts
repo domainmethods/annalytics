@@ -185,6 +185,47 @@ function tagsFor(node: ManifestNode): string[] {
   return stringArray(node.tags);
 }
 
+/**
+ * Collects columns covered by an unconditional, enabled, un-namespaced dbt
+ * `unique` test, keyed by the model node id. Fail closed: any unknown shape is
+ * skipped, since a wrongly-unique column would yield wrong percentages.
+ */
+function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  const isModel = (id: unknown): id is string =>
+    typeof id === 'string' && isRecord(manifestNodes[id]) && manifestNodes[id].resource_type === 'model';
+
+  for (const rawNode of Object.values(manifestNodes)) {
+    if (!isRecord(rawNode) || rawNode.resource_type !== 'test') continue;
+    const meta = rawNode.test_metadata;
+    if (!isRecord(meta) || meta.name !== 'unique') continue;
+    if (meta.namespace !== undefined && meta.namespace !== null && meta.namespace !== '') continue;
+
+    const config = optionalRecord(rawNode.config);
+    if (config.enabled === false) continue;
+    if (typeof config.where === 'string' && config.where.trim() !== '') continue;
+
+    let modelId: string | undefined;
+    if (rawNode.attached_node !== undefined && rawNode.attached_node !== null) {
+      if (!isModel(rawNode.attached_node)) continue;
+      modelId = rawNode.attached_node;
+    } else {
+      const deps = stringArray(optionalRecord(rawNode.depends_on).nodes);
+      const models = deps.filter(isModel);
+      if (deps.length !== 1 || models.length !== 1) continue;
+      modelId = models[0];
+    }
+
+    const column = rawNode.column_name ?? optionalRecord(meta.kwargs).column_name;
+    if (typeof column !== 'string' || column.trim() === '') continue;
+
+    const set = result.get(modelId) ?? new Set<string>();
+    set.add(column.trim().toLowerCase());
+    result.set(modelId, set);
+  }
+  return result;
+}
+
 export function parseDbtArtifacts(
   manifest: DbtArtifact | null | undefined,
   catalog: DbtArtifact | null | undefined,
@@ -198,6 +239,7 @@ export function parseDbtArtifacts(
     options.onWarnings?.(warnings);
   }
 
+  const uniqueByModel = uniqueColumnsByModel(manifestNodes);
   const tables: TableContext[] = [];
 
   for (const [nodeId, rawNode] of Object.entries(manifestNodes)) {
@@ -252,6 +294,9 @@ export function parseDbtArtifacts(
       sampleDDL: generateDDL(qualifiedSchema, name, columns, omittedColumnCount),
       dependsOn: dependsOnFor(node),
       tags: tagsFor(node),
+      ...(uniqueByModel.get(nodeId)?.size
+        ? { uniqueColumns: [...uniqueByModel.get(nodeId)!].sort() }
+        : {}),
     };
 
     tables.push(table);

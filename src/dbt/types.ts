@@ -7,6 +7,8 @@ export interface TableContext {
   sampleDDL: string;          // CREATE TABLE DDL for prompt injection
   dependsOn: string[];        // dbt node IDs this model depends on
   tags: string[];
+  /** Lower-cased columns proven unique by an unconditional dbt `unique` test. Omitted when none. */
+  uniqueColumns?: string[];
 }
 
 export interface ColumnContext {
