@@ -89,22 +89,6 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * True only when no LIMIT/OFFSET in the query can have dropped the real top
- * row. A LIMIT that returned fewer rows than its bound cut nothing. A LIMIT
- * that may have cut is accepted only as the query's final clause, directly
- * after an outer ORDER BY whose FIRST key is the measure (by name or 1-based
- * position) descending — a genuine top-N. A DESC elsewhere (a window, a CTE, a
- * tiebreaker, the label column) proves nothing, and any OFFSET may skip the top.
- * QUALIFY or any window (OVER, including a named WINDOW) also means silence: a ranked filter such as
- * `QUALIFY ROW_NUMBER() OVER (ORDER BY n) <= 3` cuts rows with no LIMIT at all.
- * The Share column has its own, stricter AST rule (composition.ts S5: a LIMIT must have
- * returned fewer rows than its bound); keep the two in step so a caption never treats as
- * whole a result the Share column treats as cut, or the reverse. This one stays a regex
- * on purpose: the caption is always on (no flag), and node-sql-parser rejects some valid
- * BigQuery (L2 is advisory for that reason), so an AST-only check would silence captions
- * on every query the parser can't read.
- */
 /** The SQL with comments blanked and string literals emptied, for clause matching. */
 function sqlCode(sql: string): string {
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string
@@ -154,6 +138,22 @@ function outerOrderByKeys(code: string): string | null {
   return start < 0 ? null : code.slice(start);
 }
 
+/**
+ * True only when no LIMIT/OFFSET in the query can have dropped the real top
+ * row. A LIMIT that returned fewer rows than its bound cut nothing. A LIMIT
+ * that may have cut is accepted only as the query's final clause, directly
+ * after an outer ORDER BY whose FIRST key is the measure (by name or 1-based
+ * position) descending — a genuine top-N. A DESC elsewhere (a window, a CTE, a
+ * tiebreaker, the label column) proves nothing, and any OFFSET may skip the top.
+ * QUALIFY or any window (OVER, including a named WINDOW) also means silence: a ranked filter such as
+ * `QUALIFY ROW_NUMBER() OVER (ORDER BY n) <= 3` cuts rows with no LIMIT at all.
+ * The Share column has its own, stricter AST rule (composition.ts S5: a LIMIT must have
+ * returned fewer rows than its bound); keep the two in step so a caption never treats as
+ * whole a result the Share column treats as cut, or the reverse. This one stays a regex
+ * on purpose: the caption is always on (no flag), and node-sql-parser rejects some valid
+ * BigQuery (L2 is advisory for that reason), so an AST-only check would silence captions
+ * on every query the parser can't read.
+ */
 function limitIsSafe(code: string, rowCount: number, measureCol: string, measurePos: number): boolean {
   if (/\b(?:OFFSET|QUALIFY|OVER|WINDOW)\b/i.test(code)) return false;
   const limits = code.match(/\bLIMIT\b/gi) ?? [];
