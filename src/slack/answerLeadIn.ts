@@ -176,6 +176,12 @@ function emphasize(label: string): string {
   return /[*_~`]/.test(label) ? escaped : `*${escaped}*`;
 }
 
+/**
+ * Slack has no escape for `*`, `_` or `~`, so a pair at a word edge (`*Acme*`, `_x_`) would render bold or
+ * italic instead of the label the table shows. A backtick starts code anywhere. Intraword marks (`a_b`) render literally.
+ */
+const MRKDWN_MARK_RE = /`|(?:^|[^\p{L}\p{N}])[*_~]|[*_~](?:[^\p{L}\p{N}]|$)/u;
+
 export function computeLeadIn(input: LeadInInput): string | null {
   const { rows, columnNames, truncated, sql } = input;
   if (truncated || rows.length < 2 || columnNames.length !== 2) return null;
@@ -216,6 +222,8 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const runnerUpTied = third !== undefined && third.measure.num === second.measure.num;
   // The table shows the first MAX_DISPLAY_ROWS rows; never name a row past them.
   if (first.index >= MAX_DISPLAY_ROWS || (!runnerUpTied && second.index >= MAX_DISPLAY_ROWS)) return null;
+  // A named label that would render as formatting no longer matches its cell: stay silent.
+  if (MRKDWN_MARK_RE.test(first.label) || (!runnerUpTied && MRKDWN_MARK_RE.test(second.label))) return null;
   return runnerUpTied
     ? `${lead}.`
     : `${lead}, followed by ${escapeMrkdwn(second.label)} (${second.measure.text}).`;

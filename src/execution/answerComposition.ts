@@ -6,7 +6,7 @@ export interface CompositionLogger {
 
 export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
 
-/** The `table.column` unique keys (lowercased) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`. */
+/** The `project.dataset.table.column` unique keys (lowercased) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`. */
 export function declaredUniqueKeys(tables: ReadonlyArray<{ name: string; uniqueColumns?: string[] }>): string[] {
   return tables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase()));
 }

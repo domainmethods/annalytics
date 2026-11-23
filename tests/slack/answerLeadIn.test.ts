@@ -74,6 +74,21 @@ describe('computeLeadIn — eligible shapes', () => {
     expect(lead(rows, ['page', 'views'])).toBe('a_b*c &lt;x&gt; &amp; y has the highest views (9), followed by home (1).');
   });
 
+  it.each([
+    ['a bold-pair leader', '*Acme*', 'home'],
+    ['an italic-pair leader', '_promo_', 'home'],
+    ['a bold-pair runner-up', 'home', '*Acme*'],
+    ['a strike-pair runner-up', 'home', '~old~'],
+    ['a backtick label', 'a`b`c', 'home'],
+  ])('stays silent for %s that would render as formatting', (_label, top, next) => {
+    expect(lead([{ page: top, views: 9 }, { page: next, views: 1 }], ['page', 'views'])).toBeNull();
+  });
+
+  it('keeps the caption for intraword underscores, which render literally', () => {
+    expect(lead([{ page: 'spring_sale_2026', views: 9 }, { page: 'home', views: 1 }], ['page', 'views']))
+      .toBe('spring_sale_2026 has the highest views (9), followed by home (1).');
+  });
+
   it('allows a LIMIT when the query orders descending (a genuine top-N)', () => {
     expect(lead(channelRows, COLS, { sql: `${SQL} LIMIT 5` })).toMatch(/^\*Direct\*/);
   });
