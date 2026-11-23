@@ -6,6 +6,7 @@ import { isTotalLikeLabel } from '../execution/totalLike.js';
 import { boundedText, escapeMrkdwn, MAX_DISPLAY_ROWS } from './limits.js';
 
 /**
+ * @module
  * A one-line, answer-first sentence above a result table, computed in code
  * from the result rows (never by an LLM), so every number in it is a cell the
  * reader can find in the table below.
@@ -13,12 +14,13 @@ import { boundedText, escapeMrkdwn, MAX_DISPLAY_ROWS } from './limits.js';
  * It makes a RANK claim ("X has the highest <measure> (n), followed by
  * Y (m)") and adds a share only from a `verifyComposition` proof (a provably
  * additive measure over an uncut denominator, which a result set alone cannot
- * prove). When it
- * cannot prove even the ranking — a cut result, a tie at the top, a time
- * series, an ambiguous column shape — it says nothing, because a wrong
- * sentence is worse than none. It also stays silent when a row it would name
- * sits past the displayed rows, so every number it quotes is on screen.
+ * prove). When it cannot prove even the ranking — a cut result, a tie at the
+ * top, a time series, an ambiguous column shape — it says nothing, because a
+ * wrong sentence is worse than none. It also stays silent when a row it would
+ * name sits past the displayed rows, so every number it quotes is on screen.
  */
+
+/** What `computeLeadIn` reads: the full result, its schema and the executed SQL. */
 export interface LeadInInput {
   /** Every returned row (not just the rows displayed), so the ranking covers the whole result. */
   rows: Record<string, unknown>[];
