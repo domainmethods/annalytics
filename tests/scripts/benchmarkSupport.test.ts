@@ -628,9 +628,10 @@ describe('corpusHashMatches', () => {
     expect(corpusHashMatches('[{"id":"other"}]', corpusHash)).toBe(false);
   });
 
-  it('accepts runs with no recorded hash (nothing to verify against)', () => {
-    expect(corpusHashMatches(corpusRaw, undefined)).toBe(true);
-    expect(corpusHashMatches(corpusRaw, null)).toBe(true);
+  it('rejects runs with no recorded hash', () => {
+    expect(corpusHashMatches(corpusRaw, undefined)).toBe(false);
+    expect(corpusHashMatches(corpusRaw, null)).toBe(false);
+    expect(corpusHashMatches(corpusRaw, '')).toBe(false);
   });
 });
 
