@@ -143,14 +143,19 @@ function fromQualifiers(s: Node): Set<string> {
 /**
  * Every name an expression references: column names, plus table qualifiers
  * other than `ownQualifiers` (the enclosing select's FROM names), so a
- * struct-field access like `user.channel` stays tracked. null marks an
- * unrecognised ref.
+ * struct-field access like `user.channel` stays tracked. null marks a
+ * reference that may carry any column, which every caller fails closed on:
+ * an unrecognised ref, a `*` inside an expression (`STRUCT(s.*)`), or an
+ * unqualified reference to the select's own FROM item (`s`, `sessions`, a
+ * derived alias `t`), which in BigQuery is the whole row as a STRUCT.
  */
-function referencedNames(n: unknown, ownQualifiers: Set<string> = new Set()): (string | null)[] {
+function referencedNames(n: unknown, ownQualifiers: Set<string>): (string | null)[] {
   const out: (string | null)[] = [];
   some(n, o => {
     if (o.type === 'column_ref') {
-      out.push(refName(o)?.toLowerCase() ?? null);
+      const name = refName(o)?.toLowerCase() ?? null;
+      const wholeRow = name === '*' || (isEmpty(o.table) && name !== null && ownQualifiers.has(name));
+      out.push(wholeRow ? null : name);
       if (typeof o.table === 'string') {
         if (!ownQualifiers.has(o.table.toLowerCase())) out.push(o.table.toLowerCase());
       } else if (!isEmpty(o.table)) out.push(null);
@@ -291,20 +296,8 @@ function rowPreservingChain(s: Node, scope: Cte[]): Node[] {
   return [s, ...resolveSource(s.from, scope)];
 }
 
-/**
- * Names an expression references; an unrecognised reference fails closed. So
- * does an unqualified reference to the select's own FROM item (`s`,
- * `sessions`, a derived alias `t`): in BigQuery that is the whole row as a
- * STRUCT, so it carries every column, the dimension included.
- */
+/** Names an expression references; any null from referencedNames (see there) fails closed. */
 function namesOf(n: unknown, ownQualifiers: Set<string>): string[] {
-  some(n, o => {
-    if (o.type === 'column_ref' && isEmpty(o.table)) {
-      const name = refName(o);
-      if (name === null || ownQualifiers.has(name.toLowerCase())) fail('where_on_dimension');
-    }
-    return false;
-  });
   return referencedNames(n, ownQualifiers).map(x => x ?? fail('where_on_dimension'));
 }
 

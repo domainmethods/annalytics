@@ -472,6 +472,23 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     expectReject(sql, result(three), 'where_on_dimension');
   });
 
+  it.each([
+    ['C3-1', `SELECT JSON_VALUE(TO_JSON_STRING(s), '$.channel') AS ch, COUNT(*) AS n FROM ${T} s WHERE channel != 'Direct' GROUP BY ch`],
+    ['C3-2', `SELECT JSON_VALUE(TO_JSON_STRING(sessions), '$.channel') AS ch, COUNT(*) AS n FROM ${T} WHERE channel != 'Direct' GROUP BY ch`],
+    ['C3-3', `SELECT JSON_VALUE(TO_JSON_STRING(t), '$.channel') AS ch, COUNT(*) AS n FROM (SELECT channel, d FROM ${T}) t WHERE channel = 'Direct' GROUP BY ch`],
+    ['C3-4', `SELECT JSON_VALUE(TO_JSON_STRING(t), '$.channel') AS ch, COUNT(*) AS n FROM (SELECT channel, d FROM ${T} WHERE channel = 'Direct') t GROUP BY ch`],
+    ['C3-5', `SELECT JSON_VALUE(TO_JSON_STRING(STRUCT(s.*)), '$.channel') AS ch, COUNT(*) AS n FROM ${T} s WHERE channel != 'Direct' GROUP BY ch`],
+  ])('S8 review probe %s: a whole-row reference in the dimension expression', (_id, sql) => {
+    expectReject(sql, result(three), 'where_on_dimension');
+  });
+
+  it('S4 review probe C3-S4: a whole-row reference inside SUM fails closed', () => {
+    expectReject(
+      `SELECT ch, SUM(CAST(JSON_VALUE(TO_JSON_STRING(s), '$.bounce_rate') AS INT64)) AS n FROM ${T} s GROUP BY ch`,
+      result(three), 'sum_non_additive_column',
+    );
+  });
+
   it('S8 review probe R2a: a WHERE on a second alias of the dimension\'s base column', () => {
     expectReject(`${R2A_CTE} WHERE b != 'Direct' GROUP BY a`, result(three, { names: ['a', 'n'] }), 'where_on_dimension');
   });
