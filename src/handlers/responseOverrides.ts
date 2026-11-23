@@ -128,7 +128,7 @@ export async function handleTableOverride(
     const composition = overrideComposition(ctx, result, config, 'override_table');
     const blocks: KnownBlock[] = [
       ...verificationCaveatBlocks(ctx),
-      ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
+      // Same order as the original answer: caption, table, then assumptions.
       ...buildAnswerCaptionBlocks({
         rows: result.rows,
         columnNames: result.columnNames,
@@ -140,6 +140,7 @@ export async function handleTableOverride(
       }),
       ...buildTableBlocks(displayRows, result.columnNames, composition),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
+      ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
     ];
 

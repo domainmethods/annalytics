@@ -156,6 +156,9 @@ describe('override handlers preserve assumptions', () => {
     const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
     expect(updated).toContain('order_status = completed');
     expect(updated).toContain('refine_assumptions');
+    // Same order as the original answer: the table leads, assumptions follow it.
+    expect(updated.indexOf('anna_view_table')).toBeGreaterThan(-1);
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_table'));
   });
 
   it('preserves assumptions + refine button when re-rendering as a summary', async () => {

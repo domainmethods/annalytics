@@ -137,6 +137,12 @@ describe('verifyComposition: eligible (§6 A-rows)', () => {
     expect(thirds.topIndex).toBeNull();
   });
 
+  it('topIndex is null when distinct measures round to the same share (fails safe; do not compare raw values)', () => {
+    const v = expectEligible(`SELECT ch, COUNT(*) AS n FROM ${T} GROUP BY ch`, result([['a', 100000], ['b', 100001], ['c', 1]]));
+    expect(v.shares.map(s => s.basisPoints).slice(0, 2)).toEqual([5000, 5000]);
+    expect(v.topIndex).toBeNull();
+  });
+
   it('A9: INT64 above 2^53 as a string gives an exact BigInt total', () => {
     const v = expectEligible(
       `SELECT ch, SUM(x) AS n FROM ${T} GROUP BY ch`,

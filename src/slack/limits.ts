@@ -21,8 +21,9 @@ export function boundedPreview(text: string): string {
 
 /**
  * Bound free text to one section, cutting at a word boundary when possible.
- * Callers bound already-escaped text (escaping can grow it), so a cut never
+ * Escaped text must be bounded after escaping (escaping can grow it), so a cut never
  * leaves half an entity: a trailing partial `&amp;` / `&lt;` / `&gt;` is dropped.
+ * Unescaped callers lose a literal trailing `&` at the cut, which is harmless.
  */
 export function boundedText(text: string, limit = SECTION_TEXT_LIMIT): string {
   if (text.length <= limit) return text;
