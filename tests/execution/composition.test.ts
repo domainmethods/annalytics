@@ -693,7 +693,8 @@ describe('verifyComposition v1.1: COUNT(DISTINCT unique key)', () => {
     expect(expectEligibleK(CD('`proj.ds.Sessions`'), result(three), ['proj.ds.Sessions.session_key']).usedUniqueKeys)
       .toEqual(['proj.ds.Sessions.session_key']);
     expectRejectK(CD('proj.ds.Sessions'), result(three), [SK], 'count_distinct');
-    expectEligibleK(CD('proj.ds.Sessions'), result(three), ['proj.ds.Sessions.session_key']);
+    expect(expectEligibleK(CD('proj.ds.Sessions'), result(three), ['proj.ds.Sessions.session_key']).usedUniqueKeys)
+      .toEqual(['proj.ds.Sessions.session_key']);
   });
 
   it('U1: an unquoted 3-part name and an own-qualified column match', () => {
@@ -840,7 +841,8 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
   it.each(['proj.rec.arr', '`proj.rec.arr`', 'PROJ.rec.arr'])('U8: a correlated array path %s (head = an earlier alias) gives row_source', (path) => {
     expectRejectK(
       `SELECT x.label, COUNT(*) n FROM ${F} proj LEFT JOIN ${path} x ON proj.k = x.k GROUP BY x.label`,
-      lab(), ['proj.rec.arr.k'], 'row_source',
+      // The key matches the path's own casing, so only the (case-insensitive) alias check can reject it.
+      lab(), [`${path.replace(/`/g, '')}.k`], 'row_source',
     );
   });
 
