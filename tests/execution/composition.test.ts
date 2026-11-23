@@ -29,6 +29,7 @@ function result(
   return r;
 }
 
+const R2A_CTE = `WITH s AS (SELECT channel AS a, channel AS b FROM ${T}) SELECT a, COUNT(*) AS n FROM s`;
 const three: Pair[] = [['Direct', 198], ['Organic', 120], ['Unassigned', 42]];
 
 function verify(sql: string, res: QueryResult, maxDisplayRows = 20): CompositionVerdict {
@@ -202,6 +203,10 @@ describe('verifyComposition: eligible (§6 A-rows)', () => {
     ['derived alias', `SELECT t.ch, COUNT(*) AS n FROM (SELECT LOWER(channel) AS ch, d FROM ${T}) t WHERE t.d >= '2024-01-01' GROUP BY t.ch`],
   ])('S8: a WHERE qualified by the select\'s own FROM %s stays eligible', (_id, sql) => {
     expectEligible(sql, result(three));
+  });
+
+  it('S8: the R2a CTE without a WHERE is eligible (control for the R2a probe)', () => {
+    expectEligible(`${R2A_CTE} GROUP BY a`, result(three, { names: ['a', 'n'] }));
   });
 });
 
@@ -451,10 +456,7 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
   });
 
   it('S8 review probe R2a: a WHERE on a second alias of the dimension\'s base column', () => {
-    const res = result(three, { names: ['a', 'n'] });
-    const cte = `WITH s AS (SELECT channel AS a, channel AS b FROM ${T}) SELECT a, COUNT(*) AS n FROM s`;
-    expectEligible(`${cte} GROUP BY a`, res);
-    expectReject(`${cte} WHERE b != 'Direct' GROUP BY a`, res, 'where_on_dimension');
+    expectReject(`${R2A_CTE} WHERE b != 'Direct' GROUP BY a`, result(three, { names: ['a', 'n'] }), 'where_on_dimension');
   });
 
   it('S8: a qualifier that is not the FROM item (struct access) stays tracked', () => {
