@@ -901,13 +901,14 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   };
   let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
   for (const { node, items } of corpora) {
-    const runner = checkpoint.wrap(node, createTemplateRunner(node, items, env));
+    const raw = createTemplateRunner(node, items, env);
+    const runner = checkpoint.wrap(node, raw);
     const runCorpusOnce = async () => {
       const run = await runner();
       recordFailures(node, profileOf(node), run);
       return run;
     };
-    if (node === 'sqlGenerator') sqlRunner = checkpoint.wrap('paired-sqlGenerator', createTemplateRunner(node, items, env));
+    if (node === 'sqlGenerator') sqlRunner = checkpoint.wrap('paired-sqlGenerator', raw);
     const result = await runSweep({
       nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
     });
