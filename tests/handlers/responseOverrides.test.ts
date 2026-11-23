@@ -611,6 +611,18 @@ describe('override re-renders hide the button for the view on screen', () => {
     expect(updated).toContain('override_summary_');
     expect(updated).not.toContain('override_csv_');
   });
+
+  it('CSV export keeps the current view: no Summary button under a tagged summary', async () => {
+    const currentBlocks = [
+      { type: 'section', block_id: 'anna_view_summary', text: { type: 'mrkdwn', text: 'Direct leads.' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).not.toContain('override_summary_');
+    expect(updated).toContain('override_table_');
+    expect(updated).not.toContain('override_csv_');
+  });
 });
 
 describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () => {

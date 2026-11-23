@@ -60,6 +60,7 @@ function readMeasure(val: unknown): Measure | null {
     return null;
   }
   if (!NUMERIC_TEXT.test(text)) return null;
+  // Ranking uses doubles: INT64 values above 2^53 that differ only in low digits compare equal, which reads as a tie (silence).
   const num = Number(text);
   return Number.isFinite(num) ? { text, num } : null;
 }

@@ -1,3 +1,5 @@
+// The proof reads node-sql-parser's AST shape. onlyKeys() rejects unknown keys, but a parser bump that maps a new
+// construct onto an allowed key could widen what passes: re-run tests/execution/composition.test.ts on any bump.
 import { Parser } from 'node-sql-parser';
 import type { QueryResult } from '../types.js';
 import { computeShares, type ShareCell } from './shares.js';

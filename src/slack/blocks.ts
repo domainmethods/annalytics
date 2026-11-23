@@ -30,7 +30,7 @@ export function formatValue(val: unknown): string {
 // separator and join with "; " so the list reads as one clause sequence.
 export function formatAssumptions(assumptions: string[]): string {
   return assumptions
-    // The lookbehind keeps an abbreviation's final period ("the U.S."); a trailing ; or , always goes.
+    // The lookbehind keeps a capital-letter abbreviation's final period ("the U.S."; "etc." still loses it); a trailing ; or , always goes.
     .map((a) => a.trim().replace(/(?:(?<!\.[A-Z])\.|[;,])+$/, '').trim())
     .filter((a) => a.length > 0)
     .join('; ');
