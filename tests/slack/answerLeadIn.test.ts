@@ -244,9 +244,9 @@ describe('computeLeadIn — review hardening', () => {
 
   it('accepts numeric measure types, including legacy aliases', () => {
     for (const t of ['INT64', 'INTEGER', 'NUMERIC', 'FLOAT', 'BIGNUMERIC']) {
-      expect(leadInWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', t] })).not.toBeNull();
+      expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', t] })).not.toBeNull();
     }
-    expect(leadInWithInferredTypes({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['DATE', 'INT64'] })).toBeNull();
+    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['DATE', 'INT64'] })).toBeNull();
   });
 
   it('does not let a quote inside a backticked identifier hide an inner LIMIT', () => {
