@@ -2,6 +2,7 @@ import type { KnownBlock, SectionBlock } from '@slack/types';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { EligibleComposition } from '../execution/composition.js';
 import { isNumericColumnType } from '../execution/shares.js';
+import { isTotalLikeLabel } from '../execution/totalLike.js';
 import { boundedText, escapeMrkdwn, MAX_DISPLAY_ROWS } from './limits.js';
 
 /**
@@ -200,6 +201,8 @@ export function computeLeadIn(input: LeadInInput): string | null {
     .sort((a, b) => b.measure.num - a.measure.num);
   // Repeated labels mean un-aggregated rows: "Alice, followed by Alice" is not a ranking.
   if (new Set(ranked.map((r) => r.label)).size !== ranked.length) return null;
+  // A grand-total row (UNION ALL SELECT 'Total', ...) is the whole, not a contender.
+  if (ranked.some((r) => isTotalLikeLabel(r.label))) return null;
   const [first, second, third] = ranked;
   if (first.measure.num === second.measure.num) return null;
 

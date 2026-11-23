@@ -206,6 +206,16 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     expect(lead(rows, cols, { sql: "SELECT c, bounce_rate FROM t WHERE c != 'ORDER BY bounce_rate' -- ORDER BY bounce_rate" })).not.toBeNull();
   });
 
+  it('a grand-total row among the labels', () => {
+    for (const total of ['Total', 'grand total', 'All', ' Overall ', '(all)']) {
+      const rows = [{ c: total, revenue: 1000 }, { c: 'Paid', revenue: 600 }, { c: 'Organic', revenue: 400 }];
+      expect(lead(rows, ['c', 'revenue'], { sql: "SELECT c, revenue FROM t UNION ALL SELECT 'Total', SUM(revenue) FROM t" })).toBeNull();
+    }
+    // A label that only contains the word is still a category.
+    const rows = [{ c: 'Total Wine', revenue: 1000 }, { c: 'Paid', revenue: 600 }];
+    expect(lead(rows, ['c', 'revenue'])).toBe('*Total Wine* has the highest revenue (1000), followed by Paid (600).');
+  });
+
   it('a STRING period label (a time series has no winner)', () => {
     for (const labels of [['January', 'February'], ['Jan 2026', 'Feb 2026'], ['Q1 2026', 'Q2 2026'], ['2026-Q1', '2026-Q2'], ['2026-W03', '2026-W04'], ['H1', 'H2'], ['FY2025', 'FY2026'], ['Monday', 'Tuesday'], ['Week 3', 'Week 4'], ['Sept.', 'Oct.']]) {
       const rows = [{ p: labels[0], n: 9 }, { p: labels[1], n: 3 }];

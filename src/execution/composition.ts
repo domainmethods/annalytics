@@ -1,6 +1,7 @@
 // The proof reads node-sql-parser's AST shape. onlyKeys() rejects unknown keys, but a parser bump that maps a new
 // construct onto an allowed key could widen what passes: re-run tests/execution/composition.test.ts on any bump.
 import { Parser } from 'node-sql-parser';
+import { isTotalLikeLabel } from './totalLike.js';
 import type { QueryResult } from '../types.js';
 import { computeShares, type ShareCell } from './shares.js';
 
@@ -57,7 +58,6 @@ const fail = (reason: CompositionRejectReason): never => {
 const DIMENSION_TYPES = new Set(['STRING', 'BOOL']);
 const MEASURE_TYPES = new Set(['INT64', 'NUMERIC', 'BIGNUMERIC', 'FLOAT64']);
 const LEGACY_TYPES: Record<string, string> = { INTEGER: 'INT64', FLOAT: 'FLOAT64', BOOLEAN: 'BOOL' };
-const TOTAL_LIKE_RE = /^\s*(total|grand total|all|overall|\(all\)|sum)\s*$/i;
 const NON_ADDITIVE_COLUMN_RE = /(rate|ratio|pct|percent|share|avg|average|mean|median|p\d{2}|_per_|users?|visitors?|unique)/i;
 const CAST_TARGETS = new Set(['INT64', 'NUMERIC', 'FLOAT64']);
 /** BigQuery built-in aggregate (or grouping) function names that parse as plain `function` nodes. */
@@ -641,7 +641,7 @@ function verify(input: CompositionInput): CompositionVerdict {
   const measure = names[measIdx];
 
   // R5
-  if (rows.some(r => typeof r[dimension] === 'string' && TOTAL_LIKE_RE.test(r[dimension] as string))) fail('total_like_row');
+  if (rows.some(r => typeof r[dimension] === 'string' && isTotalLikeLabel(r[dimension] as string))) fail('total_like_row');
 
   // S0
   let ast: unknown;
