@@ -172,7 +172,7 @@ it.each([
 ])('aborts an SDK $status in $phase after retries, without a report write, and resumes', async ({ status, failedCall, previous }) => {
   vi.stubEnv('GEMINI_API_KEY', 'test-key');
   vi.stubEnv('NODE_PROFILE_OVERRIDES', previous);
-  vi.spyOn(console, 'log').mockImplementation(() => {});
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   const node = 'slackIntake';
   const items = ['Count the orders.', 'Count the users.'].map((text, i) => ({
     id: String(i), category: 'simple', inputHash: hashItemInput(text), agreement: { members: ['test'] },
@@ -224,19 +224,23 @@ it.each([
     for (const name of fullReport) expect(await realFs.readFile(join(dir, name), 'utf8')).toBe('previous report');
 
     // A --resume run after the outage replays the checkpointed calibration (2 passes x 2 items)
-    // instead of re-requesting it, writes the report, and discards the checkpoint.
+    // instead of re-requesting it, writes the report, and discards the checkpoint. (Compared
+    // directly, not against a fresh run's call count: Stage 1 ties break on wall-clock p95, so
+    // a fresh run can legitimately walk a different Stage 2 ladder.)
     outage = false;
     profiles.length = 0;
+    log.mockClear();
     await main(['--corpus', 'template', '--node', node, '--resume'], dir);
-    const resumedCalls = profiles.length;
-    profiles.length = 0;
-    const fresh = await mkdtemp(join(tmpdir(), 'template-provider-fresh-'));
-    try {
-      await main(['--corpus', 'template', '--node', node], fresh);
-    } finally {
-      await rm(fresh, { recursive: true, force: true });
+    const logged = log.mock.calls.map(args => String(args[0]));
+    if (failedCall > 1) {
+      // Calibration runs at the baseline (no slackIntake override); every resumed call is a sweep point.
+      expect(profiles.length).toBeGreaterThan(0);
+      expect(profiles.every(profile => profile?.includes('"slackIntake"'))).toBe(true);
+      expect(logged).toContain('(2 passes replayed from checkpoint)');
+    } else {
+      expect(profiles.slice(0, 4).every(profile => profile === previous)).toBe(true);
+      expect(logged.some(line => line.includes('replayed from checkpoint'))).toBe(false);
     }
-    expect(resumedCalls).toBe(profiles.length - (failedCall > 1 ? 4 : 0));
     expect(await readdir(dir)).not.toContain(checkpoint);
     expect(await readdir(dir)).toEqual(expect.arrayContaining([`${date}-model-refresh-partial-slackIntake.json`]));
   } finally {
