@@ -289,3 +289,49 @@ describe('assumption lines with nothing left after cleaning', () => {
     expect(JSON.stringify(buildZeroRowBlocks([' ', ',']))).not.toContain('Filters applied');
   });
 });
+
+describe('buildTableBlocks — composition', () => {
+  const comp = (over: Record<string, unknown> = {}) => ({
+    eligible: true as const, dimension: 'ch', measure: 'n', measureKind: 'count' as const,
+    total: '360', shares: [{ basisPoints: 5000, label: '50%' }, { basisPoints: 5000, label: '50%' }],
+    topIndex: null, usedUniqueKeys: [], ...over,
+  });
+  const txt = (blocks: any[]) => blocks[0].rows.map((r: any[]) => r.map((c) => c.text));
+
+  it('adds a Share column and Total row', () => {
+    const rows = [{ ch: 'A', n: 180 }, { ch: 'B', n: 180 }];
+    expect(txt(buildTableBlocks(rows, ['ch', 'n'], comp()) as any[])).toEqual([
+      ['ch', 'n', 'Share'], ['A', '180', '50%'], ['B', '180', '50%'], ['Total', '360', '100%'],
+    ]);
+  });
+
+  it('places Total in the dimension column wherever it is', () => {
+    const rows = [{ ch: 'A', n: 180 }, { ch: 'B', n: 180 }];
+    expect(txt(buildTableBlocks(rows, ['n', 'ch'], comp()) as any[]).at(-1)).toEqual(['360', 'Total', '100%']);
+  });
+
+  it('renders a NULL dimension as an em dash', () => {
+    const rows = [{ ch: null, n: 180 }, { ch: 'B', n: 180 }];
+    expect(txt(buildTableBlocks(rows, ['ch', 'n'], comp()) as any[])[1]).toEqual(['—', '180', '50%']);
+  });
+
+  it('code-block fallback keeps Share and Total', () => {
+    const rows = Array.from({ length: 101 }, (_, i) => ({ ch: `c${i}`, n: 1 }));
+    const shares = rows.map(() => ({ basisPoints: 99, label: '<1%' }));
+    const out = buildTableBlocks(rows, ['ch', 'n'], comp({ shares, total: '101' })) as any[];
+    expect(out[0].type).toBe('section');
+    expect(out[0].text.text).toContain('Share');
+    expect(out[0].text.text).toContain('Total');
+  });
+
+  it('is unchanged without a composition', () => {
+    const rows = [{ ch: 'A', n: 180 }, { ch: null, n: 180 }];
+    expect(txt(buildTableBlocks(rows, ['ch', 'n']) as any[])).toEqual([['ch', 'n'], ['A', '180'], ['—', '180']]);
+    expect(buildTableBlocks(rows, ['ch', 'n'], undefined)).toEqual(buildTableBlocks(rows, ['ch', 'n']));
+  });
+
+  it('fails safe to no composition when shares do not align with rows', () => {
+    const rows = [{ ch: 'A', n: 180 }];
+    expect(buildTableBlocks(rows, ['ch', 'n'], comp())).toEqual(buildTableBlocks(rows, ['ch', 'n']));
+  });
+});

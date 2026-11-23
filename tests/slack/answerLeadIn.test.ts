@@ -220,3 +220,39 @@ describe('buildAnswerCaptionBlocks', () => {
     expect(buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: '   ' })).toEqual([]);
   });
 });
+
+describe('leader share', () => {
+  const withShare = (rows: Record<string, unknown>[], rowIndex: number, opts: { truncated?: boolean } = {}) =>
+    computeLeadIn({ rows, columnNames: COLS, truncated: opts.truncated ?? false, sql: SQL, leaderShare: { label: '79%', rowIndex } });
+
+  it('inserts the share inside the leader parentheses', () => {
+    expect(withShare(channelRows, 0)).toBe('*Direct* has the highest session count (198, 79% of the total), followed by Unassigned (42).');
+  });
+
+  it('uses the original row index, not the ranked one', () => {
+    const shuffled = [channelRows[2], channelRows[0], channelRows[4], channelRows[1]];
+    expect(withShare(shuffled, 1)).toContain('(198, 79% of the total)');
+    expect(withShare(shuffled, 0)).toBe('*Direct* has the highest session count (198), followed by Unassigned (42).');
+  });
+
+  it('adds nothing when rowIndex is not the leader', () => {
+    expect(withShare(channelRows, 1)).toBe('*Direct* has the highest session count (198), followed by Unassigned (42).');
+  });
+
+  it('never adds a share to the headline fallback', () => {
+    const blocks = buildAnswerCaptionBlocks({
+      rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions by channel',
+      composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250', shares: [], topIndex: 0, usedUniqueKeys: [] },
+    }) as any[];
+    expect(blocks[0].text.text).toBe('Sessions by channel');
+  });
+
+  it('derives the share from composition.topIndex', () => {
+    const blocks = buildAnswerCaptionBlocks({
+      rows: channelRows, columnNames: COLS, truncated: false, sql: SQL,
+      composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
+        shares: channelRows.map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
+    }) as any[];
+    expect(blocks[0].text.text).toContain('(198, 79% of the total)');
+  });
+});

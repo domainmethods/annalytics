@@ -1,5 +1,6 @@
 import type { KnownBlock, SectionBlock } from '@slack/types';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
+import type { EligibleComposition } from '../execution/composition.js';
 import { boundedText } from './limits.js';
 
 /**
@@ -7,9 +8,10 @@ import { boundedText } from './limits.js';
  * from the result rows (never by an LLM), so every number in it is a cell the
  * reader can find in the table below.
  *
- * It makes a RANK-ONLY claim ("X has the highest <measure> (n), followed by
- * Y (m)") and never a share or total: those need a provably additive measure
- * and an uncut denominator, which a result set alone cannot prove. When it
+ * It makes a RANK claim ("X has the highest <measure> (n), followed by
+ * Y (m)") and adds a share only from a `verifyComposition` proof (a provably
+ * additive measure over an uncut denominator, which a result set alone cannot
+ * prove). When it
  * cannot prove even the ranking — a cut result, a tie at the top, a time
  * series, an ambiguous column shape — it says nothing, because a wrong
  * sentence is worse than none.
@@ -22,6 +24,8 @@ export interface LeadInInput {
   truncated: boolean;
   /** The executed SQL, checked for a LIMIT that may have cut rows. */
   sql: string;
+  /** The leader's proven share label and its index in the ORIGINAL row order. */
+  leaderShare?: { label: string; rowIndex: number };
 }
 
 const MAX_LABEL_LENGTH = 200;
@@ -121,7 +125,7 @@ export function computeLeadIn(input: LeadInInput): string | null {
   if (!limitIsSafe(sql, rows.length, measureCol[0], columnNames.indexOf(measureCol[0]) + 1)) return null;
 
   const ranked = rows
-    .map((r) => ({ label: readLabel(r[labelCol[0]]) as string, measure: readMeasure(r[measureCol[0]]) as Measure }))
+    .map((r, index) => ({ index, label: readLabel(r[labelCol[0]]) as string, measure: readMeasure(r[measureCol[0]]) as Measure }))
     .sort((a, b) => b.measure.num - a.measure.num);
   // Repeated labels mean un-aggregated rows: "Alice, followed by Alice" is not a ranking.
   if (new Set(ranked.map((r) => r.label)).size !== ranked.length) return null;
@@ -129,7 +133,10 @@ export function computeLeadIn(input: LeadInInput): string | null {
   if (first.measure.num === second.measure.num) return null;
 
   const measureName = escapeMrkdwn(measureCol[0].replace(/_/g, ' ').trim().toLowerCase());
-  const lead = `${emphasize(first.label)} has the highest ${measureName} (${first.measure.text})`;
+  const share = input.leaderShare && input.leaderShare.rowIndex === first.index
+    ? `, ${escapeMrkdwn(input.leaderShare.label)} of the total`
+    : '';
+  const lead = `${emphasize(first.label)} has the highest ${measureName} (${first.measure.text}${share})`;
   const runnerUpTied = third !== undefined && third.measure.num === second.measure.num;
   return runnerUpTied
     ? `${lead}.`
@@ -141,8 +148,12 @@ export function computeLeadIn(input: LeadInInput): string | null {
  * otherwise the generator's one-line headline (what the table represents), else
  * nothing.
  */
-export function buildAnswerCaptionBlocks(input: LeadInInput & { headline?: string }): KnownBlock[] {
-  const text = computeLeadIn(input) ?? input.headline?.trim();
+export function buildAnswerCaptionBlocks(input: LeadInInput & { headline?: string; composition?: EligibleComposition }): KnownBlock[] {
+  const { composition, ...leadInput } = input;
+  const leaderShare = leadInput.leaderShare ?? (composition && composition.topIndex !== null && composition.shares[composition.topIndex]
+    ? { label: composition.shares[composition.topIndex].label, rowIndex: composition.topIndex }
+    : undefined);
+  const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) }) ?? input.headline?.trim();
   if (!text) return [];
   return [{ type: 'section', text: { type: 'mrkdwn', text: boundedText(text) } } as SectionBlock];
 }

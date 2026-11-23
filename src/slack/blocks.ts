@@ -1,5 +1,6 @@
 import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
+import type { EligibleComposition } from '../execution/composition.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
 /** Display for an empty single-value answer. */
@@ -90,42 +91,57 @@ const NATIVE_TABLE_MAX_COLS = TABLE_COLUMN_LIMIT; // Slack native table block ha
 export function buildTableBlocks(
   rows: Record<string, unknown>[],
   columnNames: string[],
+  composition?: EligibleComposition,
 ): KnownBlock[] {
+  // Fail safe: shares that don't line up with the rows would misattribute a
+  // percentage, so render the plain Phase 1 table instead.
+  const usable =
+    composition !== undefined &&
+    composition.shares.length === rows.length &&
+    columnNames.includes(composition.dimension) &&
+    columnNames.includes(composition.measure)
+      ? composition
+      : undefined;
+  const header = usable ? [...columnNames, 'Share'] : columnNames;
+  const body = rows.map((row, i) => {
+    const cells = columnNames.map((col) => {
+      const text = formatValue(row[col]);
+      return usable && col === usable.dimension && text.length === 0 ? EMPTY_VALUE : text;
+    });
+    return usable ? [...cells, usable.shares[i].label] : cells;
+  });
+  if (usable) {
+    body.push([
+      ...columnNames.map((col) => (col === usable.dimension ? 'Total' : col === usable.measure ? usable.total : '')),
+      '100%',
+    ]);
+  }
+  const textRows = [header, ...body];
   // Slack's native table caps at 20 columns; wide results degrade to the legacy
   // monospace renderer rather than dropping columns.
-  if (columnNames.length > NATIVE_TABLE_MAX_COLS) {
-    return buildCodeBlockTable(rows, columnNames);
-  }
-  const cell = (text: string): RawTextElement => ({
-    type: 'raw_text',
-    // raw_text requires length >= 1; empty cells render as an em dash.
-    text: text.length > 0 ? text : '—',
-  });
-  const header = columnNames.map((c) => cell(c));
-  const dataRows = rows.map((row) => columnNames.map((col) => cell(formatValue(row[col]))));
-  const tableRows = [header, ...dataRows];
+  if (header.length > NATIVE_TABLE_MAX_COLS) return buildCodeBlockTable(textRows);
+  const tableRows = textRows.map((r) =>
+    r.map((text): RawTextElement => ({
+      type: 'raw_text',
+      // raw_text requires length >= 1; empty cells render as an em dash.
+      text: text.length > 0 ? text : '—',
+    })),
+  );
   // Oversized tables fall back to the bounded text preview (which points to CSV)
   // rather than silently dropping rows or cells from the native table.
   const tableChars = tableRows.flat().reduce((sum, c) => sum + c.text.length, 0);
-  if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(rows, columnNames);
+  if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(textRows);
   return [{ type: 'table', block_id: RESULT_TABLE_BLOCK_ID, rows: tableRows } satisfies TableBlock];
 }
 
 // Legacy monospace renderer: the fallback for >20 columns and for tables over
-// Slack's native row or character limits.
-function buildCodeBlockTable(
-  rows: Record<string, unknown>[],
-  columnNames: string[],
-): KnownBlock[] {
-  const widths = columnNames.map((col) =>
-    Math.max(col.length, ...rows.map((r) => formatValue(r[col]).length)),
-  );
-  const header = columnNames.map((c, i) => c.padEnd(widths[i])).join(' | ');
+// Slack's native row or character limits. Takes header + body as text cells.
+function buildCodeBlockTable(textRows: string[][]): KnownBlock[] {
+  const [header, ...body] = textRows;
+  const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i].length)));
+  const line = (r: string[]) => r.map((c, i) => c.padEnd(widths[i])).join(' | ');
   const separator = widths.map((w) => '-'.repeat(w)).join('-+-');
-  const dataRows = rows.map((row) =>
-    columnNames.map((col, i) => formatValue(row[col]).padEnd(widths[i])).join(' | '),
-  );
-  const tableText = [header, separator, ...dataRows].join('\n');
+  const tableText = [line(header), separator, ...body.map(line)].join('\n');
   return [{ type: 'section', block_id: RESULT_TABLE_BLOCK_ID, text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
 }
 
