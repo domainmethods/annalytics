@@ -692,6 +692,8 @@ describe('verifyComposition v1.1: COUNT(DISTINCT unique key)', () => {
     expectRejectK(CD(T), result(three), ['PROJ.DS.SESSIONS.session_key'], 'count_distinct');
     expect(expectEligibleK(CD('`proj.ds.Sessions`'), result(three), ['proj.ds.Sessions.session_key']).usedUniqueKeys)
       .toEqual(['proj.ds.Sessions.session_key']);
+    expectRejectK(CD('proj.ds.Sessions'), result(three), [SK], 'count_distinct');
+    expectEligibleK(CD('proj.ds.Sessions'), result(three), ['proj.ds.Sessions.session_key']);
   });
 
   it('U1: an unquoted 3-part name and an own-qualified column match', () => {
@@ -830,11 +832,12 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
     ['a second join whose right key is not unique', `${ON} LEFT JOIN \`proj.ds.e\` e ON d.e = e.id`, [DK]],
     ['a second join keyed on a later source', `LEFT JOIN ${D} d ON e.id = d.k LEFT JOIN \`proj.ds.e\` e ON f.e = e.id`, [DK, 'proj.ds.e.id']],
     ['an UNNEST join', `LEFT JOIN UNNEST(f.arr) d`, [DK]],
+    ['a right table cased differently from its declared key', `LEFT JOIN \`proj.ds.Dim\` d ON f.k = d.k`, [DK]],
   ])('U8: %s gives row_source', (_id, join, keys) => {
     expectRejectK(J(join), lab(), keys, 'row_source');
   });
 
-  it.each(['proj.rec.arr', '`proj.rec.arr`'])('U8: a correlated array path %s (head = an earlier alias) gives row_source', (path) => {
+  it.each(['proj.rec.arr', '`proj.rec.arr`', 'PROJ.rec.arr'])('U8: a correlated array path %s (head = an earlier alias) gives row_source', (path) => {
     expectRejectK(
       `SELECT x.label, COUNT(*) n FROM ${F} proj LEFT JOIN ${path} x ON proj.k = x.k GROUP BY x.label`,
       lab(), ['proj.rec.arr.k'], 'row_source',
