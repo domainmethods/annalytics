@@ -85,8 +85,11 @@ immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both 
 The frozen tv-v1 sweep (2026-11-22, ε 0.01) measured both, plus `ambiguityClassifier`.
 `slackIntake` stays at `flash-lite/3.5`@low and `followUpClassifier` moved to
 `flash/4-hydrogen`@low. Both are owner overrides of the sweep's cost tie-break,
-made for model-sunset risk rather than for score. `ambiguityClassifier` stays
-provisional because its ε was 0.054 (governance Evidence Log, 2026-11-22).
+made for model-sunset risk rather than for score. `ambiguityClassifier` was
+re-measured on tv-v2 (79 items, ε 0.025) and moved to `flash/4-hydrogen`@high, the
+sweep's pick (0.861). Its latency doesn't reach users: the pipeline posts the
+clarification first and records the label in the background (governance Evidence
+Log, 2026-11-22).
 **Sunsets live in the registry.** A `RegisteredModel` can carry `sunset`
 (`shutdownDate`, `replacement`), copied by hand from
 https://aistudio.google.com/docs/deprecations. Stage 1's cost tie-break ranks a model

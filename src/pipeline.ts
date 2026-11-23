@@ -26,7 +26,7 @@ import {
   EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
-import { saveClarificationState } from './state/clarificationState.js';
+import { recordAmbiguityLabel, saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
 import { conversationThreadKey } from './state/threadScope.js';
 import { getTeachingSummaries } from './teachings/summaryMap.js';
@@ -236,18 +236,6 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // LOW → suspend pipeline
     if (clarification.confidence === 'low') {
-      const ambiguity = await classifyAmbiguity({
-        question,
-        ambiguities: clarification.ambiguities,
-        clarifyingQuestions: clarification.clarifying_questions,
-        threadContext,
-      }, config.geminiApiKey);
-      logger.info({
-        ambiguityType: ambiguity.type,
-        ambiguityDomain: ambiguity.domain,
-        reasoning: ambiguity.reasoning,
-      }, 'ambiguity.classified');
-
       // Scoped to the conversation so same-timestamp threads in other channels
       // can't overwrite or cancel this clarification.
       const clarificationId = `clarify_${conversationThreadKey(channel, threadTs)}`;
@@ -270,10 +258,29 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         // Firestore rejects undefined: only store the wording when it differs.
         ...(supervisorQuestion !== question ? { supervisorQuestion } : {}),
         ambiguities: clarification.ambiguities,
-        ambiguityType: ambiguity.type,
-        ambiguityDomain: ambiguity.domain,
-        ambiguityQuestion: ambiguity.question,
         clarifyingMessageTs: statusMsgTs,
+      });
+      // The ambiguity label is observability-only, so it runs after the user has their
+      // questions: a waiting user never pays for it, and the thread lock is released
+      // on return, so a quick reply isn't blocked. classifyAmbiguity fails open.
+      void classifyAmbiguity({
+        question,
+        ambiguities: clarification.ambiguities,
+        clarifyingQuestions: clarification.clarifying_questions,
+        threadContext,
+      }, config.geminiApiKey).then(async (ambiguity) => {
+        logger.info({
+          ambiguityType: ambiguity.type,
+          ambiguityDomain: ambiguity.domain,
+          reasoning: ambiguity.reasoning,
+        }, 'ambiguity.classified');
+        await recordAmbiguityLabel(clarificationId, statusMsgTs, {
+          ambiguityType: ambiguity.type,
+          ambiguityDomain: ambiguity.domain,
+          ambiguityQuestion: ambiguity.question,
+        });
+      }).catch((error: unknown) => {
+        logger.warn({ error, traceId }, 'ambiguity label not recorded');
       });
       return;
     }

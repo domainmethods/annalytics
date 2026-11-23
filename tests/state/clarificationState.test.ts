@@ -3,6 +3,7 @@ import {
   saveClarificationState,
   getClarificationState,
   deleteClarificationState,
+  recordAmbiguityLabel,
 } from '../../src/state/clarificationState.js';
 
 const mockSet = vi.fn();
@@ -12,10 +13,14 @@ const mockDoc = vi.fn(() => ({ set: mockSet, delete: mockDelete }));
 const mockWhere = vi.fn();
 const mockLimit = vi.fn();
 const mockCollection = vi.fn(() => ({ doc: mockDoc, where: mockWhere }));
+const mockTxGet = vi.fn();
+const mockTxUpdate = vi.fn();
+const mockRunTransaction = vi.fn((fn: (tx: unknown) => Promise<unknown>) => fn({ get: mockTxGet, update: mockTxUpdate }));
 
 vi.mock('../../src/state/firestore.js', () => ({
   getDb: vi.fn(() => ({
     collection: mockCollection,
+    runTransaction: mockRunTransaction,
   })),
 }));
 
@@ -168,5 +173,33 @@ describe('deleteClarificationState', () => {
     expect(mockCollection).toHaveBeenCalledWith('clarification_state');
     expect(mockDoc).toHaveBeenCalledWith('clarify-123');
     expect(mockDelete).toHaveBeenCalled();
+  });
+});
+
+describe('recordAmbiguityLabel', () => {
+  const label = { ambiguityType: 'org_knowledge' as const, ambiguityDomain: 'revenue', ambiguityQuestion: 'Which revenue table?' };
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('writes the label onto the same pending clarification', async () => {
+    mockTxGet.mockResolvedValue({ exists: true, data: () => ({ state: 'awaiting_reply', clarifyingMessageTs: 'msg-1' }) });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(true);
+    expect(mockDoc).toHaveBeenCalledWith('clarify-123');
+    expect(mockTxUpdate).toHaveBeenCalledWith(expect.anything(), label);
+  });
+
+  it('skips a clarification the user already answered', async () => {
+    mockTxGet.mockResolvedValue({ exists: false, data: () => undefined });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(false);
+    expect(mockTxUpdate).not.toHaveBeenCalled();
+  });
+
+  it('skips a later clarification that reused the id', async () => {
+    mockTxGet.mockResolvedValue({ exists: true, data: () => ({ state: 'awaiting_reply', clarifyingMessageTs: 'msg-2' }) });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(false);
+    expect(mockTxUpdate).not.toHaveBeenCalled();
   });
 });
