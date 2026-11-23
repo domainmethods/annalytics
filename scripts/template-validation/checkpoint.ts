@@ -29,6 +29,17 @@ export interface SweepCheckpoint {
   discard(): Promise<void>;
 }
 
+/**
+ * One checkpoint file per node selection (`all`, or the sorted `--node` list), so that
+ * discard() after a subset report never deletes passes another selection's interrupted
+ * run still needs.
+ */
+export function checkpointFileName(setHash: string, nodes: Iterable<string>): string {
+  const selected = new Set(nodes);
+  const selection = NODE_IDS.every(node => selected.has(node)) ? 'all' : [...selected].sort().join('+');
+  return `node-sweep-checkpoint-${setHash.slice(0, 16)}-${selection}.jsonl`;
+}
+
 export function effectiveProfileKey(): string {
   return NODE_IDS.map(node => `${node}=${formatSweepProfile(getNodeProfile(node))}:${resolveNodeModel(node)}`).join(',');
 }

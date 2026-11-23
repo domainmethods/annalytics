@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { openSweepCheckpoint } from '../../../scripts/template-validation/checkpoint.js';
+import { checkpointFileName, openSweepCheckpoint } from '../../../scripts/template-validation/checkpoint.js';
+import { NODE_IDS } from '../../../src/agents/nodeProfiles.js';
 
 it('keeps a pass appended after a truncated line readable on the next resume', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'sweep-checkpoint-'));
@@ -74,4 +75,12 @@ it('starts empty when --resume finds no checkpoint, and refuses a fresh run over
 it('surfaces a filesystem error other than ENOENT instead of treating it as no checkpoint', () => withDir(async path => {
   await writeFile(path, 'not a directory', 'utf8');
   await expect(openSweepCheckpoint(join(path, 'cp.jsonl'), 'h', false, () => {})).rejects.toMatchObject({ code: 'ENOTDIR' });
+  await expect(openSweepCheckpoint(join(path, 'cp.jsonl'), 'h', true, () => {})).rejects.toMatchObject({ code: 'ENOTDIR' });
 }));
+
+it('names the checkpoint by node selection: all, or the sorted subset regardless of order', () => {
+  const hash = 'a'.repeat(64);
+  expect(checkpointFileName(hash, NODE_IDS)).toBe(`node-sweep-checkpoint-${'a'.repeat(16)}-all.jsonl`);
+  expect(checkpointFileName(hash, ['supervisor', 'slackIntake'])).toBe(checkpointFileName(hash, ['slackIntake', 'supervisor']));
+  expect(checkpointFileName(hash, ['supervisor', 'slackIntake'])).toBe(`node-sweep-checkpoint-${'a'.repeat(16)}-slackIntake+supervisor.jsonl`);
+});

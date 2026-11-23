@@ -882,11 +882,8 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
   const env = await loadTemplateEnv(apiKey);
   await mkdir(resultsDir, { recursive: true });
-  const { openSweepCheckpoint } = await import('./template-validation/checkpoint.js');
-  // One checkpoint per node selection: discard() after a --node subset report must not
-  // delete passes another selection's interrupted run still needs.
-  const selection = NODE_IDS.every(node => selected.has(node)) ? 'all' : [...selected].sort().join('+');
-  const checkpoint = await openSweepCheckpoint(join(resultsDir, `node-sweep-checkpoint-${setHash.slice(0, 16)}-${selection}.jsonl`), setHash, resume);
+  const { checkpointFileName, openSweepCheckpoint } = await import('./template-validation/checkpoint.js');
+  const checkpoint = await openSweepCheckpoint(join(resultsDir, checkpointFileName(setHash, selected)), setHash, resume);
   const outcomes: NodeOutcome[] = [];
   const epsByNode = new Map<NodeId, number>();
   const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();

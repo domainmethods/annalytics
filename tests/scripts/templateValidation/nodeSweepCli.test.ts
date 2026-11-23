@@ -207,6 +207,9 @@ it.each([
   const fullReport = [`${date}-model-refresh.md`, `${date}-model-refresh.json`];
   try {
     for (const name of fullReport) await writeFile(join(dir, name), 'previous report');
+    // Another selection's interrupted run: this --node run must never touch or discard it.
+    const otherCheckpoint = 'node-sweep-checkpoint-test-hash-all.jsonl';
+    await writeFile(join(dir, otherCheckpoint), 'other selection\n');
     await expect(main(['--corpus', 'template', '--node', node], dir)).rejects.toMatchObject({
       status, message: expect.not.stringContaining('sensitive provider response'),
     });
@@ -217,7 +220,7 @@ it.each([
     expect(process.env.NODE_PROFILE_OVERRIDES).toBe(previous);
     const checkpoint = 'node-sweep-checkpoint-test-hash-slackIntake.jsonl';
     // Only completed passes are checkpointed: the two calibration passes when stage 1 failed.
-    expect((await readdir(dir)).sort()).toEqual([...fullReport, ...(failedCall > 1 ? [checkpoint] : [])].sort());
+    expect((await readdir(dir)).sort()).toEqual([...fullReport, otherCheckpoint, ...(failedCall > 1 ? [checkpoint] : [])].sort());
     if (failedCall > 1) {
       expect((await realFs.readFile(join(dir, checkpoint), 'utf8')).trim().split('\n')).toHaveLength(2);
     }
@@ -242,6 +245,7 @@ it.each([
       expect(logged.some(line => line.includes('replayed from checkpoint'))).toBe(false);
     }
     expect(await readdir(dir)).not.toContain(checkpoint);
+    expect(await realFs.readFile(join(dir, otherCheckpoint), 'utf8')).toBe('other selection\n');
     expect(await readdir(dir)).toEqual(expect.arrayContaining([`${date}-model-refresh-partial-slackIntake.json`]));
   } finally {
     vi.mocked(readFile).mockReset();
