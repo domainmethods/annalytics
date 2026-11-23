@@ -11,7 +11,7 @@ import { summarizeResults } from '../agents/summaryAgent.js';
 import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
 import { MAX_DISPLAY_ROWS } from '../slack/limits.js';
 import { rootLogger } from '../logging.js';
-import { verifyAnswerComposition } from '../execution/answerComposition.js';
+import { verifyAnswerComposition, stillDeclaredKeys } from '../execution/answerComposition.js';
 import type { EligibleComposition } from '../execution/composition.js';
 
 export class ResponseContextNotFoundError extends Error {
@@ -76,14 +76,15 @@ export async function notifyContextUnavailable(
 
 /**
  * The verified composition for a re-rendered table, behind the flag. Re-uses
- * the unique keys the original proof relied on; a legacy context without them
- * verifies with none, so a key-dependent answer (COUNT(DISTINCT), or a
- * many-to-one LEFT JOIN) stays rank-only.
+ * the unique keys the original proof relied on that the loaded dbt metadata
+ * still declares; a legacy context without them, or a key whose unique test
+ * was since removed, verifies with none, so a key-dependent answer
+ * (COUNT(DISTINCT), or a many-to-one LEFT JOIN) stays rank-only.
  */
 function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig, surface: 'override_table' | 'override_summary_fallback'): EligibleComposition | undefined {
   if (!config.answerSharesEnabled) return undefined;
   return verifyAnswerComposition(
-    { sql: ctx.generatedSql, result, maxDisplayRows: MAX_DISPLAY_ROWS, uniqueKeys: ctx.compositionUniqueKeys ?? [] },
+    { sql: ctx.generatedSql, result, maxDisplayRows: MAX_DISPLAY_ROWS, uniqueKeys: stillDeclaredKeys(ctx.compositionUniqueKeys ?? [], config.currentUniqueKeys?.()) },
     rootLogger,
     { surface, traceId: ctx.traceId },
   );

@@ -91,7 +91,10 @@ function escapeRegExp(text: string): string {
  * `QUALIFY ROW_NUMBER() OVER (ORDER BY n) <= 3` cuts rows with no LIMIT at all.
  * The Share column has its own, stricter AST rule (composition.ts S5: a LIMIT must have
  * returned fewer rows than its bound); keep the two in step so a caption never treats as
- * whole a result the Share column treats as cut, or the reverse.
+ * whole a result the Share column treats as cut, or the reverse. This one stays a regex
+ * on purpose: the caption is always on (no flag), and node-sql-parser rejects some valid
+ * BigQuery (L2 is advisory for that reason), so an AST-only check would silence captions
+ * on every query the parser can't read.
  */
 function limitIsSafe(sql: string, rowCount: number, measureCol: string, measurePos: number): boolean {
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string

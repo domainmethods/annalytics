@@ -43,7 +43,7 @@ import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlo
 import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
 import { handleDbtStatus } from './agents/dbtStatusAgent.js';
 import { getRunHistoryForModel, getLatestRun } from './state/dbtRunHistory.js';
-import { verifyAnswerComposition } from './execution/answerComposition.js';
+import { verifyAnswerComposition, declaredUniqueKeys } from './execution/answerComposition.js';
 import type { EligibleComposition } from './execution/composition.js';
 
 export interface PipelineConfig {
@@ -619,7 +619,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           sql: qualityResult.sqlResult.sql,
           result: queryResult,
           maxDisplayRows: MAX_DISPLAY_ROWS,
-          uniqueKeys: pipelineTables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase())),
+          uniqueKeys: declaredUniqueKeys(pipelineTables),
         }, logger, { surface: 'answer', traceId })
       : undefined;
     const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions, composition);

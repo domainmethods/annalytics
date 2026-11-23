@@ -14,6 +14,7 @@ import { recordFeedback, getSlackResponseContext } from './state/responseContext
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
 import { buildFeedbackActions, overrideButtonsForResultShape, currentViewFromBlocks } from './slack/blocks.js';
+import { declaredUniqueKeys } from './execution/answerComposition.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride, notifyContextUnavailable, type OverrideViewer } from './handlers/responseOverrides.js';
 import { promptRefinement, REFINE_SAVE_FAILED_TEXT } from './handlers/refinePrompt.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
@@ -481,6 +482,7 @@ const overrideConfig = {
   maxResultRows: config.limits.maxResultRows,
   geminiApiKey: config.gemini.apiKey,
   answerSharesEnabled: config.answerShares.enabled,
+  currentUniqueKeys: () => declaredUniqueKeys(getTables()),
 };
 
 function overrideViewer(body: unknown): OverrideViewer | undefined {

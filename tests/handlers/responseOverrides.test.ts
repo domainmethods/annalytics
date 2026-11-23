@@ -636,7 +636,7 @@ describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () 
     bytesProcessed: 2048,
     truncated: false,
   };
-  const sharesOn = { ...overrideConfig, answerSharesEnabled: true };
+  const sharesOn = { ...overrideConfig, answerSharesEnabled: true, currentUniqueKeys: () => ['proj.ds.sessions.session_key'] };
   const keyedCtx = { ...baseCtx, generatedSql: DISTINCT_SQL, compositionUniqueKeys: ['proj.ds.sessions.session_key'] };
   const lastBlocks = () => mockClient.chat.update.mock.calls.at(-1)[0].blocks as any[];
   const tableCells = () => lastBlocks().find((b) => b.type === 'table').rows.map((r: any[]) => r.map((c) => c.text));
@@ -672,6 +672,19 @@ describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () 
     expect(tableCells()[0]).toEqual(['ch', 'n']);
     expect(JSON.stringify(lastBlocks())).not.toContain('%');
     expect(lastBlocks()[0].text.text).toContain('has the highest');
+  });
+
+  it('Table override drops a stored key the loaded dbt metadata no longer declares', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, { ...sharesOn, currentUniqueKeys: () => [] });
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, surface: 'override_table' });
+  });
+
+  it('Table override with no current metadata trusts no stored key', async () => {
+    const { currentUniqueKeys: _omit, ...noMetadata } = sharesOn;
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, noMetadata);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
   });
 
   it('Table override with the flag off renders the Phase 1 table even with stored keys', async () => {

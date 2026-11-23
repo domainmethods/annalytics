@@ -6,6 +6,22 @@ export interface CompositionLogger {
 
 export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
 
+/** The `table.column` unique keys (lowercased) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`. */
+export function declaredUniqueKeys(tables: ReadonlyArray<{ name: string; uniqueColumns?: string[] }>): string[] {
+  return tables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase()));
+}
+
+/**
+ * The keys a saved answer's proof relied on that the loaded metadata still
+ * declares. A re-render never trusts a key whose dbt `unique` test has since
+ * been removed; with no current metadata, it trusts none.
+ */
+export function stillDeclaredKeys(stored: readonly string[], current: readonly string[] | undefined): string[] {
+  if (!current) return [];
+  const declared = new Set(current);
+  return stored.filter(k => declared.has(k));
+}
+
 /**
  * Verify a result for an answer surface (pipeline, Table override, Summary
  * fallback). Never throws: any error is treated as ineligible so a share

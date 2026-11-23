@@ -118,7 +118,7 @@ With one source, no joins, and no row-reducing operator before the outer `GROUP 
 - **Table override** (`handleTableOverride`) re-executes `ctx.generatedSql` (the BigQuery 24h cache), so it has fresh full rows plus the schema. It calls the same `verifyComposition` and passes the verdict to `buildTableBlocks`. The verdict depends only on (SQL, result), both available again, so re-renders are consistent by construction.
 - **Summary-override fallback table** does the same. The **CSV** override never adds shares.
 - **Legacy ResponseContext records** need no special case. v1 reads nothing new from ResponseContext.
-- **v1.1 only:** a COUNT(DISTINCT)-unique proof needs dbt facts that handlers don't have. At that point, persist `compositionUniqueKeys?: string[]` (`project.dataset.table.column`, omitted when empty) on ResponseContext at answer time and feed it to the override's verifier. Legacy records lack the field, so COUNT(DISTINCT) re-renders fall back to rank-only (safe, if inconsistent with the original). v1.1 adds the parity test for that.
+- **v1.1 only:** a COUNT(DISTINCT)-unique proof needs dbt facts that handlers don't have. At that point, persist `compositionUniqueKeys?: string[]` (`project.dataset.table.column`, omitted when empty) on ResponseContext at answer time and feed it to the override's verifier. Legacy records lack the field, so COUNT(DISTINCT) re-renders fall back to rank-only (safe, if inconsistent with the original). v1.1 adds the parity test for that. A re-render keeps only the stored keys the loaded manifest still declares, so a removed unique test turns the re-render rank-only.
 
 ## 5. Rendering
 
