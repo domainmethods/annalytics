@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../src/validation/pipeline.js');
 import { validateSql } from '../src/validation/pipeline.js';
@@ -6,6 +6,7 @@ import { validateSql } from '../src/validation/pipeline.js';
 // Mock all domain modules
 vi.mock('../src/agents/clarificationAgent.js');
 vi.mock('../src/agents/ambiguityClassifier.js');
+vi.mock('../src/agents/followUpClassifier.js');
 vi.mock('../src/qualityLoop.js');
 vi.mock('../src/routineFastPath.js');
 vi.mock('../src/agents/confidence.js');
@@ -38,6 +39,7 @@ import { runPipeline, buildResponseBlocks, mergeAssumptions, toPipelineConfig } 
 import { verifyComposition } from '../src/execution/composition.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
+import { classifyFollowUp } from '../src/agents/followUpClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
 import { runRoutineFastPath } from '../src/routineFastPath.js';
 import { reconcileConfidence } from '../src/agents/confidence.js';
@@ -59,6 +61,7 @@ import type { QualityResult } from '../src/qualityLoop.js';
 
 const mockClassify = vi.mocked(classifyQuestion);
 const mockClassifyAmbiguity = vi.mocked(classifyAmbiguity);
+const mockClassifyFollowUp = vi.mocked(classifyFollowUp);
 const mockQualityLoop = vi.mocked(qualityLoop);
 const mockRunRoutineFastPath = vi.mocked(runRoutineFastPath);
 const mockReconcile = vi.mocked(reconcileConfidence);
@@ -149,6 +152,7 @@ function setupHappyPath() {
     domain: 'revenue',
     reasoning: 'User must choose the request scope.',
   });
+  mockClassifyFollowUp.mockResolvedValue({ intent: 'new_query', reasoning: 'Unrelated question' });
   mockQualityLoop.mockResolvedValue(baseQualityResult);
   mockReconcile.mockReturnValue('high');
   mockExecute.mockResolvedValue({
@@ -310,6 +314,10 @@ describe('runPipeline', () => {
     expect(mockQualityLoop).not.toHaveBeenCalled();
     expect(mockExecute).not.toHaveBeenCalled();
     expect(mockSaveClarification.mock.calls[0][0]).not.toHaveProperty('ambiguityType');
+    // Kept so the message can be redrawn without its cancel button once answered.
+    expect(mockSaveClarification.mock.calls[0][0]).toMatchObject({
+      clarifyingQuestions: ['Which time period?', 'Which product line?'],
+    });
     await vi.waitFor(() => expect(mockRecordAmbiguity).toHaveBeenCalledWith(
       'clarify_C123:thread-1', 'status-1',
       { ambiguityType: 'user_intent', ambiguityDomain: 'revenue', ambiguityQuestion: 'Which time period?' },
@@ -376,6 +384,48 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
   });
 
+  it('answers without waiting for the log-only follow-up classification', async () => {
+    mockBuildThread.mockReturnValue([{ role: 'user', content: 'What is total revenue?' }]);
+    mockClassifyFollowUp.mockReturnValue(new Promise(() => {}));
+
+    await runPipeline(baseInput);
+
+    expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockClient.chat.update.mock.calls.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
+  });
+
+  it('a failed follow-up classification does not affect the answer', async () => {
+    mockBuildThread.mockReturnValue([{ role: 'user', content: 'What is total revenue?' }]);
+    mockClassifyFollowUp.mockRejectedValue(new Error('model unavailable'));
+
+    await runPipeline(baseInput);
+
+    expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+    expect(mockClient.chat.update.mock.calls.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
+  });
+
+  it('pipeline failure: replaces the status with an error that carries the trace id', async () => {
+    mockQualityLoop.mockRejectedValue(new Error('model unavailable'));
+
+    await runPipeline(baseInput);
+
+    const lastUpdate = mockClient.chat.update.mock.calls.at(-1)![0];
+    expect(lastUpdate.ts).toBe('status-1');
+    expect(lastUpdate.text).toContain('trace-abc');
+    expect(mockExecute).not.toHaveBeenCalled();
+    expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('pipeline failure: settles and releases the lock when Slack rejects the error message too', async () => {
+    mockQualityLoop.mockRejectedValue(new Error('model unavailable'));
+    mockClient.chat.update.mockRejectedValue(new Error('cant_update_message'));
+
+    await expect(runPipeline(baseInput)).resolves.toBeUndefined();
+
+    expect(mockReleaseLock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the posted answer when context persistence fails', async () => {
     mockSaveCtx.mockRejectedValueOnce(new Error('write failed'));
     await runPipeline(baseInput);
@@ -414,14 +464,52 @@ describe('runPipeline', () => {
     expect(qualityCall.negativeExample!.sql).toBe('SELECT bad FROM table');
   });
 
+  it("uses the user's own wording as the negative example's feedback, not the thread context", async () => {
+    mockGetNegative.mockResolvedValue({
+      sql: 'SELECT bad FROM table',
+      explanation: 'Wrong approach',
+      tablesUsed: ['table'],
+    });
+    // The context now ends with the bot's previous answer, not the user's message.
+    mockBuildThread.mockReturnValue([
+      { role: 'user', content: 'What is revenue?' },
+      { role: 'assistant', content: 'Revenue is $5M' },
+    ]);
+
+    await runPipeline({
+      ...baseInput,
+      question: 'What is revenue? (Refinement: exclude refunds)',
+      originalQuestion: 'whats revenue (Refinement: exclude refunds)',
+    });
+
+    expect(mockQualityLoop.mock.calls[0][0].negativeExample!.userFeedback)
+      .toBe('whats revenue (Refinement: exclude refunds)');
+  });
+
+  it('leaves its own status message out of the thread context', async () => {
+    const threadMessages = [
+      { ts: 'thread-1', text: 'What is total revenue?' },
+      { ts: 'status-1', bot_id: 'B1', text: 'Got it. Let me get things ready...' },
+    ];
+    mockClient.conversations.replies.mockResolvedValue({ messages: threadMessages });
+
+    await runPipeline(baseInput);
+
+    expect(mockBuildThread).toHaveBeenCalledWith(
+      threadMessages,
+      4,
+      expect.objectContaining({ excludeTs: 'status-1' }),
+    );
+  });
+
   it('progressive status updates at correct stages', async () => {
     await runPipeline(baseInput);
 
     const updateCalls = mockClient.chat.update.mock.calls.map(c => c[0].text);
-    // Opens on the clarification decision phase and progresses to data retrieval —
+    // Opens by saying the question is being read and progresses to data retrieval —
     // proving status advances across stages, not just the first one.
-    expect(updateCalls.some((t: string) => t?.includes('Thinking about if I need clarification'))).toBe(true);
-    expect(updateCalls.some((t: string) => t?.includes('Retrieving the data'))).toBe(true);
+    expect(updateCalls[0]).toBe('Reading your question...');
+    expect(updateCalls).toContain('Retrieving the data...');
   });
 
   it('park_wait escalation: no execution, state saved, user notified', async () => {
@@ -648,6 +736,197 @@ describe('runPipeline', () => {
     expect(callbacksArg!.onValidate).toBeDefined();
     expect(callbacksArg!.onReview).toBeDefined();
     expect(callbacksArg!.onRetry).toBeDefined();
+  });
+
+  describe('status while working', () => {
+    const statusTexts = () => mockClient.chat.update.mock.calls.map((c) => c[0].text as string);
+    const answerUpdates = () => mockClient.chat.update.mock.calls.filter((c) => c[0].blocks);
+    const wait = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+    const fastPathConfig = {
+      ...baseInput.config,
+      fastPath: { enabled: true, maxBytesProcessed: 1_073_741_824, requireSupervisor: false },
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('shows the elapsed time while generation is slow', async () => {
+      mockQualityLoop.mockImplementation(async (_options, _key, _question, _maxBytes, callbacks) => {
+        await callbacks?.onGenerate?.();
+        await wait(25_000);
+        return baseQualityResult;
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      expect(statusTexts()).toEqual(expect.arrayContaining([
+        'Researching the best approach...',
+        'Researching the best approach... (10s)',
+        'Researching the best approach... (20s)',
+      ]));
+    });
+
+    it('shows the elapsed time while the query is slow', async () => {
+      mockExecute.mockImplementation(async () => {
+        await wait(25_000);
+        return { rows: [{ total: 5000000 }], columnNames: ['total'], totalRows: 1, bytesProcessed: 100, truncated: false };
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      expect(statusTexts()).toEqual(expect.arrayContaining([
+        'Retrieving the data...',
+        'Retrieving the data... (10s)',
+        'Retrieving the data... (20s)',
+      ]));
+    });
+
+    it('shows a status and the elapsed time while the routine fast path runs', async () => {
+      mockRunRoutineFastPath.mockImplementation(async () => {
+        await wait(15_000);
+        return {
+          kind: 'complete',
+          quality: baseQualityResult,
+          supervisorDecision: 'skipped',
+          supervisorTriggers: [],
+          ineligibleReasons: [],
+        };
+      });
+
+      const run = runPipeline({ ...baseInput, config: fastPathConfig });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await run;
+
+      expect(statusTexts()).toEqual(expect.arrayContaining([
+        'Researching the best approach...',
+        'Researching the best approach... (10s)',
+      ]));
+    });
+
+    it('keeps the elapsed time when the query step starts after a slow generation', async () => {
+      mockQualityLoop.mockImplementation(async (_options, _key, _question, _maxBytes, callbacks) => {
+        await callbacks?.onGenerate?.();
+        await wait(25_000);
+        return baseQualityResult;
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      const retrieving = statusTexts().filter((text) => text.startsWith('Retrieving the data...'));
+      expect(retrieving).toEqual(['Retrieving the data... (20s)']);
+    });
+
+    it('keeps the elapsed time when the routine fast path starts after a slow clarification', async () => {
+      mockClassify.mockImplementation(async () => {
+        await wait(12_000);
+        return highClarification;
+      });
+
+      const run = runPipeline({ ...baseInput, config: fastPathConfig });
+      await vi.advanceTimersByTimeAsync(12_000);
+      await run;
+
+      const researching = statusTexts().filter((text) => text.startsWith('Researching the best approach...'));
+      expect(researching[0]).toBe('Researching the best approach... (10s)');
+    });
+
+    it('says which attempt it is on once the first attempt has been rejected', async () => {
+      mockQualityLoop.mockImplementation(async (_options, _key, _question, _maxBytes, callbacks) => {
+        await callbacks?.onGenerate?.();
+        await callbacks?.onValidate?.();
+        await callbacks?.onReview?.();
+        await callbacks?.onRetry?.(1);
+        await callbacks?.onGenerate?.();
+        await callbacks?.onValidate?.();
+        await callbacks?.onReview?.();
+        return baseQualityResult;
+      });
+
+      await runPipeline(baseInput);
+
+      const texts = statusTexts();
+      const firstAttempt = [
+        'Researching the best approach...',
+        'Verifying the approach...',
+        'Reviewing for accuracy...',
+      ];
+      const secondAttempt = [
+        'Attempt 2 of 3: researching the best approach...',
+        'Attempt 2 of 3: verifying the approach...',
+        'Attempt 2 of 3: reviewing for accuracy...',
+      ];
+      const start = texts.indexOf(firstAttempt[0]);
+      expect(texts.slice(start, start + 6)).toEqual([...firstAttempt, ...secondAttempt]);
+    });
+
+    it('leaves the answer alone once it is delivered', async () => {
+      mockQualityLoop.mockImplementation(async (_options, _key, _question, _maxBytes, callbacks) => {
+        await callbacks?.onGenerate?.();
+        await wait(25_000);
+        return baseQualityResult;
+      });
+      mockExecute.mockImplementation(async () => {
+        await wait(25_000);
+        return { rows: [{ total: 5000000 }], columnNames: ['total'], totalRows: 1, bytesProcessed: 100, truncated: false };
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(50_000);
+      await run;
+      const updatesAtDelivery = mockClient.chat.update.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(mockClient.chat.update).toHaveBeenCalledTimes(updatesAtDelivery);
+      expect(mockClient.chat.update.mock.calls.at(-1)![0].blocks).toBeDefined();
+    });
+
+    it('delivers the answer only after a status rewrite still in flight has finished', async () => {
+      let finishRewrite!: () => void;
+      mockClient.chat.update.mockImplementation((args: { text?: string }) => (
+        args.text === 'Retrieving the data... (10s)'
+          ? new Promise((resolve) => { finishRewrite = () => resolve({}); })
+          : Promise.resolve({})
+      ));
+      mockExecute.mockImplementation(async () => {
+        await wait(10_500);
+        return { rows: [{ total: 5000000 }], columnNames: ['total'], totalRows: 1, bytesProcessed: 100, truncated: false };
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(11_000); // rewrite sent at 10s, query back at 10.5s
+      expect(statusTexts().at(-1)).toBe('Retrieving the data... (10s)');
+      expect(answerUpdates()).toHaveLength(0);
+
+      finishRewrite();
+      await run;
+      expect(answerUpdates()).toHaveLength(1);
+      expect(mockClient.chat.update.mock.calls.at(-1)![0].blocks).toBeDefined();
+    });
+
+    it('shows a failure message without the elapsed time', async () => {
+      mockQualityLoop.mockImplementation(async (_options, _key, _question, _maxBytes, callbacks) => {
+        await callbacks?.onGenerate?.();
+        await wait(25_000);
+        return { ...baseQualityResult, verdict: 'exhausted' };
+      });
+
+      const run = runPipeline(baseInput);
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      expect(statusTexts().at(-1)).toBe("I wasn't able to generate a valid query for that question. (trace: trace-abc)");
+    });
   });
 
   it('does not call routine fast path when disabled', async () => {

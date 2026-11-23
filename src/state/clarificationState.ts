@@ -15,6 +15,12 @@ export interface ClarificationState {
    */
   supervisorQuestion?: string;
   ambiguities: string[];
+  /**
+   * The questions put to the user, so the Slack message that asked them can be
+   * redrawn without its Cancel button once they are answered. Absent on docs
+   * saved before this was stored, and on WhatsApp clarifications.
+   */
+  clarifyingQuestions?: string[];
   ambiguityType?: 'user_intent' | 'org_knowledge';
   ambiguityDomain?: string;
   ambiguityQuestion?: string;
@@ -67,6 +73,30 @@ export async function getClarificationState(
   }
 
   return data as ClarificationState;
+}
+
+/**
+ * Takes the pending clarification for a thread, so that one reply answers it.
+ * Two replies can both find it, because the lookup is a query, so the take is a
+ * transaction on the doc itself: the first reply deletes it and gets the state,
+ * and any other gets null. A later clarification that reused the id is left alone.
+ */
+export async function claimClarificationState(
+  channel: string,
+  threadTs: string,
+): Promise<ClarificationState | null> {
+  const found = await getClarificationState(channel, threadTs);
+  if (!found) return null;
+
+  const db = getDb();
+  const ref = db.collection(COLLECTION).doc(found.clarificationId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists ? snap.data() as Partial<ClarificationState> : undefined;
+    if (current?.state !== 'awaiting_reply' || current.clarifyingMessageTs !== found.clarifyingMessageTs) return null;
+    tx.delete(ref);
+    return found;
+  });
 }
 
 export async function deleteClarificationState(

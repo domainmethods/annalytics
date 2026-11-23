@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BigQuery } from '@google-cloud/bigquery';
 import { routeFollowUp } from '../../src/handlers/followUpRouter.js';
 import type { ResponseContext } from '../../src/types.js';
@@ -238,6 +238,115 @@ describe('routeFollowUp', () => {
     const text = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0]);
     expect(text).toContain('last_order: 2026-11-01');
     expect(text).not.toContain('[object Object]');
+  });
+
+  describe('discrepancy status', () => {
+    const statusTexts = () => mockClient.chat.update.mock.calls.map((c: [{ text: string }]) => c[0].text);
+    const wait = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+    const investigate = () => routeFollowUp(
+      'discrepancy', 'How come APAC is only $200K?',
+      '1234.5678', 'C123', 'status-ts', mockClient, pipelineConfig, tables,
+    );
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      mockGenerateDiagnosticSql.mockResolvedValue({
+        diagnosticSql: 'SELECT region, SUM(revenue) FROM fct_orders GROUP BY region',
+        explanation: 'Breaking down by region to check APAC',
+      });
+      mockValidateSql.mockResolvedValue({ valid: true, layer: 'L4', bytesProcessed: 500 });
+      mockReviewSql.mockResolvedValue({ verdict: 'PASS', confidence: 'high', issues: [], suggestions: [], teaching_compliance: 'no_relevant_teaching' });
+      mockExecuteQuery.mockResolvedValue({
+        rows: [{ region: 'APAC', total: 200000 }],
+        columnNames: ['region', 'total'],
+        totalRows: 1,
+        bytesProcessed: 500,
+        truncated: false,
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      mockClient.chat.update.mockReset();
+      mockClient.chat.update.mockResolvedValue({});
+    });
+
+    it('names each stage as it investigates, then posts the findings', async () => {
+      await investigate();
+
+      const texts = statusTexts();
+      expect(texts.slice(0, 4)).toEqual([
+        'Investigating the discrepancy...',
+        'Verifying the approach...',
+        'Reviewing for accuracy...',
+        'Retrieving the data...',
+      ]);
+      expect(texts).toHaveLength(5);
+      expect(texts[4]).toContain('*Investigation:* Breaking down by region to check APAC');
+    });
+
+    it('shows the elapsed time while the diagnostic query is slow, and leaves the findings alone afterwards', async () => {
+      mockGenerateDiagnosticSql.mockImplementation(async () => {
+        await wait(25_000);
+        return { diagnosticSql: 'SELECT 1', explanation: 'Checking APAC' };
+      });
+
+      const run = investigate();
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+      const updatesAtDelivery = mockClient.chat.update.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      const texts = statusTexts();
+      expect(texts).toEqual(expect.arrayContaining([
+        'Investigating the discrepancy... (10s)',
+        'Investigating the discrepancy... (20s)',
+      ]));
+      expect(texts).toHaveLength(updatesAtDelivery);
+      expect(texts.at(-1)).toContain('*Investigation:* Checking APAC');
+    });
+
+    it('still posts the findings when a status update fails', async () => {
+      mockClient.chat.update.mockImplementation(async (args: { text: string }) => {
+        if (args.text.startsWith('Investigating')) throw new Error('ratelimited');
+        return {};
+      });
+
+      await investigate();
+
+      expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+      expect(statusTexts().at(-1)).toContain('*Investigation:* Breaking down by region to check APAC');
+    });
+
+    it('reports a query that fails validation without the elapsed time', async () => {
+      mockGenerateDiagnosticSql.mockImplementation(async () => {
+        await wait(25_000);
+        return { diagnosticSql: 'SELECT 1', explanation: 'Checking APAC' };
+      });
+      mockValidateSql.mockResolvedValue({ valid: false, layer: 'L3', detail: 'bad column' });
+
+      const run = investigate();
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      expect(statusTexts().at(-1)).toMatch(/^Could not validate diagnostic query\. \(trace: [^)]+\)$/);
+      expect(mockExecuteQuery).not.toHaveBeenCalled();
+    });
+
+    it('reports a query that fails review without the elapsed time', async () => {
+      mockGenerateDiagnosticSql.mockImplementation(async () => {
+        await wait(25_000);
+        return { diagnosticSql: 'SELECT 1', explanation: 'Checking APAC' };
+      });
+      mockReviewSql.mockResolvedValue({ verdict: 'FAIL', confidence: 'low', issues: ['wrong grain'], suggestions: [], teaching_compliance: 'no_relevant_teaching' });
+
+      const run = investigate();
+      await vi.advanceTimersByTimeAsync(25_000);
+      await run;
+
+      expect(statusTexts().at(-1)).toMatch(/^Diagnostic query did not pass review: wrong grain \(trace: [^)]+\)$/);
+      expect(mockExecuteQuery).not.toHaveBeenCalled();
+    });
   });
 
   it('new_query — runs standard pipeline', async () => {

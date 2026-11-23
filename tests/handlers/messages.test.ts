@@ -5,12 +5,11 @@ vi.mock('../../src/state/responseContext.js', () => ({
   botHasRepliedInThread: vi.fn(),
 }));
 vi.mock('../../src/state/clarificationState.js', () => ({
-  getClarificationState: vi.fn(),
-  deleteClarificationState: vi.fn(),
+  claimClarificationState: vi.fn(),
 }));
 
 import { botHasRepliedInThread } from '../../src/state/responseContext.js';
-import { getClarificationState, deleteClarificationState } from '../../src/state/clarificationState.js';
+import { claimClarificationState } from '../../src/state/clarificationState.js';
 import {
   canMessageEventReachPipeline,
   shouldRespond,
@@ -18,8 +17,7 @@ import {
 } from '../../src/handlers/messages.js';
 
 const mockBotHasReplied = vi.mocked(botHasRepliedInThread);
-const mockGetClarification = vi.mocked(getClarificationState);
-const mockDeleteClarification = vi.mocked(deleteClarificationState);
+const mockClaimClarification = vi.mocked(claimClarificationState);
 
 describe('canMessageEventReachPipeline', () => {
   it('allows direct messages and group direct messages without a thread', () => {
@@ -95,8 +93,9 @@ describe('checkClarificationReply', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when no pending clarification', async () => {
-    mockGetClarification.mockResolvedValue(null);
+  it('returns null when there is no pending clarification to take', async () => {
+    // Also what a reply gets when another reply took the clarification first.
+    mockClaimClarification.mockResolvedValue(null);
     const result = await checkClarificationReply({
       channel: 'C1',
       thread_ts: 'thread-1',
@@ -105,8 +104,8 @@ describe('checkClarificationReply', () => {
     expect(result).toBeNull();
   });
 
-  it('returns clarification context and deletes state', async () => {
-    mockGetClarification.mockResolvedValue({
+  it('takes the pending clarification and returns its context', async () => {
+    mockClaimClarification.mockResolvedValue({
       clarificationId: 'clarify_thread-1',
       threadTs: 'thread-1',
       channel: 'C1',
@@ -117,7 +116,6 @@ describe('checkClarificationReply', () => {
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 3600000),
     });
-    mockDeleteClarification.mockResolvedValue(undefined);
 
     const result = await checkClarificationReply({
       channel: 'C1',
@@ -128,13 +126,13 @@ describe('checkClarificationReply', () => {
     expect(result).not.toBeNull();
     expect(result!.clarifiedQuestion).toContain('Show revenue');
     expect(result!.clarifiedQuestion).toContain('Last 30 days');
-    expect(mockDeleteClarification).toHaveBeenCalledWith('clarify_thread-1');
+    expect(mockClaimClarification).toHaveBeenCalledWith('C1', 'thread-1');
     // Legacy doc with no separate wording: review uses the same text.
     expect(result!.originalQuestion).toBe(result!.clarifiedQuestion);
   });
 
   it("returns the user's wording plus the answer for review (#44)", async () => {
-    mockGetClarification.mockResolvedValue({
+    mockClaimClarification.mockResolvedValue({
       clarificationId: 'clarify_thread-1',
       threadTs: 'thread-1',
       channel: 'C1',
@@ -146,11 +144,29 @@ describe('checkClarificationReply', () => {
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 3600000),
     });
-    mockDeleteClarification.mockResolvedValue(undefined);
 
     const result = await checkClarificationReply({ channel: 'C1', thread_ts: 'thread-1', text: 'Q3' } as any);
 
     expect(result!.clarifiedQuestion).toBe('What is paid revenue? (Refinement: last week) (Clarification: Q3)');
     expect(result!.originalQuestion).toBe('What is paid revenue? (Refinement: only EMEA) (Clarification: Q3)');
+  });
+
+  it('hands back the clarifying questions that were asked', async () => {
+    mockClaimClarification.mockResolvedValue({
+      clarificationId: 'clarify_thread-1',
+      threadTs: 'thread-1',
+      channel: 'C1',
+      originalQuestion: 'Show revenue',
+      ambiguities: ['time period'],
+      clarifyingQuestions: ['Which time period?', 'Gross or net?'],
+      clarifyingMessageTs: 'status-1',
+      state: 'awaiting_reply',
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 3600000),
+    });
+
+    const result = await checkClarificationReply({ channel: 'C1', thread_ts: 'thread-1', text: 'Q3, net' } as any);
+
+    expect(result!.clarifyingQuestions).toEqual(['Which time period?', 'Gross or net?']);
   });
 });

@@ -1,4 +1,5 @@
 import { escapeMrkdwn } from './limits.js';
+import type { KnownBlock } from '@slack/types';
 
 export interface ClarificationBlocksOptions {
   clarificationId: string;
@@ -6,12 +7,9 @@ export interface ClarificationBlocksOptions {
   originalQuestion: string;
 }
 
-export function buildClarificationBlocks(
-  options: ClarificationBlocksOptions,
-): Record<string, unknown>[] {
-  const { clarifyingQuestions } = options;
-
-  const blocks: Record<string, unknown>[] = [
+/** The introduction and the numbered questions: what stays once they are answered. */
+function questionBlocks(clarifyingQuestions: string[]): KnownBlock[] {
+  const blocks: KnownBlock[] = [
     {
       type: 'section',
       text: {
@@ -30,6 +28,14 @@ export function buildClarificationBlocks(
       },
     });
   }
+
+  return blocks;
+}
+
+export function buildClarificationBlocks(
+  options: ClarificationBlocksOptions,
+): KnownBlock[] {
+  const blocks = questionBlocks(options.clarifyingQuestions);
 
   blocks.push({
     type: 'context',
@@ -59,6 +65,14 @@ export function buildClarificationBlocks(
   return blocks;
 }
 
+/**
+ * The clarifying message after the user has answered it: the questions stay so
+ * the thread still reads in order, the reply hint and the Cancel button go.
+ */
+export function buildAnsweredClarificationBlocks(clarifyingQuestions: string[]): KnownBlock[] {
+  return questionBlocks(clarifyingQuestions);
+}
+
 export interface PendingClarificationBlocksOptions {
   clarificationId: string;
   originalQuestion: string;
@@ -71,8 +85,8 @@ export const PENDING_CLARIFICATION_TEXT =
 /** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,
-): Record<string, unknown>[] {
-  const blocks: Record<string, unknown>[] = [
+): KnownBlock[] {
+  const blocks: KnownBlock[] = [
     {
       type: 'section',
       text: {
@@ -115,7 +129,7 @@ export const CANCEL_FAILED_TEXT =
 /** Shown when the cancel delete fails: the failure copy plus a retry button. */
 export function buildCancelFailedBlocks(
   clarificationId: string,
-): Record<string, unknown>[] {
+): KnownBlock[] {
   return [
     {
       type: 'section',

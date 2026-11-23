@@ -1,6 +1,7 @@
 import type { ThreadMessage } from '../types.js';
 
 interface SlackMessage {
+  ts?: string;
   bot_id?: string;
   text?: string;
 }
@@ -9,23 +10,32 @@ export interface ThreadContextOptions {
   maxTokens?: number;
   summarizeOlder?: boolean;
   stripQueryResults?: boolean;
+  /**
+   * `ts` of the bot's status message for the request being answered. That
+   * message is posted before the thread is read, so it has to be removed
+   * before the last remaining message is taken to be the one being answered.
+   */
+  excludeTs?: string;
 }
 
 const MAX_CONTEXT_CHARS = 4000;
 
 export function buildThreadContext(
-  messages: SlackMessage[],
+  allMessages: SlackMessage[],
   maxMessages: number,
   options: ThreadContextOptions = {},
 ): ThreadMessage[] {
-  if (messages.length <= 1) return [];
-
   const {
     summarizeOlder = false,
     stripQueryResults = false,
     maxTokens,
+    excludeTs,
   } = options;
 
+  const messages = excludeTs ? allMessages.filter((m) => m.ts !== excludeTs) : allMessages;
+  if (messages.length <= 1) return [];
+
+  // The last message is the one being answered, not context for it.
   const priorMessages = messages.slice(0, -1);
 
   let result: ThreadMessage[];

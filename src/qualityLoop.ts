@@ -37,7 +37,7 @@ export interface StatusCallbacks {
 
 // ── Quality Loop ───────────────────────────────────────────────────────
 
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 
 export async function qualityLoop(
   options: GenerateSqlOptions,
