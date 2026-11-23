@@ -864,12 +864,23 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
       expectRejectK(sql, lab(), CK, 'where_on_dimension');
     });
 
-    it('a second namespace linked through the first is in the same group', () => {
-      const sql = 'SELECT r.name AS label, COUNT(*) n FROM `proj.ds.sessions` s'
+    describe('a second namespace linked through the first is in the same group', () => {
+      const CHAIN = 'FROM `proj.ds.sessions` s'
         + ' LEFT JOIN `proj.ds.countries` c ON s.country_code = c.code'
-        + ' LEFT JOIN `proj.ds.regions` r ON c.region_id = r.id'
-        + " WHERE c.continent = 'Europe' GROUP BY 1";
-      expectRejectK(sql, lab(), [...CK, 'proj.ds.regions.id'], 'where_on_dimension');
+        + ' LEFT JOIN `proj.ds.regions` r ON c.region_id = r.id';
+      const RK = [...CK, 'proj.ds.regions.id'];
+
+      it.each([
+        ['a far-table dimension, WHERE on the middle table', "SELECT r.name AS label, COUNT(*) n " + CHAIN + " WHERE c.continent = 'Europe' GROUP BY 1"],
+        ['a middle-table dimension, WHERE on the far table', "SELECT c.country_name AS label, COUNT(*) n " + CHAIN + " WHERE r.zone = 'x' GROUP BY 1"],
+        ['a far-table dimension, WHERE on the left join key', "SELECT r.name AS label, COUNT(*) n " + CHAIN + " WHERE s.country_code IN ('US') GROUP BY 1"],
+      ])('%s rejects with where_on_dimension', (_id, sql) => {
+        expectRejectK(sql, lab(), RK, 'where_on_dimension');
+      });
+
+      it('a left non-key dimension with a WHERE on the far table stays eligible', () => {
+        expectEligibleK(`SELECT s.channel AS label, COUNT(*) n ${CHAIN} WHERE r.zone = 'x' GROUP BY 1`, lab(), RK);
+      });
     });
 
     it.each([
