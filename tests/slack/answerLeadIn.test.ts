@@ -186,6 +186,32 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     expect(lead(fees, ['c', 'f0_fees'])).toBe('*A* has the highest f0 fees (9), followed by B (3).');
   });
 
+  it('an ascending sort on the measure (the question asked for the lowest)', () => {
+    const rows = [{ c: 'Organic', bounce_rate: 0.2 }, { c: 'Paid', bounce_rate: 0.5 }, { c: 'Direct', bounce_rate: 0.9 }];
+    const cols = ['c', 'bounce_rate'];
+    for (const order of ['ORDER BY bounce_rate', 'ORDER BY bounce_rate ASC', 'ORDER BY 2', 'ORDER BY t.bounce_rate ASC NULLS LAST, c', 'ORDER BY `bounce_rate` asc;']) {
+      expect(lead(rows, cols, { sql: `SELECT c, bounce_rate FROM t ${order}` })).toBeNull();
+    }
+    // An ascending top-N cut is silent too (the LIMIT rule already requires DESC).
+    expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM t ORDER BY bounce_rate LIMIT 3' })).toBeNull();
+    // Descending, label-first and unordered queries keep their caption.
+    for (const order of ['ORDER BY bounce_rate DESC', 'ORDER BY c', 'ORDER BY 2 DESC', '']) {
+      expect(lead(rows, cols, { sql: `SELECT c, bounce_rate FROM t ${order}` })).toBe('*Direct* has the highest bounce rate (0.9), followed by Paid (0.5).');
+    }
+    // A comment or string that mentions an ascending sort is inert.
+    expect(lead(rows, cols, { sql: "SELECT c, bounce_rate FROM t WHERE c != 'ORDER BY bounce_rate' -- ORDER BY bounce_rate" })).not.toBeNull();
+  });
+
+  it('a STRING period label (a time series has no winner)', () => {
+    for (const labels of [['January', 'February'], ['Jan 2026', 'Feb 2026'], ['Q1 2026', 'Q2 2026'], ['2026-Q1', '2026-Q2'], ['2026-W03', '2026-W04'], ['H1', 'H2'], ['FY2025', 'FY2026'], ['Monday', 'Tuesday'], ['Week 3', 'Week 4'], ['Sept.', 'Oct.']]) {
+      const rows = [{ p: labels[0], n: 9 }, { p: labels[1], n: 3 }];
+      expect(lead(rows, ['p', 'n'])).toBeNull();
+    }
+    // Words that merely start like a period name are still categories.
+    const rows = [{ p: 'Marketing', n: 9 }, { p: 'Sunglasses', n: 3 }];
+    expect(lead(rows, ['p', 'n'])).toBe('*Marketing* has the highest n (9), followed by Sunglasses (3).');
+  });
+
   it('negative values', () => {
     const rows = [{ c: 'A', n: 100 }, { c: 'B', n: -90 }];
     expect(lead(rows, ['c', 'n'])).toBeNull();

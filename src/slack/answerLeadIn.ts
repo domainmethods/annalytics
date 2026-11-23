@@ -37,6 +37,12 @@ const NUMERIC_TEXT = /^\d+(\.\d+)?$/;
 const SIGNED_NUMERIC_TEXT = /^[+-]?\d+(\.\d+)?$/;
 // ISO-ish dates, datetimes and times ("2026-11-01", "2026-11", "2026-11-01 10:00:00Z", "10:00").
 const TEMPORAL_TEXT = /^(\d{4}-\d{2}(-\d{2})?([T ][\d:.]+)?(Z|[+-]\d{2}:?\d{2})?|\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?)$/;
+// Whole-label period names a STRING column can carry: "January", "Jan 2026", "Q1 2026", "2026-Q1", "2026-W03", "H2", "FY2026", "Monday".
+const MONTH = '(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)';
+const PERIOD_TEXT = new RegExp(
+  `^(?:${MONTH}\\.?(?:[\\s,/-]+\\d{2,4})?|\\d{4}[\\s/-]*${MONTH}|\\d{4}[\\s/-]*(?:q[1-4]|h[12]|w\\d{1,2})|(?:q[1-4]|h[12]|w\\d{1,2}|week\\s*\\d{1,2})(?:[\\s/-]*\\d{2,4})?|fy\\s*\\d{2,4}|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?)$`,
+  'i',
+);
 
 interface Measure { text: string; num: number }
 
@@ -71,7 +77,7 @@ function readLabel(val: unknown): string | null {
   if (typeof val !== 'string') return null;
   const text = val.trim();
   if (text.length === 0 || text.length > MAX_LABEL_LENGTH || /[\r\n]/.test(text)) return null;
-  if (SIGNED_NUMERIC_TEXT.test(text) || TEMPORAL_TEXT.test(text)) return null;
+  if (SIGNED_NUMERIC_TEXT.test(text) || TEMPORAL_TEXT.test(text) || PERIOD_TEXT.test(text)) return null;
   // Trimmed, so bolding never wraps edge spaces ("* x *" renders literally).
   return text;
 }
@@ -96,10 +102,11 @@ function escapeRegExp(text: string): string {
  * BigQuery (L2 is advisory for that reason), so an AST-only check would silence captions
  * on every query the parser can't read.
  */
-function limitIsSafe(sql: string, rowCount: number, measureCol: string, measurePos: number): boolean {
+/** The SQL with comments blanked and string literals emptied, for clause matching. */
+function sqlCode(sql: string): string {
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string
   // that swallows a real LIMIT/OFFSET, and a comment marker inside a string is inert.
-  const code = sql.replace(
+  return sql.replace(
     // Backticked identifiers and triple-quoted strings are consumed whole, so a
     // quote inside them (`o'brien`) can't open a fake string that hides a LIMIT.
     // A backticked identifier keeps its word characters for the ORDER BY match.
@@ -109,6 +116,24 @@ function limitIsSafe(sql: string, rowCount: number, measureCol: string, measureP
       return m[0] === "'" || m[0] === '"' ? "''" : ' ';
     },
   );
+}
+
+function measureKeyPattern(measureCol: string, measurePos: number): string {
+  return `(?:\`?(?:\\w+\\.)*\`?${escapeRegExp(measureCol)}\`?|${measurePos})`;
+}
+
+/**
+ * True when the query's outer ORDER BY sorts by the measure ascending (ASC, or
+ * no direction): the asker wanted the smallest, so "X has the highest" would
+ * lead with the opposite of the question.
+ */
+function sortsMeasureAscending(code: string, measureCol: string, measurePos: number): boolean {
+  const outer = /\bORDER\s+BY\s+([^()]*)$/i.exec(code);
+  if (!outer) return false;
+  return new RegExp(`^${measureKeyPattern(measureCol, measurePos)}(?:\\s+ASC\\b|\\s*(?:,|\\bNULLS\\b|\\bLIMIT\\b|;|$))`, 'i').test(outer[1].trim());
+}
+
+function limitIsSafe(code: string, rowCount: number, measureCol: string, measurePos: number): boolean {
   if (/\b(?:OFFSET|QUALIFY|OVER|WINDOW)\b/i.test(code)) return false;
   const limits = code.match(/\bLIMIT\b/gi) ?? [];
   if (limits.length === 0) return true;
@@ -119,7 +144,7 @@ function limitIsSafe(sql: string, rowCount: number, measureCol: string, measureP
   const trailing = /\bLIMIT\s+(\d+)\s*;?\s*$/i.exec(code);
   if (!trailing) return false;
   if (rowCount < Number(trailing[1])) return true;
-  const key = `(?:\`?(?:\\w+\\.)*\`?${escapeRegExp(measureCol)}\`?|${measurePos})`;
+  const key = measureKeyPattern(measureCol, measurePos);
   const topN = new RegExp(`\\bORDER\\s+BY\\s+${key}\\s+DESC\\b[^()]*?\\bLIMIT\\s+${trailing[1]}\\s*;?\\s*$`, 'i');
   return topN.test(code);
 }
@@ -144,7 +169,11 @@ export function computeLeadIn(input: LeadInInput): string | null {
   if (!types || types.length !== columnNames.length) return null;
   if (!isNumericColumnType(types[columnNames.indexOf(measureCol[0])])) return null;
   if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
-  if (!limitIsSafe(sql, rows.length, measureCol[0], columnNames.indexOf(measureCol[0]) + 1)) return null;
+  const code = sqlCode(sql);
+  const measurePos = columnNames.indexOf(measureCol[0]) + 1;
+  if (!limitIsSafe(code, rows.length, measureCol[0], measurePos)) return null;
+  // An ascending sort on the measure asked for the lowest: a "highest" lead would answer the opposite question.
+  if (sortsMeasureAscending(code, measureCol[0], measurePos)) return null;
 
   const ranked = rows
     .map((r, index) => ({ index, label: readLabel(r[labelCol[0]]) as string, measure: readMeasure(r[measureCol[0]]) as Measure }))
