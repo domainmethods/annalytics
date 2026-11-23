@@ -9,7 +9,7 @@
 // every node, and the pass's ordinal among identical keys (baseline A vs B).
 // Code changes are NOT in the key: resume only with the code the checkpoint was
 // written with.
-import { appendFile, readFile, rm } from 'node:fs/promises';
+import { access, appendFile, readFile, rm } from 'node:fs/promises';
 import { formatSweepProfile } from '../node-sweep-types.js';
 import { getNodeProfile, NODE_IDS, resolveNodeModel } from '../../src/agents/nodeProfiles.js';
 import type { CorpusRunResult } from '../node-sweep.js';
@@ -58,7 +58,11 @@ export async function openSweepCheckpoint(
     if (text.length > 0 && !text.endsWith('\n')) await appendFile(path, '\n', 'utf8');
     log(`Checkpoint: resuming from ${path} (${saved.size} completed pass${saved.size === 1 ? '' : 'es'})`);
   } else {
-    await rm(path, { force: true });
+    // A leftover checkpoint is paid work from an interrupted run: never discard it implicitly.
+    const exists = await access(path).then(() => true, () => false);
+    if (exists) {
+      throw new Error(`A sweep checkpoint from an interrupted run exists at ${path}. Pass --resume to continue it, or delete it to start fresh.`);
+    }
     log(`Checkpoint: ${path} (rerun with --resume to continue after an interruption)`);
   }
 

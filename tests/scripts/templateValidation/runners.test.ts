@@ -296,7 +296,7 @@ it('aborts on a terminal judge error without making requests for the next item',
     .mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 504 }));
   const env = await loadTemplateEnv('test');
   const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
-  await expect(createTemplateRunner('summaryOverride', [item, { ...item, id: 'next' }], env, { providerRetries: 0 })())
+  await expect(createTemplateRunner('summaryOverride', [item, { ...item, id: 'next' }], env, { retryDelaysMs: [] })())
     .rejects.toMatchObject({ status: 504 });
   expect(generateContent).toHaveBeenCalledTimes(2);
 });
@@ -337,7 +337,7 @@ it('gives up after the configured retries', async () => {
   const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
   const sleeps: number[] = [];
   await expect(createTemplateRunner('summaryOverride', [item], env, {
-    providerRetries: 2, retryDelaysMs: [1, 2], sleep: async ms => { sleeps.push(ms); }, log: () => {},
+    retryDelaysMs: [1, 2], sleep: async ms => { sleeps.push(ms); }, log: () => {},
   })()).rejects.toMatchObject({ status: 429 });
   expect(sleeps).toEqual([1, 2]);
   expect(generateContent).toHaveBeenCalledTimes(3);

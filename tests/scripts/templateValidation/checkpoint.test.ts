@@ -22,3 +22,51 @@ it('keeps a pass appended after a truncated line readable on the next resume', a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+async function withDir(fn: (path: string) => Promise<void>) {
+  const dir = await mkdtemp(join(tmpdir(), 'sweep-checkpoint-'));
+  try {
+    await fn(join(dir, 'cp.jsonl'));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+const passOf = (score: number) => ({ perEntry: [{ id: 'a', overallScore: score }], nodeUsage: new Map() }) as never;
+
+it('gives identical passes distinct ordinals and replays both in order', () => withDir(async path => {
+  const first = await openSweepCheckpoint(path, 'h', false, () => {});
+  let n = 0;
+  const counting = first.wrap('slackIntake', async () => passOf(++n));
+  await counting();
+  await counting();
+  expect(n).toBe(2);
+  const second = await openSweepCheckpoint(path, 'h', true, () => {});
+  const replay = second.wrap('slackIntake', async () => { throw new Error('should replay'); });
+  expect(((await replay()) as { perEntry: { overallScore: number }[] }).perEntry[0].overallScore).toBe(1);
+  expect(((await replay()) as { perEntry: { overallScore: number }[] }).perEntry[0].overallScore).toBe(2);
+  expect(second.replayed).toBe(2);
+}));
+
+it('misses the checkpoint when a node profile changed', () => withDir(async path => {
+  const first = await openSweepCheckpoint(path, 'h', false, () => {});
+  await first.wrap('slackIntake', async () => passOf(1))();
+  const second = await openSweepCheckpoint(path, 'h', true, () => {});
+  process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({ slackIntake: { tier: 'flash', version: '3', thinkingLevel: 'high' } });
+  let ran = false;
+  try {
+    await second.wrap('slackIntake', async () => { ran = true; return passOf(1); })();
+  } finally {
+    delete process.env.NODE_PROFILE_OVERRIDES;
+  }
+  expect(ran).toBe(true);
+  expect(second.replayed).toBe(0);
+}));
+
+it('starts empty when --resume finds no checkpoint, and refuses a fresh run over a leftover one', () => withDir(async path => {
+  const resumed = await openSweepCheckpoint(path, 'h', true, () => {});
+  await resumed.wrap('slackIntake', async () => passOf(1))();
+  expect(resumed.replayed).toBe(0);
+  await expect(openSweepCheckpoint(path, 'h', false, () => {})).rejects.toThrow(/--resume/);
+  await resumed.discard();
+  await expect(openSweepCheckpoint(path, 'h', false, () => {})).resolves.toBeDefined();
+}));

@@ -219,23 +219,23 @@ const templateScorers: Scorers = {
 };
 
 export interface TemplateRunnerOptions {
-  /** Extra attempts for an item whose run hit a transient provider failure. */
-  providerRetries?: number;
-  /** Backoff before each retry; index 0 is the wait before the first retry. */
+  /**
+   * Backoff before each retry of an item whose run hit a transient provider failure;
+   * its length is the retry count (`[]` aborts on the first failure).
+   */
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
 }
 
-const DEFAULT_PROVIDER_RETRIES = 2;
 const DEFAULT_RETRY_DELAYS_MS = [10_000, 30_000] as const;
 
 export function createTemplateRunner<N extends NodeId>(
   node: N, items: unknown[], env: TemplateEnv, options: TemplateRunnerOptions = {},
 ): () => Promise<CorpusRunResult> {
   const parsed = items.map(item => ITEM_SCHEMAS[node].parse(item)) as Item<N>[];
-  const retries = options.providerRetries ?? DEFAULT_PROVIDER_RETRIES;
   const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const retries = delays.length;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const log = options.log ?? ((message: string) => console.warn(message));
   return async () => {
@@ -262,7 +262,7 @@ export function createTemplateRunner<N extends NodeId>(
           break;
         }
         if (attempt >= retries) throw outcome.evidence.providerAbort;
-        const delay = delays[Math.min(attempt, delays.length - 1)] ?? 0;
+        const delay = delays[attempt];
         log(`  [retry] ${node}/${item.id}: transient provider failure (${outcome.evidence.providerAbort.status}); `
           + `attempt ${attempt + 2} of ${retries + 1} in ${Math.round(delay / 1000)}s`);
         await sleep(delay);
