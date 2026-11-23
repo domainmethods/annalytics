@@ -420,6 +420,25 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     );
   });
 
+  it.each([
+    ['P01', `SELECT ch, COUNT(*) AS n FROM (SELECT *, LOWER(channel) AS ch FROM ${T}) WHERE channel IN ('Direct','Organic') GROUP BY ch`],
+    ['P02', `WITH s AS (SELECT channel, LOWER(channel) AS ch FROM ${T}) SELECT ch, COUNT(*) AS n FROM s WHERE channel = 'Direct' GROUP BY ch`],
+    ['P30', `SELECT ch, COUNT(*) AS n FROM (SELECT channel AS ch, channel FROM ${T}) WHERE channel IN ('a','b') GROUP BY ch`],
+    ['P31', `SELECT LOWER(c) AS ch, COUNT(*) AS n FROM (SELECT channel AS c, * FROM ${T}) WHERE channel = 'a' GROUP BY 1`],
+    ['P32', `SELECT ch, COUNT(*) AS n FROM (SELECT * REPLACE (LOWER(channel) AS ch) FROM ${T}) WHERE channel='a' GROUP BY ch`],
+    ['P46', `WITH a AS (SELECT channel AS c1, channel AS c2 FROM ${T}), b AS (SELECT c1 AS ch, c2 FROM a WHERE c2 = 'Direct') SELECT ch, COUNT(*) AS n FROM b GROUP BY ch`],
+    ['P47', `WITH a AS (SELECT * FROM ${T}), b AS (SELECT LOWER(channel) AS ch, channel FROM a) SELECT ch, COUNT(*) AS n FROM b WHERE channel IN ('Direct','Organic') GROUP BY ch`],
+  ])('S8 review probe %s: a WHERE on a sibling of the dimension\'s base column', (_id, sql) => {
+    expectReject(sql, result(three), 'where_on_dimension');
+  });
+
+  it('S8: a WHERE on an unrelated column through the same derived table stays eligible', () => {
+    expectEligible(
+      `SELECT ch, COUNT(*) AS n FROM (SELECT LOWER(channel) AS ch, d FROM ${T}) WHERE d >= '2024-01-01' GROUP BY ch`,
+      result(three),
+    );
+  });
+
   it('R-29: one row', () => {
     expectReject(`SELECT ch, COUNT(*) AS n FROM ${T} GROUP BY ch`, result([['a', 1]]), 'row_count');
   });

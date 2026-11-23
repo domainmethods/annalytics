@@ -265,32 +265,56 @@ function rowPreservingChain(s: Node, scope: Cte[]): Node[] {
   return [s, ...resolveSource(s.from, scope)];
 }
 
-/** S8: no WHERE on the chain references the dimension, traced through passthrough columns. */
-function checkWhereOnDimension(outer: Node, dimNames: Set<string>, chain: Node[]): void {
-  const touches = (where: unknown) => referencedNames(where).some(n => n === null || dimNames.has(n));
-  if (touches(outer.where)) fail('where_on_dimension');
-  for (const s of chain) {
-    for (const col of Array.isArray(s.columns) ? s.columns : []) {
-      if (!isObj(col)) return fail('where_on_dimension');
-      if (!onlyKeys(col, new Set(['expr', 'as']))) {
-        // `* EXCEPT/REPLACE (...)` and other shapes: treat every name inside as dimension lineage.
-        for (const n of referencedNames(col)) {
-          if (n === null) return fail('where_on_dimension');
-          dimNames.add(n);
-        }
-        continue;
-      }
-      const alias = typeof col.as === 'string' ? col.as : isObj(col.as) && typeof col.as.value === 'string' ? col.as.value : null;
-      const own = alias ?? (isColumnRef(col.expr) ? refName(col.expr) : null);
-      if (own !== null && dimNames.has(own.toLowerCase())) {
-        for (const n of referencedNames(col.expr)) {
-          if (n === null) return fail('where_on_dimension');
-          dimNames.add(n);
-        }
-      }
+/** Names an expression references; an unrecognised reference fails closed. */
+function namesOf(n: unknown): string[] {
+  return referencedNames(n).map(x => x ?? fail('where_on_dimension'));
+}
+
+/**
+ * One lineage step through source select `s`: every name `s`'s consumer may
+ * reference maps to the names `s` reads from its own source. Over-approximates
+ * (fail closed): a name always maps to itself too (it may pass through a `*`),
+ * and a `* EXCEPT/REPLACE (...)` item or any unrecognised item maps every name
+ * to everything that item references.
+ */
+function expandThrough(names: Set<string>, s: Node): Set<string> {
+  const out = new Set(names);
+  for (const col of Array.isArray(s.columns) ? s.columns : fail('where_on_dimension')) {
+    if (!isObj(col)) return fail('where_on_dimension');
+    if (!onlyKeys(col, new Set(['expr', 'as']))) {
+      for (const n of namesOf(col)) out.add(n);
+      continue;
     }
-    if (touches(s.where)) fail('where_on_dimension');
+    const alias = isEmpty(col.as) ? null : aliasOf(col.as);
+    const own = alias ?? (isColumnRef(col.expr) ? refName(col.expr) : null);
+    if (own !== null && names.has(own.toLowerCase())) for (const n of namesOf(col.expr)) out.add(n);
   }
+  return out;
+}
+
+/** Union of the names at every level from `from` down to the base tables. */
+function lineage(names: Set<string>, levels: Node[], from: number): Set<string> {
+  const all = new Set(names);
+  let current = names;
+  for (let i = from; i < levels.length; i++) {
+    current = expandThrough(current, levels[i]);
+    for (const n of current) all.add(n);
+  }
+  return all;
+}
+
+/**
+ * S8: no WHERE on the chain (outer included) may touch the dimension. Each
+ * WHERE's names and the dimension's names are both traced to base columns,
+ * and any overlap at any level rejects. levels = [outer, ...source chain]; the
+ * WHERE of levels[k] reads the outputs of levels[k + 1].
+ */
+function checkWhereOnDimension(levels: Node[], dimNames: Set<string>): void {
+  const dimAll = lineage(dimNames, levels, 1);
+  levels.forEach((level, k) => {
+    const whereAll = lineage(new Set(namesOf(level.where)), levels, k + 1);
+    for (const n of whereAll) if (dimAll.has(n)) fail('where_on_dimension');
+  });
 }
 
 function verify(input: CompositionInput): CompositionVerdict {
@@ -397,7 +421,7 @@ function verify(input: CompositionInput): CompositionVerdict {
     if (n === null) fail('where_on_dimension');
     dimNames.add(n!);
   }
-  checkWhereOnDimension(sel, dimNames, chain);
+  checkWhereOnDimension([sel, ...chain], dimNames);
 
   // V1–V3
   const computed = computeShares(rows.map(r => r[measure]), types![measIdx]);
