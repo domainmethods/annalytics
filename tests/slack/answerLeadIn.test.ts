@@ -195,6 +195,7 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     // Only the outer ORDER BY counts: an inner sort in a subquery neither silences nor hides it.
     expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM (SELECT * FROM t ORDER BY bounce_rate DESC) ORDER BY bounce_rate' })).toBeNull();
     expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM (SELECT * FROM t ORDER BY bounce_rate) ORDER BY bounce_rate DESC, LOWER(c)' })).not.toBeNull();
+    expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM (SELECT * FROM t ORDER BY bounce_rate)' })).not.toBeNull();
     // An ascending top-N cut is silent too (the LIMIT rule already requires DESC).
     expect(lead(rows, cols, { sql: 'SELECT c, bounce_rate FROM t ORDER BY bounce_rate LIMIT 3' })).toBeNull();
     // Descending, label-first and unordered queries keep their caption.
