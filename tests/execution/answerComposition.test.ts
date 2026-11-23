@@ -23,4 +23,10 @@ describe('stillDeclaredKeys', () => {
     expect(stillDeclaredKeys(['proj.Analytics.Orders.order_id'], current)).toEqual([]);
     expect(stillDeclaredKeys(['proj.ds.t.k'], undefined)).toEqual([]);
   });
+
+  it('filters per key: keeps the still-declared key and drops the stale one from one list', () => {
+    const current = declaredUniqueKeys([{ name: 'proj.Analytics.Orders', uniqueColumns: ['order_id'] }]);
+    expect(stillDeclaredKeys(['proj.Analytics.Orders.order_id', 'proj.analytics.orders.order_id'], current))
+      .toEqual(['proj.Analytics.Orders.order_id']);
+  });
 });
