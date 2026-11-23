@@ -61,8 +61,9 @@ export interface ResponseContext {
   headline?: string;
   /**
    * dbt unique keys (`project.dataset.table.column`, lower-cased) a verified
-   * composition proof relied on, so the Table override re-verifies the same
-   * COUNT(DISTINCT) shares. Omitted when no key was used and absent on legacy
+   * composition proof relied on (COUNT(DISTINCT) on a key, or a many-to-one
+   * LEFT JOIN onto a keyed table), so the Table override re-verifies the same
+   * shares. Omitted when no key was used and absent on legacy
    * records (Firestore rejects undefined).
    */
   compositionUniqueKeys?: string[];

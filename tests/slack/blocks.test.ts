@@ -238,6 +238,7 @@ describe('formatAssumptions', () => {
 
   it("keeps an abbreviation's final period", () => {
     expect(formatAssumptions(['Region is the U.S.', 'Plan is Pro.'])).toBe('Region is the U.S.; Plan is Pro');
+    expect(formatAssumptions(['Tier A;', 'Plan B,', 'Grade C.'])).toBe('Tier A; Plan B; Grade C');
   });
 });
 

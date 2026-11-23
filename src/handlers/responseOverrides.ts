@@ -77,7 +77,8 @@ export async function notifyContextUnavailable(
 /**
  * The verified composition for a re-rendered table, behind the flag. Re-uses
  * the unique keys the original proof relied on; a legacy context without them
- * verifies with none, so a COUNT(DISTINCT) answer stays rank-only.
+ * verifies with none, so a key-dependent answer (COUNT(DISTINCT), or a
+ * many-to-one LEFT JOIN) stays rank-only.
  */
 function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig, surface: 'override_table' | 'override_summary_fallback'): EligibleComposition | undefined {
   if (!config.answerSharesEnabled) return undefined;
