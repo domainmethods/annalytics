@@ -19,13 +19,17 @@ export function boundedPreview(text: string): string {
   return text.length <= SECTION_TEXT_LIMIT ? text : text.slice(0, SECTION_TEXT_LIMIT - note.length - 4) + '\n```' + note;
 }
 
-/** Bound free text to one section, cutting at a word boundary when possible. */
+/**
+ * Bound free text to one section, cutting at a word boundary when possible.
+ * Callers bound already-escaped text (escaping can grow it), so a cut never
+ * leaves half an entity: a trailing partial `&amp;` / `&lt;` / `&gt;` is dropped.
+ */
 export function boundedText(text: string, limit = SECTION_TEXT_LIMIT): string {
   if (text.length <= limit) return text;
   const marker = '…';
   const head = text.slice(0, limit - marker.length);
   const space = head.lastIndexOf(' ');
-  return (space > limit / 2 ? head.slice(0, space) : head) + marker;
+  return (space > limit / 2 ? head.slice(0, space) : head).replace(/&(?:a(?:m(?:p)?)?|l(?:t)?|g(?:t)?)?$/, '') + marker;
 }
 
 // Show SQL verbatim across up to MAX_SQL_SECTIONS sections; each section

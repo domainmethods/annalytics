@@ -8,6 +8,8 @@ import {
   SECTION_TEXT_LIMIT,
   TABLE_ROW_LIMIT,
   TABLE_TEXT_LIMIT,
+  boundedText,
+  escapeMrkdwn,
   sqlSections,
 } from '../../src/slack/limits.js';
 import type { ResponseContext } from '../../src/types.js';
@@ -131,5 +133,23 @@ describe('escalation sections', () => {
       userQuestion: 'q'.repeat(long),
       stuckDescription: 's'.repeat(long),
     })));
+  });
+});
+
+describe('boundedText', () => {
+  it('never cuts an escaped entity in half', () => {
+    // No spaces, so the cut lands at the limit: inside an `&amp;` for every offset.
+    for (let pad = 0; pad < 5; pad++) {
+      const out = boundedText(escapeMrkdwn('x'.repeat(pad) + '&'.repeat(40)), 20);
+      expect(out.length).toBeLessThanOrEqual(20);
+      expect(out.endsWith('…')).toBe(true);
+      expect(out.slice(0, -1)).not.toMatch(/&(?!amp;)[a-z]*$/);
+      expect(out.slice(0, -1).replace(/&amp;/g, '')).not.toContain('&');
+    }
+  });
+
+  it('leaves short text and a cut away from entities unchanged', () => {
+    expect(boundedText('a & b', 20)).toBe('a & b');
+    expect(boundedText('a'.repeat(30), 20)).toBe(`${'a'.repeat(19)}…`);
   });
 });

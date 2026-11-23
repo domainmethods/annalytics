@@ -207,6 +207,7 @@ export async function handleSummaryOverride(
       const blocks: KnownBlock[] = [
         ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
+        // No caption here on purpose: this notice already leads, and a second lead line would compete with it.
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config, 'override_summary_fallback')),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
