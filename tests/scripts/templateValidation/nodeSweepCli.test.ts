@@ -169,7 +169,7 @@ it.each([
   { status: 429, failedCall: 1, phase: 'calibration', previous: undefined },
   { status: 429, failedCall: 5, phase: 'stage 1', previous: '' },
   { status: 503, failedCall: 5, phase: 'stage 1', previous: '' },
-])('aborts an SDK $status in $phase before another request or report write', async ({ status, failedCall, previous }) => {
+])('aborts an SDK $status in $phase after retries, without a report write, and resumes', async ({ status, failedCall, previous }) => {
   vi.stubEnv('GEMINI_API_KEY', 'test-key');
   vi.stubEnv('NODE_PROFILE_OVERRIDES', previous);
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -178,9 +178,13 @@ it.each([
     id: String(i), category: 'simple', inputHash: hashItemInput(text), agreement: { members: ['test'] },
     text, expectedRoute: 'analytics_pipeline',
   }));
-  vi.mocked(readFile).mockImplementation(async path => String(path).endsWith('/VERSION') ? 'test' : JSON.stringify({
-    version: 'test', members: [], perNode: { slackIntake: { itemsSha256: 'a'.repeat(64), accepted: items.length } },
-  }));
+  const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  vi.mocked(readFile).mockImplementation(async (path, options) => {
+    if (String(path).endsWith('.jsonl')) return realFs.readFile(path, options);
+    return String(path).endsWith('/VERSION') ? 'test' : JSON.stringify({
+      version: 'test', members: [], perNode: { slackIntake: { itemsSha256: 'a'.repeat(64), accepted: items.length } },
+    });
+  });
   vi.mocked(loadItems).mockReturnValue(items as ReturnType<typeof loadItems>);
   vi.mocked(loadTemplateEnv).mockResolvedValue({
     apiKey: 'test-key', tables: [], knowledge: [], execute: vi.fn(), judge: vi.fn(),
@@ -188,11 +192,14 @@ it.each([
   const real = await vi.importActual<typeof import('../../../scripts/template-validation/runners.js')>(
     '../../../scripts/template-validation/runners.js',
   );
-  vi.mocked(createTemplateRunner).mockImplementation(real.createTemplateRunner);
+  const sleeps: number[] = [];
+  vi.mocked(createTemplateRunner).mockImplementation((selected, corpus, runnerEnv) =>
+    real.createTemplateRunner(selected, corpus, runnerEnv, { sleep: async ms => { sleeps.push(ms); } }));
   const profiles: (string | undefined)[] = [];
+  let outage = true;
   generateContent.mockReset().mockImplementation(async () => {
     profiles.push(process.env.NODE_PROFILE_OVERRIDES);
-    if (profiles.length === failedCall) throw Object.assign(new Error('sensitive provider response'), { status });
+    if (outage && profiles.length >= failedCall) throw Object.assign(new Error('sensitive provider response'), { status });
     return { text: '{"route":"analytics_pipeline","responseText":null,"reasoning":"Data request."}' };
   });
   const dir = await mkdtemp(join(tmpdir(), 'template-provider-abort-'));
@@ -203,12 +210,35 @@ it.each([
     await expect(main(['--corpus', 'template', '--node', node], dir)).rejects.toMatchObject({
       status, message: expect.not.stringContaining('sensitive provider response'),
     });
-    expect(generateContent).toHaveBeenCalledTimes(failedCall);
+    // The failing item is tried once plus two retries, then the sweep aborts.
+    expect(generateContent).toHaveBeenCalledTimes(failedCall + 2);
+    expect(sleeps).toEqual([10_000, 30_000]);
     if (failedCall > 1) expect(profiles.at(-1)).toContain('"slackIntake"');
     expect(process.env.NODE_PROFILE_OVERRIDES).toBe(previous);
-    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    expect((await readdir(dir)).sort()).toEqual([...fullReport].sort());
+    const checkpoint = 'node-sweep-checkpoint-test-hash.jsonl';
+    // Only completed passes are checkpointed: the two calibration passes when stage 1 failed.
+    expect((await readdir(dir)).sort()).toEqual([...fullReport, ...(failedCall > 1 ? [checkpoint] : [])].sort());
+    if (failedCall > 1) {
+      expect((await realFs.readFile(join(dir, checkpoint), 'utf8')).trim().split('\n')).toHaveLength(2);
+    }
     for (const name of fullReport) expect(await realFs.readFile(join(dir, name), 'utf8')).toBe('previous report');
+
+    // A --resume run after the outage replays the checkpointed calibration (2 passes x 2 items)
+    // instead of re-requesting it, writes the report, and discards the checkpoint.
+    outage = false;
+    profiles.length = 0;
+    await main(['--corpus', 'template', '--node', node, '--resume'], dir);
+    const resumedCalls = profiles.length;
+    profiles.length = 0;
+    const fresh = await mkdtemp(join(tmpdir(), 'template-provider-fresh-'));
+    try {
+      await main(['--corpus', 'template', '--node', node], fresh);
+    } finally {
+      await rm(fresh, { recursive: true, force: true });
+    }
+    expect(resumedCalls).toBe(profiles.length - (failedCall > 1 ? 4 : 0));
+    expect(await readdir(dir)).not.toContain(checkpoint);
+    expect(await readdir(dir)).toEqual(expect.arrayContaining([`${date}-model-refresh-partial-slackIntake.json`]));
   } finally {
     vi.mocked(readFile).mockReset();
     await rm(dir, { recursive: true, force: true });

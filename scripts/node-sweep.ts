@@ -78,17 +78,21 @@ interface SweepArgs {
   nodes: NodeId[];
   corpus: string;
   bypassClarification: boolean;
+  resume: boolean;
 }
 
 export function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
   let corpus = 'benchmarks/corpus.json';
   let bypassClarification = false;
+  let resume = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--bypass-clarification') {
       bypassClarification = true;
+    } else if (arg === '--resume') {
+      resume = true;
     } else if (arg === '--node') {
       const value = argv[++i];
       if (value) {
@@ -104,10 +108,14 @@ export function parseArgs(argv: string[]): SweepArgs {
     }
   }
 
+  if (resume && corpus !== 'template') {
+    throw new Error('--resume is only supported with --corpus template');
+  }
   return {
     nodes: nodes.length > 0 ? nodes : [...(corpus === 'template' ? NODE_IDS : DEFAULT_SWEEP_NODES)],
     corpus,
     bypassClarification,
+    resume,
   };
 }
 
@@ -835,7 +843,7 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
-async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string) {
+async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string, resume = false) {
   const selected = new Set(nodes);
   const ordered: NodeId[] = [
     ...[...selected].filter(node => node !== 'sqlGenerator' && node !== 'supervisor'),
@@ -873,6 +881,9 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   const setHash = hashValidationSet();
   const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
   const env = await loadTemplateEnv(apiKey);
+  await mkdir(resultsDir, { recursive: true });
+  const { openSweepCheckpoint } = await import('./template-validation/checkpoint.js');
+  const checkpoint = await openSweepCheckpoint(join(resultsDir, `node-sweep-checkpoint-${setHash.slice(0, 16)}.jsonl`), setHash, resume);
   const outcomes: NodeOutcome[] = [];
   const epsByNode = new Map<NodeId, number>();
   const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
@@ -890,13 +901,13 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   };
   let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
   for (const { node, items } of corpora) {
-    const runner = createTemplateRunner(node, items, env);
+    const runner = checkpoint.wrap(node, createTemplateRunner(node, items, env));
     const runCorpusOnce = async () => {
       const run = await runner();
       recordFailures(node, profileOf(node), run);
       return run;
     };
-    if (node === 'sqlGenerator') sqlRunner = runner;
+    if (node === 'sqlGenerator') sqlRunner = checkpoint.wrap('paired-sqlGenerator', createTemplateRunner(node, items, env));
     const result = await runSweep({
       nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
     });
@@ -943,6 +954,8 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
   });
   console.log(`\nReport written to ${base}.md and .json`);
+  if (checkpoint.replayed) console.log(`(${checkpoint.replayed} pass${checkpoint.replayed === 1 ? '' : 'es'} replayed from checkpoint)`);
+  await checkpoint.discard();
 }
 
 export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
@@ -956,7 +969,7 @@ export async function main(argv = process.argv.slice(2), templateResultsDir = jo
       if (process.env[name]) throw new Error(`Unset ${name} in the shell and .env before running a template sweep`);
     }
     if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
-    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir);
+    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir, args.resume);
     return;
   }
   const projectId = process.env.GCP_PROJECT_ID;
