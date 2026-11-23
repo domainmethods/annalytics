@@ -551,35 +551,65 @@ function joinRefs(n: unknown, j: Joins): string[] {
 }
 
 /**
- * S8 for joins. Right-side columns are matched per table namespace (the same
- * table joined twice shares one); left-side columns go through the left
- * source's lineage. ON/USING equalities link a column to the dimension when
- * the other side already reaches it, iterated to a fixpoint.
+ * S8 for joins. A unique right key makes the whole right row a function of the
+ * join key, so each right namespace (the same table joined twice shares one),
+ * together with the left columns ON/USING-linked to it, is one dimension group;
+ * groups that share a namespace or whose left columns' lineages overlap merge.
+ * When the dimension reaches a group, every column of the group counts as
+ * dimension: a WHERE on any right column of the group, or (through the left
+ * source's lineage, at any level) on a linked left column, rejects. This is
+ * deliberately coarse: a WHERE on a right sibling rejects too.
  */
 function checkJoinWhereOnDimension(levels: Node[], dimExpr: unknown, where: unknown, j: Joins): void {
   const left = (r: string) => (r.startsWith('0\0') ? r.slice(2) : null);
-  const dimRight = new Set<string>();
-  const dimLeft = new Set<string>();
-  const add = (r: string) => (left(r) === null ? dimRight : dimLeft).add(left(r) ?? r);
-  joinRefs(dimExpr, j).forEach(add);
-  const reaches = (r: string, leftAll: Set<string>) => {
-    const l = left(r);
-    return l === null ? dimRight.has(r) : [...lineage(new Set([l]), levels, 1)].some(n => leftAll.has(n));
-  };
-  for (let changed = true; changed;) {
-    changed = false;
-    const leftAll = lineage(dimLeft, levels, 1);
-    for (const [a, b] of j.pairs) {
-      for (const [x, y] of [[a, b], [b, a]]) {
-        if (reaches(x, leftAll) && !reaches(y, leftAll)) {
-          add(y);
-          changed = true;
+  const space = (r: string) => r.slice(0, r.indexOf('\0'));
+  type Group = { spaces: Set<string>; left: Set<string> };
+  let groups: Group[] = j.pairs.map(pair => {
+    const g: Group = { spaces: new Set(), left: new Set() };
+    for (const r of pair) {
+      const l = left(r);
+      if (l === null) g.spaces.add(space(r));
+      else g.left.add(l);
+    }
+    return g;
+  });
+  const leftAll = (names: Set<string>) => lineage(names, levels, 1);
+  const overlaps = (a: Set<string>, b: Set<string>) => [...a].some(n => b.has(n));
+  for (let merged = true; merged;) {
+    merged = false;
+    outer: for (let x = 0; x < groups.length; x++) {
+      for (let y = x + 1; y < groups.length; y++) {
+        const [gx, gy] = [groups[x], groups[y]];
+        if (overlaps(gx.spaces, gy.spaces) || overlaps(leftAll(gx.left), leftAll(gy.left))) {
+          groups = groups.filter((_, i) => i !== y);
+          groups[x] = { spaces: new Set([...gx.spaces, ...gy.spaces]), left: new Set([...gx.left, ...gy.left]) };
+          merged = true;
+          break outer;
         }
       }
     }
   }
+  const dimSpaces = new Set<string>();
+  const dimLeft = new Set<string>();
+  for (const r of joinRefs(dimExpr, j)) {
+    const l = left(r);
+    if (l === null) dimSpaces.add(space(r));
+    else dimLeft.add(l);
+  }
+  const touched = new Set<Group>();
+  for (let changed = true; changed;) {
+    changed = false;
+    const dimAll = leftAll(dimLeft);
+    for (const g of groups) {
+      if (touched.has(g) || !(overlaps(g.spaces, dimSpaces) || overlaps(leftAll(g.left), dimAll))) continue;
+      touched.add(g);
+      g.spaces.forEach(x => dimSpaces.add(x));
+      g.left.forEach(x => dimLeft.add(x));
+      changed = true;
+    }
+  }
   const whereRefs = joinRefs(where, j);
-  if (whereRefs.some(r => left(r) === null && dimRight.has(r))) fail('where_on_dimension');
+  if (whereRefs.some(r => left(r) === null && dimSpaces.has(space(r)))) fail('where_on_dimension');
   checkWhereOnDimension(levels, dimLeft, new Set(whereRefs.flatMap(r => left(r) ?? [])));
 }
 

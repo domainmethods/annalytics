@@ -834,10 +834,55 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
   it.each([
     ['WHERE f.d', "WHERE f.d >= '2024-01-01'"],
     ['WHERE f.label (a different base column)', "WHERE f.label = 'x'"],
-    ['WHERE on a right sibling', "WHERE d.region = 'EU'"],
-    ['WHERE on the join key', "WHERE f.k IN ('a', 'b')"],
   ])('Ruling 2: %s with dimension d.label is eligible', (_id, where) => {
     expectEligibleK(J(ON, `${where} GROUP BY d.label`), lab(), [DK]);
+  });
+
+  // I1: the right row is a function of the join key, so a unique-joined namespace (all its columns plus the
+  // left columns ON/USING-linked to it) is one dimension group: a WHERE reaching the group rejects.
+  it.each([
+    ['WHERE on a right sibling', "WHERE d.region = 'EU'"],
+    ['WHERE on the join key', "WHERE f.k IN ('a', 'b')"],
+    ['WHERE on the right key', "WHERE d.k IN ('a', 'b')"],
+  ])('I1: %s with dimension d.label rejects with where_on_dimension', (_id, where) => {
+    expectRejectK(J(ON, `${where} GROUP BY d.label`), lab(), [DK], 'where_on_dimension');
+  });
+
+  describe('I1: a unique-joined namespace is one dimension group', () => {
+    const SJ = 'FROM `proj.ds.sessions` s LEFT JOIN `proj.ds.countries` c ON s.country_code = c.code';
+    const CK = ['proj.ds.countries.code'];
+
+    it.each([
+      ['row 1: left join-key dimension, WHERE on a right column', "SELECT s.country_code AS label, COUNT(*) n " + SJ + " WHERE c.continent = 'Europe' GROUP BY 1"],
+      ['row 2: right key dimension, WHERE on a right column', "SELECT c.code AS label, COUNT(*) n " + SJ + " WHERE c.continent = 'Europe' GROUP BY 1"],
+      ['row 3: right dimension, WHERE on the left join key', "SELECT c.country_name AS label, COUNT(*) n " + SJ + " WHERE s.country_code IN ('US', 'CA') GROUP BY 1"],
+      ['row 4: right dimension, WHERE on the right key', "SELECT c.country_name AS label, COUNT(*) n " + SJ + " WHERE c.code IN ('US', 'CA') GROUP BY 1"],
+      ['a right sibling', "SELECT c.country_name AS label, COUNT(*) n " + SJ + " WHERE c.continent = 'Europe' GROUP BY 1"],
+      ['USING: right dimension, WHERE on the left key', "SELECT c.country_name AS label, COUNT(*) n FROM `proj.ds.sessions` s LEFT JOIN `proj.ds.countries` c USING (code) WHERE s.code IN ('US') GROUP BY 1"],
+      ['a left CTE WHERE on the join key', "WITH t AS (SELECT * FROM `proj.ds.sessions` WHERE country_code != 'US') SELECT c.country_name AS label, COUNT(*) n FROM t s LEFT JOIN `proj.ds.countries` c ON s.country_code = c.code GROUP BY 1"],
+    ])('%s rejects with where_on_dimension', (_id, sql) => {
+      expectRejectK(sql, lab(), CK, 'where_on_dimension');
+    });
+
+    it('a second namespace linked through the first is in the same group', () => {
+      const sql = 'SELECT r.name AS label, COUNT(*) n FROM `proj.ds.sessions` s'
+        + ' LEFT JOIN `proj.ds.countries` c ON s.country_code = c.code'
+        + ' LEFT JOIN `proj.ds.regions` r ON c.region_id = r.id'
+        + " WHERE c.continent = 'Europe' GROUP BY 1";
+      expectRejectK(sql, lab(), [...CK, 'proj.ds.regions.id'], 'where_on_dimension');
+    });
+
+    it.each([
+      ['a right-column WHERE', "WHERE c.continent = 'Europe'"],
+      ['a left join-key WHERE', "WHERE s.country_code IN ('US', 'CA')"],
+      ['another left column WHERE', "WHERE s.device = 'mobile'"],
+    ])('a left non-key dimension (s.channel) with %s stays eligible (a row filter)', (_id, where) => {
+      expectEligibleK(`SELECT s.channel AS label, COUNT(*) n ${SJ} ${where} GROUP BY 1`, lab(), CK);
+    });
+
+    it('a right dimension with a WHERE on an unlinked left column stays eligible', () => {
+      expectEligibleK(`SELECT c.country_name AS label, COUNT(*) n ${SJ} WHERE s.device = 'mobile' GROUP BY 1`, lab(), CK);
+    });
   });
 
   it.each([
