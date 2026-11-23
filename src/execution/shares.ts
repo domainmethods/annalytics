@@ -46,13 +46,9 @@ export function toExactDecimal(val: unknown, type: string): string | null {
     text = String(val);
   } else if (typeof val === 'object' && !Array.isArray(val)) {
     const inner = unwrapBigQueryScalar(val);
-    if (inner !== undefined) {
-      if (typeof inner === 'boolean') return null;
-      if (typeof inner === 'number' && !Number.isFinite(inner)) return null;
-      text = String(inner);
-    } else {
-      text = String(val);
-    }
+    // Wrapped values take the same validation path as bare ones.
+    if (inner !== undefined) return toExactDecimal(inner, type);
+    text = String(val);
   }
   if (text === null) return null;
   return (kind === 'int' ? INT_RE : DEC_RE).test(text) ? text : null;

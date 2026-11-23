@@ -120,14 +120,39 @@ function isColumnRef(n: unknown): n is Node {
   return isObj(n) && n.type === 'column_ref';
 }
 
-/** Every name a WHERE/expression references: column names and table qualifiers. null marks an unrecognised ref. */
-function referencedNames(n: unknown): (string | null)[] {
+/**
+ * Names a select's own FROM item can be qualified by (its alias, full table
+ * name, and the table name's last segment). Unrecognised shapes add nothing, so
+ * their qualifiers stay tracked as names (fail closed).
+ */
+function fromQualifiers(s: Node): Set<string> {
+  const out = new Set<string>();
+  for (const item of Array.isArray(s.from) ? s.from : []) {
+    if (!isObj(item)) continue;
+    const alias = typeof item.as === 'string' ? item.as : isObj(item.as) && typeof item.as.value === 'string' ? item.as.value : null;
+    if (alias !== null) out.add(alias.toLowerCase());
+    if (typeof item.table === 'string') {
+      out.add(item.table.toLowerCase());
+      out.add(item.table.split('.').pop()!.toLowerCase());
+    }
+  }
+  return out;
+}
+
+/**
+ * Every name an expression references: column names, plus table qualifiers
+ * other than `ownQualifiers` (the enclosing select's FROM names), so a
+ * struct-field access like `user.channel` stays tracked. null marks an
+ * unrecognised ref.
+ */
+function referencedNames(n: unknown, ownQualifiers: Set<string> = new Set()): (string | null)[] {
   const out: (string | null)[] = [];
   some(n, o => {
     if (o.type === 'column_ref') {
       out.push(refName(o)?.toLowerCase() ?? null);
-      if (typeof o.table === 'string') out.push(o.table.toLowerCase());
-      else if (!isEmpty(o.table)) out.push(null);
+      if (typeof o.table === 'string') {
+        if (!ownQualifiers.has(o.table.toLowerCase())) out.push(o.table.toLowerCase());
+      } else if (!isEmpty(o.table)) out.push(null);
     }
     return false;
   });
@@ -173,7 +198,7 @@ const isNumber = (n: unknown, pred: (v: number) => boolean) =>
   isObj(n) && n.type === 'number' && typeof n.value === 'number' && pred(n.value);
 
 /** S3 + S4: the measure is an allow-listed additive aggregate, optionally wrapped. */
-function measureKind(e: unknown): 'count' | 'sum' {
+function measureKind(e: unknown, quals: Set<string>): 'count' | 'sum' {
   if (!isObj(e)) return fail('measure_not_additive');
   if (e.type === 'cast') {
     const target = e.target;
@@ -183,17 +208,17 @@ function measureKind(e: unknown): 'count' | 'sum' {
       || !onlyKeys(target[0], new Set(['dataType']))) {
       return fail('measure_not_additive');
     }
-    return measureKind(e.expr);
+    return measureKind(e.expr, quals);
   }
   if (e.type === 'function') {
     const name = builtinName(e);
     if (name === 'APPROX_COUNT_DISTINCT') return fail('count_distinct');
     const args = exprList(e);
     if (name === 'ROUND' && (args.length === 1 || (args.length === 2 && isNumber(args[1], v => Number.isInteger(v) && v >= 0)))) {
-      return measureKind(args[0]);
+      return measureKind(args[0], quals);
     }
     if ((name === 'IFNULL' || name === 'COALESCE') && args.length === 2 && isNumber(args[1], v => v === 0)) {
-      return measureKind(args[0]);
+      return measureKind(args[0], quals);
     }
     if (name === 'COUNTIF' && args.length === 1 && !hasSubquery(args[0]) && !hasAggregate(args[0])) return 'count';
     return fail('measure_not_additive');
@@ -213,7 +238,7 @@ function measureKind(e: unknown): 'count' | 'sum' {
     if (name === 'SUM') {
       if (distinct || !isObj(arg) || hasSubquery(arg) || hasAggregate(arg)) return fail('measure_not_additive');
       // S4, extended conservatively to every column referenced inside the SUM argument.
-      if (referencedNames(arg).some(n => n === null || NON_ADDITIVE_COLUMN_RE.test(n))) return fail('sum_non_additive_column');
+      if (referencedNames(arg, quals).some(n => n === null || NON_ADDITIVE_COLUMN_RE.test(n))) return fail('sum_non_additive_column');
       return 'sum';
     }
   }
@@ -266,8 +291,8 @@ function rowPreservingChain(s: Node, scope: Cte[]): Node[] {
 }
 
 /** Names an expression references; an unrecognised reference fails closed. */
-function namesOf(n: unknown): string[] {
-  return referencedNames(n).map(x => x ?? fail('where_on_dimension'));
+function namesOf(n: unknown, ownQualifiers: Set<string>): string[] {
+  return referencedNames(n, ownQualifiers).map(x => x ?? fail('where_on_dimension'));
 }
 
 /**
@@ -279,15 +304,16 @@ function namesOf(n: unknown): string[] {
  */
 function expandThrough(names: Set<string>, s: Node): Set<string> {
   const out = new Set(names);
+  const quals = fromQualifiers(s);
   for (const col of Array.isArray(s.columns) ? s.columns : fail('where_on_dimension')) {
     if (!isObj(col)) return fail('where_on_dimension');
     if (!onlyKeys(col, new Set(['expr', 'as']))) {
-      for (const n of namesOf(col)) out.add(n);
+      for (const n of namesOf(col, quals)) out.add(n);
       continue;
     }
     const alias = isEmpty(col.as) ? null : aliasOf(col.as);
     const own = alias ?? (isColumnRef(col.expr) ? refName(col.expr) : null);
-    if (own !== null && names.has(own.toLowerCase())) for (const n of namesOf(col.expr)) out.add(n);
+    if (own !== null && names.has(own.toLowerCase())) for (const n of namesOf(col.expr, quals)) out.add(n);
   }
   return out;
 }
@@ -312,7 +338,7 @@ function lineage(names: Set<string>, levels: Node[], from: number): Set<string> 
 function checkWhereOnDimension(levels: Node[], dimNames: Set<string>): void {
   const dimAll = lineage(dimNames, levels, 1);
   levels.forEach((level, k) => {
-    const whereAll = lineage(new Set(namesOf(level.where)), levels, k + 1);
+    const whereAll = lineage(new Set(namesOf(level.where, fromQualifiers(level))), levels, k + 1);
     for (const n of whereAll) if (dimAll.has(n)) fail('where_on_dimension');
   });
 }
@@ -392,7 +418,7 @@ function verify(input: CompositionInput): CompositionVerdict {
   if (hasAggregate(dimExpr) || hasSubquery(dimExpr)) fail('group_by_shape');
 
   // S3 + S4
-  const kind = measureKind(exprs[measIdx]);
+  const kind = measureKind(exprs[measIdx], fromQualifiers(sel));
 
   // S5
   const limit = sel.limit;
@@ -417,7 +443,7 @@ function verify(input: CompositionInput): CompositionVerdict {
   // S8
   const dimNames = new Set<string>([dimension.toLowerCase()]);
   if (aliases[dimIdx] !== null) dimNames.add(aliases[dimIdx]!.toLowerCase());
-  for (const n of referencedNames(dimExpr)) {
+  for (const n of referencedNames(dimExpr, fromQualifiers(sel))) {
     if (n === null) fail('where_on_dimension');
     dimNames.add(n!);
   }
