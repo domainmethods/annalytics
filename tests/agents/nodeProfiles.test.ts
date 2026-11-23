@@ -42,7 +42,7 @@ describe('nodeProfiles', () => {
     for (const n of ['dbtStatus', 'chart', 'summaryOverride'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
-    // low — light open judgment over provided context, plus slackIntake/ambiguityClassifier
+    // low — light open judgment over provided context, plus the classifiers
     // (both Hydrogen classifiers are also tested on their own)
     for (const n of ['slackIntake', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
