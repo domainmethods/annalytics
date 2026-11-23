@@ -291,7 +291,7 @@ it('reverts the supervisor when the paired SQL metric drops more than epsilon an
   expect(process.env.NODE_PROFILE_OVERRIDES).toBe(original);
 });
 
-it('aborts on a terminal judge error without making requests for the next item', async () => {
+it('aborts on a transient judge error when retries are disabled, without making requests for the next item', async () => {
   generateContent.mockResolvedValueOnce({ text: 'There was 1 order.' })
     .mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 504 }));
   const env = await loadTemplateEnv('test');

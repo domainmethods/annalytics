@@ -215,7 +215,7 @@ it.each([
     expect(sleeps).toEqual([10_000, 30_000]);
     if (failedCall > 1) expect(profiles.at(-1)).toContain('"slackIntake"');
     expect(process.env.NODE_PROFILE_OVERRIDES).toBe(previous);
-    const checkpoint = 'node-sweep-checkpoint-test-hash.jsonl';
+    const checkpoint = 'node-sweep-checkpoint-test-hash-slackIntake.jsonl';
     // Only completed passes are checkpointed: the two calibration passes when stage 1 failed.
     expect((await readdir(dir)).sort()).toEqual([...fullReport, ...(failedCall > 1 ? [checkpoint] : [])].sort());
     if (failedCall > 1) {
