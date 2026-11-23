@@ -203,7 +203,7 @@
 - Test: `tests/execution/composition.test.ts` (extend)
 
 **Interfaces:**
-- Consumes: `CompositionInput.uniqueKeys`. Each key is `project.dataset.table.column`, lower-case, matched case-insensitively.
+- Consumes: `CompositionInput.uniqueKeys`. Each key is `project.dataset.table.column`; the column is matched case-insensitively, the table name case-sensitively (BigQuery dataset and table names are case-sensitive).
 - Produces: `usedUniqueKeys` populated with exactly the keys the proof relied on.
 
 - [ ] **Step 1: Write the failing tests:**

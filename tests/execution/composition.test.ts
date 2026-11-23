@@ -682,9 +682,16 @@ describe('verifyComposition v1.1: COUNT(DISTINCT unique key)', () => {
     expect(v.usedUniqueKeys).toEqual([SK]);
   });
 
-  it('U1: keys and column names match case-insensitively; usedUniqueKeys is lower-cased', () => {
-    const v = expectEligibleK(CD('`Proj.DS.Sessions`', 'Session_Key'), result(three), ['PROJ.DS.SESSIONS.SESSION_KEY']);
+  it('U1: column names match case-insensitively; usedUniqueKeys carries the column lower-cased', () => {
+    const v = expectEligibleK(CD(T, 'Session_Key'), result(three), ['proj.ds.sessions.SESSION_KEY']);
     expect(v.usedUniqueKeys).toEqual([SK]);
+  });
+
+  it('U1: table names are case-sensitive (BigQuery), so a key on a differently cased table never vouches', () => {
+    expectRejectK(CD('`Proj.DS.Sessions`'), result(three), [SK], 'count_distinct');
+    expectRejectK(CD(T), result(three), ['PROJ.DS.SESSIONS.session_key'], 'count_distinct');
+    expect(expectEligibleK(CD('`proj.ds.Sessions`'), result(three), ['proj.ds.Sessions.session_key']).usedUniqueKeys)
+      .toEqual(['proj.ds.Sessions.session_key']);
   });
 
   it('U1: an unquoted 3-part name and an own-qualified column match', () => {
@@ -850,10 +857,10 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
     expect(v.usedUniqueKeys).toEqual([DK, 'proj.ds.e.id']);
   });
 
-  it('Ruling 5: usedUniqueKeys is deduped, lower-cased and sorted', () => {
+  it('Ruling 5: usedUniqueKeys is deduped, column lower-cased and sorted', () => {
     const v = expectEligibleK(
       J(`LEFT JOIN ${D} d ON f.k = d.k LEFT JOIN ${D} d2 ON f.k2 = d2.k`, 'GROUP BY d.label', 'COUNT(DISTINCT f.session_key)'),
-      lab(), ['PROJ.DS.FACT.SESSION_KEY', DK],
+      lab(), ['proj.ds.fact.SESSION_KEY', DK],
     );
     expect(v.usedUniqueKeys).toEqual([DK, FSK]);
   });

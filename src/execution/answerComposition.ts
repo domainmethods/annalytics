@@ -1,4 +1,4 @@
-import { verifyComposition, type CompositionInput, type CompositionRejectReason, type EligibleComposition } from './composition.js';
+import { uniqueKeyCase, verifyComposition, type CompositionInput, type CompositionRejectReason, type EligibleComposition } from './composition.js';
 
 export interface CompositionLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -10,12 +10,12 @@ export type CompositionSurface = 'answer' | 'override_table' | 'override_summary
 export type AnswerCompositionReason = CompositionRejectReason | 'verifier_error';
 
 /**
- * The `project.dataset.table.column` unique keys (lowercased) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`.
+ * The `project.dataset.table.column` unique keys (column lowercased, table case kept) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`.
  * A model with no `database` yields a two-part table name (`dataset.table`), so its three-part keys never match the
  * proof's four-part `project.dataset.table.column` keys (fail closed).
  */
 export function declaredUniqueKeys(tables: ReadonlyArray<{ name: string; uniqueColumns?: string[] }>): string[] {
-  return tables.flatMap(t => (t.uniqueColumns ?? []).map(c => `${t.name}.${c}`.toLowerCase()));
+  return tables.flatMap(t => (t.uniqueColumns ?? []).map(c => uniqueKeyCase(`${t.name}.${c}`)));
 }
 
 /**

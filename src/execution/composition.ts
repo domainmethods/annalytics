@@ -156,7 +156,16 @@ function itemQualifiers(item: unknown): Set<string> {
 const lastSegment = (table: string) => table.split('.').pop()!.toLowerCase();
 
 /**
- * A base-table reference's full `project.dataset.table` name, lower-cased:
+ * BigQuery dataset and table names are case-sensitive, column names are not: fold only the column, so a
+ * `unique` test on `ds.Orders` never vouches for a different table `ds.orders` (fail closed).
+ */
+export function uniqueKeyCase(key: string): string {
+  const i = key.lastIndexOf('.');
+  return key.slice(0, i + 1) + key.slice(i + 1).toLowerCase();
+}
+
+/**
+ * A base-table reference's full `project.dataset.table` name, case kept (see `uniqueKeyCase`):
  * the (backtick-stripped) table when it has exactly three non-empty parts,
  * else catalog/db, schema and table when all three exist; otherwise null.
  */
@@ -165,12 +174,12 @@ function fullName(item: Node): string | null {
   const parts = item.table.split('.');
   if (parts.length === 3) {
     const unsplit = isEmpty(item.db) && isEmpty(item.schema) && isEmpty(item.catalog);
-    return unsplit && parts.every(x => x !== '') ? item.table.toLowerCase() : null;
+    return unsplit && parts.every(x => x !== '') ? item.table : null;
   }
   const project = item.catalog ?? item.db;
   if (parts.length !== 1 || item.table === '') return null;
   return [project, item.schema].every(x => typeof x === 'string' && x !== '' && !x.includes('.'))
-    ? `${project as string}.${item.schema as string}.${item.table}`.toLowerCase()
+    ? `${project as string}.${item.schema as string}.${item.table}`
     : null;
 }
 
@@ -512,7 +521,7 @@ function checkJoins(from: unknown[], keys: Set<string>): Joins {
     if ('expr' in item || item.type === 'unnest' || !isEmpty(item.operator) || !onlyKeys(item, JOIN_ITEM_KEYS)) return fail('row_source');
     const full = fullName(item) ?? fail('row_source');
     // `LEFT JOIN f.rec.arr` whose head names an earlier range variable is a correlated array path (an UNNEST).
-    if (quals.slice(0, i).some(q => q.has(full.split('.')[0]))) fail('row_source');
+    if (quals.slice(0, i).some(q => q.has(full.split('.')[0].toLowerCase()))) fail('row_source');
     spaces.push(`t:${lastSegment(full)}`);
     let rightCol: string;
     if (!isEmpty(item.on) && isEmpty(item.using)) {
@@ -694,7 +703,7 @@ function verify(input: CompositionInput): CompositionVerdict {
   if (hasAggregate(dimExpr) || hasSubquery(dimExpr)) fail('group_by_shape');
 
   // S3 + S4
-  const keys = new Set((input.uniqueKeys ?? []).map(k => k.toLowerCase()));
+  const keys = new Set((input.uniqueKeys ?? []).map(uniqueKeyCase));
   const distinctArgs: unknown[] | null = keys.size > 0 ? [] : null;
   const kind = measureKind(exprs[measIdx], fromQualifiers(sel), distinctArgs);
 
