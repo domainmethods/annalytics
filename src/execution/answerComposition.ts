@@ -1,10 +1,13 @@
-import { verifyComposition, type CompositionInput, type EligibleComposition } from './composition.js';
+import { verifyComposition, type CompositionInput, type CompositionRejectReason, type EligibleComposition } from './composition.js';
 
 export interface CompositionLogger {
   info(obj: Record<string, unknown>, msg: string): void;
 }
 
 export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
+
+/** Every `reason` the `answer.composition` log can carry: the verifier's own, plus a throw caught here. */
+export type AnswerCompositionReason = CompositionRejectReason | 'verifier_error';
 
 /**
  * The `project.dataset.table.column` unique keys (lowercased) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`.
@@ -39,7 +42,7 @@ export function verifyAnswerComposition(
   meta: { surface: CompositionSurface; traceId?: string },
 ): EligibleComposition | undefined {
   let composition: EligibleComposition | undefined;
-  let fields: Record<string, unknown>;
+  let fields: { eligible: true; measureKind: EligibleComposition['measureKind']; usedUniqueKeyCount: number } | { eligible: false; reason: AnswerCompositionReason };
   try {
     const verdict = verifyComposition(input);
     if (verdict.eligible) {
