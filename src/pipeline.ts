@@ -221,7 +221,9 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     });
     // The status message was posted before this read, so it is in the thread.
     // Leave it out, or it is taken for the message being answered and the
-    // question itself is kept as context for itself.
+    // question itself is kept as context for itself. When a clarification
+    // resume falls back to reusing the clarifying message, its text is the
+    // status written above by now, not the questions, so it is left out too.
     const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
       summarizeOlder: true,
       stripQueryResults: true,

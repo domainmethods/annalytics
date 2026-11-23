@@ -200,6 +200,25 @@ describe('createStatusReporter', () => {
       expect(texts).toEqual(['I was not able to answer that.']);
     });
 
+    it('keeps rewriting when a nested region ends before the outer one', async () => {
+      const { texts, write } = recordingWrites();
+      const status = createStatusReporter({ write });
+
+      await status.withHeartbeat(async () => {
+        await status.set('Researching the best approach...');
+        await status.withHeartbeat(async () => {
+          await vi.advanceTimersByTimeAsync(10_000);
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+
+      expect(texts).toEqual([
+        'Researching the best approach...',
+        'Researching the best approach... (10s)',
+        'Researching the best approach... (20s)',
+      ]);
+    });
+
     it('returns what the work returns', async () => {
       const status = createStatusReporter({ write: vi.fn().mockResolvedValue(undefined) });
 
