@@ -182,7 +182,10 @@ describe('syncTeachingsToFileSearch', () => {
 
     expect(result.deleted).toBe(2);
     expect(result.active).toBe(1);
-    expect(mockListDocuments).toHaveBeenCalledWith({ parent: 'stores/test' });
+    expect(mockListDocuments).toHaveBeenCalledWith({
+      parent: 'stores/test',
+      config: { pageSize: 20 },
+    });
     expect(mockDeleteDocument).toHaveBeenCalledWith({
       name: 'stores/test/documents/old-1',
       config: { force: true },

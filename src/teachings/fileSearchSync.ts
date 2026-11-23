@@ -192,8 +192,11 @@ async function listFileSearchDocuments(
   ai: GoogleGenAI,
   fileSearchStoreName: string,
 ): Promise<FileSearchDocumentReadback[]> {
+  // @google/genai's Pager only stores nextPageToken when params.config is defined;
+  // omitting config silently truncates listings to the first page (10 documents).
   const documents = await ai.fileSearchStores.documents.list({
     parent: fileSearchStoreName,
+    config: { pageSize: 20 },
   });
   const readback: FileSearchDocumentReadback[] = [];
   for await (const document of documents) {
