@@ -467,11 +467,21 @@ describe('parseDbtArtifacts uniqueColumns', () => {
     ['disabled', uniqueTest({ config: { enabled: false } })],
     ['two models', (() => { const t = uniqueTest({ depends_on: { nodes: [MODEL, OTHER] } }); delete (t as Record<string, unknown>).attached_node; return t; })()],
     ['unknown attached_node', uniqueTest({ attached_node: 'model.pkg.nope', depends_on: { nodes: [MODEL] } })],
+    ['severity warn', uniqueTest({ config: { severity: 'warn' } })],
+    ['error_if tolerance', uniqueTest({ config: { error_if: '>10' } })],
+    ['warn_if tolerance', uniqueTest({ config: { warn_if: '>5' } })],
+    ['expression column', uniqueTest({}, 'lower(x)')],
+    ['backticked column', uniqueTest({}, '`session_key`')],
     ['no column', uniqueTest({ test_metadata: { name: 'unique', kwargs: {} } })],
   ])('ignores %s', (_label, test) => {
     const result = parse({ t1: test });
     expect(result.uniqueColumns).toBeUndefined();
     expect('uniqueColumns' in result).toBe(false);
+  });
+
+  it('keeps ERROR severity and default-equivalent thresholds', () => {
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { error_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
   });
 
   it('accepts null or empty namespace and empty where', () => {

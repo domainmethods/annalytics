@@ -204,6 +204,11 @@ function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<strin
     const config = optionalRecord(rawNode.config);
     if (config.enabled === false) continue;
     if (typeof config.where === 'string' && config.where.trim() !== '') continue;
+    // A non-error severity or a tolerance threshold lets duplicates pass the build.
+    if (typeof config.severity === 'string' && config.severity.trim().toLowerCase() !== 'error') continue;
+    const tolerant = (v: unknown): boolean =>
+      v !== undefined && v !== null && (typeof v !== 'string' || v.replace(/\s+/g, '') !== '!=0');
+    if (tolerant(config.error_if) || tolerant(config.warn_if)) continue;
 
     let modelId: string | undefined;
     if (rawNode.attached_node !== undefined && rawNode.attached_node !== null) {
@@ -217,7 +222,7 @@ function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<strin
     }
 
     const column = rawNode.column_name ?? optionalRecord(meta.kwargs).column_name;
-    if (typeof column !== 'string' || column.trim() === '') continue;
+    if (typeof column !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(column.trim())) continue;
 
     const set = result.get(modelId) ?? new Set<string>();
     set.add(column.trim().toLowerCase());
