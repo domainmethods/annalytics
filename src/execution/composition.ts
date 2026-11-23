@@ -1,5 +1,6 @@
 // The proof reads node-sql-parser's AST shape. onlyKeys() rejects unknown keys, but a parser bump that maps a new
-// construct onto an allowed key could widen what passes: re-run tests/execution/composition.test.ts on any bump.
+// construct onto an allowed key could widen what passes: re-run tests/execution/composition.test.ts on any bump
+// (package.json pins the exact version, so a bump is always a deliberate change).
 import { Parser } from 'node-sql-parser';
 import { isTotalLikeLabel } from './totalLike.js';
 import type { QueryResult } from '../types.js';
