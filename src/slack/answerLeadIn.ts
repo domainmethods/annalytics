@@ -1,7 +1,7 @@
 import type { KnownBlock, SectionBlock } from '@slack/types';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { EligibleComposition } from '../execution/composition.js';
-import { boundedText } from './limits.js';
+import { boundedText, MAX_DISPLAY_ROWS } from './limits.js';
 
 /**
  * A one-line, answer-first sentence above a result table, computed in code
@@ -14,7 +14,8 @@ import { boundedText } from './limits.js';
  * prove). When it
  * cannot prove even the ranking — a cut result, a tie at the top, a time
  * series, an ambiguous column shape — it says nothing, because a wrong
- * sentence is worse than none.
+ * sentence is worse than none. It also stays silent when a row it would name
+ * sits past the displayed rows, so every number it quotes is on screen.
  */
 export interface LeadInInput {
   /** Every returned row (not just the rows displayed), so the ranking covers the whole result. */
@@ -24,6 +25,8 @@ export interface LeadInInput {
   truncated: boolean;
   /** The executed SQL, checked for a LIMIT that may have cut rows. */
   sql: string;
+  /** BigQuery type per column (aligned with columnNames). When present, the measure must be numeric and the label a STRING. */
+  columnTypes?: string[];
   /** The leader's proven share label and its index in the ORIGINAL row order. */
   leaderShare?: { label: string; rowIndex: number };
 }
@@ -32,6 +35,8 @@ const MAX_LABEL_LENGTH = 200;
 const NUMERIC_TEXT = /^\d+(\.\d+)?$/;
 const SIGNED_NUMERIC_TEXT = /^[+-]?\d+(\.\d+)?$/;
 // ISO-ish dates, datetimes and times ("2026-11-01", "2026-11", "2026-11-01 10:00:00Z", "10:00").
+// Standard names plus the legacy aliases the BigQuery REST schema still reports.
+const NUMERIC_TYPES = new Set(['INT64', 'INTEGER', 'NUMERIC', 'DECIMAL', 'BIGNUMERIC', 'BIGDECIMAL', 'FLOAT64', 'FLOAT']);
 const TEMPORAL_TEXT = /^(\d{4}-\d{2}(-\d{2})?([T ][\d:.]+)?(Z|[+-]\d{2}:?\d{2})?|\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?)$/;
 
 interface Measure { text: string; num: number }
@@ -87,8 +92,14 @@ function limitIsSafe(sql: string, rowCount: number, measureCol: string, measureP
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string
   // that swallows a real LIMIT/OFFSET, and a comment marker inside a string is inert.
   const code = sql.replace(
-    /--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,
-    (m) => (m[0] === "'" || m[0] === '"' ? "''" : ' '),
+    // Backticked identifiers and triple-quoted strings are consumed whole, so a
+    // quote inside them (`o'brien`) can't open a fake string that hides a LIMIT.
+    // A backticked identifier keeps its word characters for the ORDER BY match.
+    /--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/|`[^`]*`|'''[\s\S]*?'''|"""[\s\S]*?"""|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g,
+    (m) => {
+      if (m[0] === '`') return `\`${m.slice(1, -1).replace(/[^\w.]/g, '_')}\``;
+      return m[0] === "'" || m[0] === '"' ? "''" : ' ';
+    },
   );
   if (/\bOFFSET\b/i.test(code)) return false;
   const limits = code.match(/\bLIMIT\b/gi) ?? [];
@@ -122,6 +133,12 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const measureCol = columnNames.filter((c) => rows.every((r) => readMeasure(r[c]) !== null));
   const labelCol = columnNames.filter((c) => rows.every((r) => readLabel(r[c]) !== null));
   if (measureCol.length !== 1 || labelCol.length !== 1 || measureCol[0] === labelCol[0]) return null;
+  const types = input.columnTypes;
+  if (types && types.length === columnNames.length) {
+    // A numeric-looking STRING (a zip code) is not a measure.
+    if (!NUMERIC_TYPES.has(types[columnNames.indexOf(measureCol[0])])) return null;
+    if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
+  }
   if (!limitIsSafe(sql, rows.length, measureCol[0], columnNames.indexOf(measureCol[0]) + 1)) return null;
 
   const ranked = rows
@@ -138,6 +155,8 @@ export function computeLeadIn(input: LeadInInput): string | null {
     : '';
   const lead = `${emphasize(first.label)} has the highest ${measureName} (${first.measure.text}${share})`;
   const runnerUpTied = third !== undefined && third.measure.num === second.measure.num;
+  // The table shows the first MAX_DISPLAY_ROWS rows; never name a row past them.
+  if (first.index >= MAX_DISPLAY_ROWS || (!runnerUpTied && second.index >= MAX_DISPLAY_ROWS)) return null;
   return runnerUpTied
     ? `${lead}.`
     : `${lead}, followed by ${escapeMrkdwn(second.label)} (${second.measure.text}).`;

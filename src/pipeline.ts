@@ -826,7 +826,6 @@ export function buildResponseBlocks(
 ): KnownBlock[] {
   const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
 
-
   // Which override buttons this result shape warrants — single source of truth
   // shared with the toggle-restore handlers in app.ts. The raw SQL is no longer
   // rendered inline in any branch; it is revealed on demand via the "Show SQL"
@@ -859,6 +858,7 @@ export function buildResponseBlocks(
           truncated: result.truncated,
           sql: gen.sql,
           headline: gen.headline,
+          ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
           ...(composition ? { composition } : {}),
         }),
         ...buildTableBlocks(displayRows, result.columnNames, composition),

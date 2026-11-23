@@ -7,7 +7,7 @@ import { computeShares, type ShareCell } from './shares.js';
  * schema and rows, that a two-column grouped result is an honest partition of
  * a whole, so a Share column and a Total row can be shown. Every check fails
  * closed: an AST shape it does not recognise is a rejection, never a pass.
- * See docs/plans/answer-shares-totals-design.md §3.
+ * See docs/answer-shares-totals-design.md §3.
  */
 
 export type CompositionRejectReason =

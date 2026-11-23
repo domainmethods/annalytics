@@ -470,6 +470,8 @@ describe('parseDbtArtifacts uniqueColumns', () => {
     ['severity warn', uniqueTest({ config: { severity: 'warn' } })],
     ['error_if tolerance', uniqueTest({ config: { error_if: '>10' } })],
     ['warn_if tolerance', uniqueTest({ config: { warn_if: '>5' } })],
+    ['custom fail_calc', uniqueTest({ config: { fail_calc: 'case when count(*) > 5 then count(*) else 0 end' } })],
+    ['non-string fail_calc', uniqueTest({ config: { fail_calc: 0 } })],
     ['expression column', uniqueTest({}, 'lower(x)')],
     ['backticked column', uniqueTest({}, '`session_key`')],
     ['column_name vs kwargs mismatch', uniqueTest({ column_name: 'email', test_metadata: { name: 'unique', kwargs: { column_name: 'lower(email)' } } })],
@@ -483,6 +485,7 @@ describe('parseDbtArtifacts uniqueColumns', () => {
   it('keeps ERROR severity and default-equivalent thresholds', () => {
     expect(parse({ a: uniqueTest({ config: { severity: 'ERROR' } }) }).uniqueColumns).toEqual(['session_key']);
     expect(parse({ a: uniqueTest({ config: { error_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { fail_calc: 'COUNT( * )' } }) }).uniqueColumns).toEqual(['session_key']);
   });
 
   it('keeps dbt default manifest config (severity ERROR, error_if/warn_if !=0)', () => {

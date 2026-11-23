@@ -209,6 +209,9 @@ function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<strin
     const tolerant = (v: unknown): boolean =>
       v !== undefined && v !== null && (typeof v !== 'string' || v.replace(/\s+/g, '') !== '!=0');
     if (tolerant(config.error_if) || tolerant(config.warn_if)) continue;
+    // So does a custom fail_calc (the default counts failing rows).
+    if (config.fail_calc !== undefined && config.fail_calc !== null
+      && (typeof config.fail_calc !== 'string' || config.fail_calc.replace(/\s+/g, '').toLowerCase() !== 'count(*)')) continue;
 
     let modelId: string | undefined;
     if (rawNode.attached_node !== undefined && rawNode.attached_node !== null) {

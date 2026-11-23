@@ -200,6 +200,55 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
   });
 });
 
+describe('computeLeadIn — review hardening', () => {
+  const ranked = (n: number, leaderAt: number) => Array.from({ length: n }, (_, i) => ({
+    session_default_channel_grouping: `Channel ${String.fromCharCode(65 + i)}`,
+    session_count: i === leaderAt ? 1000 : 100 - i,
+  }));
+
+  it('names a leader inside the displayed rows', () => {
+    expect(lead(ranked(25, 19))).toBe('*Channel T* has the highest session count (1000), followed by Channel A (100).');
+  });
+
+  it('stays silent when the leader is past the displayed rows', () => {
+    expect(lead(ranked(25, 22))).toBeNull();
+  });
+
+  it('stays silent when the named runner-up is past the displayed rows', () => {
+    const rows = ranked(25, 0).map((r, i) => (i === 21 ? { ...r, session_count: 500 } : r));
+    expect(lead(rows)).toBeNull();
+  });
+
+  const zipRows = [{ city: 'Springfield', zip: '99999' }, { city: 'Shelbyville', zip: '10001' }];
+  const zipSql = 'SELECT city, zip FROM t';
+  it('treats a numeric-looking STRING column as a measure only without types', () => {
+    expect(computeLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql })).not.toBeNull();
+    expect(computeLeadIn({ rows: zipRows, columnNames: ['city', 'zip'], truncated: false, sql: zipSql, columnTypes: ['STRING', 'STRING'] })).toBeNull();
+  });
+
+  it('accepts numeric measure types, including legacy aliases', () => {
+    for (const t of ['INT64', 'INTEGER', 'NUMERIC', 'FLOAT', 'BIGNUMERIC']) {
+      expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['STRING', t] })).not.toBeNull();
+    }
+    expect(computeLeadIn({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, columnTypes: ['DATE', 'INT64'] })).toBeNull();
+  });
+
+  it('does not let a quote inside a backticked identifier hide an inner LIMIT', () => {
+    const sql = "SELECT ch AS session_default_channel_grouping, n AS session_count FROM (SELECT `o'brien` AS ch, COUNT(*) AS n FROM t GROUP BY 1 LIMIT 5) WHERE `it's` IS NOT NULL";
+    expect(lead(channelRows, COLS, { sql })).toBeNull();
+  });
+
+  it('does not let a quote inside a triple-quoted string hide an inner LIMIT', () => {
+    const sql = "SELECT * FROM (SELECT ch, COUNT(*) AS n FROM t WHERE note = '''it's''' GROUP BY 1 LIMIT 5) WHERE x = 'a'";
+    expect(lead(channelRows, COLS, { sql })).toBeNull();
+  });
+
+  it('still matches a backticked measure in a top-N ORDER BY', () => {
+    expect(lead(channelRows, COLS, { sql: `${SQL.replace('ORDER BY 2 DESC', 'ORDER BY `session_count` DESC')} LIMIT 5` }))
+      .toBe('*Direct* has the highest session count (198), followed by Unassigned (42).');
+  });
+});
+
 describe('buildAnswerCaptionBlocks', () => {
   it('renders the lead-in as a section when eligible', () => {
     const blocks = buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: false, sql: SQL, headline: 'sessions by channel' });

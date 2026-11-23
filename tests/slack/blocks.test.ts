@@ -235,6 +235,10 @@ describe('formatAssumptions', () => {
   it('drops blanks and trailing separators', () => {
     expect(formatAssumptions(['  USD only;  ', '', 'excludes test accounts,'])).toBe('USD only; excludes test accounts');
   });
+
+  it("keeps an abbreviation's final period", () => {
+    expect(formatAssumptions(['Region is the U.S.', 'Plan is Pro.'])).toBe('Region is the U.S.; Plan is Pro');
+  });
 });
 
 describe('buildAssumptionBlocks — copy', () => {

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, node-sql-parser 5.4 (`{ database: 'BigQuery' }`), Slack Block Kit native `table`, vitest.
 
-**Spec:** `docs/plans/answer-shares-totals-design.md` (gitignored, operator-local). Sections cited as §n.
+**Spec:** `docs/answer-shares-totals-design.md`. Sections cited as §n.
 
 ## Global Constraints
 

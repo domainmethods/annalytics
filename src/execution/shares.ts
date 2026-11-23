@@ -47,9 +47,7 @@ export function toExactDecimal(val: unknown, type: string): string | null {
   } else if (typeof val === 'object' && !Array.isArray(val)) {
     const inner = unwrapBigQueryScalar(val);
     // Wrapped values take the same validation path as bare ones.
-    // unwrapBigQueryScalar only returns primitives, so `inner === val` is
-    // unreachable today; the guard keeps the recursion fail-closed if that changes.
-    if (inner !== undefined) return (inner as unknown) === val ? null : toExactDecimal(inner, type);
+    if (inner !== undefined) return toExactDecimal(inner, type);
     text = String(val);
   }
   if (text === null) return null;
