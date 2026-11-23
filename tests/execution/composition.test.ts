@@ -763,6 +763,19 @@ describe('verifyComposition v1.1: many-to-one LEFT JOIN', () => {
     `SELECT d.label, ${measure} AS n FROM ${F} f ${join} ${tail}`;
   const ON = `LEFT JOIN ${D} d ON f.k = d.k`;
 
+  it.each([
+    ['right-side column', 'SUM(d.credit_limit)'],
+    ['right-side column inside an expression', 'SUM(f.amount + d.credit_limit)'],
+    ['unqualified column', 'SUM(amount)'],
+  ])('U6b: a SUM over a %s in a join query rejects (a right value repeats once per left row)', (_n, measure) => {
+    const v = verifyComposition({ sql: J(ON, 'GROUP BY d.label', measure), result: lab(), uniqueKeys: [DK] });
+    expect(v).toEqual({ eligible: false, reason: 'sum_joined_column' });
+  });
+
+  it('U6c: a SUM over a left-side column in a join query stays eligible', () => {
+    expect(expectEligibleK(J(ON, 'GROUP BY d.label', 'SUM(f.amount)'), lab(), [DK]).measureKind).toBe('sum');
+  });
+
   it('U6: LEFT JOIN on a unique right key is eligible and records the key', () => {
     const v = expectEligibleK(J(ON), lab(), [DK]);
     expect(v.measureKind).toBe('count');

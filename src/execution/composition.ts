@@ -16,7 +16,7 @@ import { computeShares, type ShareCell } from './shares.js';
 export type CompositionRejectReason =
   | 'result_truncated' | 'row_count' | 'column_count' | 'column_name_collision' | 'column_types'
   | 'total_like_row' | 'parse_failed' | 'outer_shape' | 'group_by_shape' | 'measure_not_additive'
-  | 'count_distinct' | 'sum_non_additive_column' | 'limit_applied' | 'row_source' | 'where_subquery'
+  | 'count_distinct' | 'sum_non_additive_column' | 'sum_joined_column' | 'limit_applied' | 'row_source' | 'where_subquery'
   | 'where_on_dimension' | 'measure_value' | 'negative_value' | 'zero_total' | 'internal_error';
 
 export interface CompositionInput {
@@ -721,6 +721,14 @@ function verify(input: CompositionInput): CompositionVerdict {
   // The left base table joined again could be the same row as the right side, so
   // a WHERE on one could filter the other's dimension: fail closed.
   if (joins !== null && typeof base.table === 'string' && joins.spaces.includes(`t:${lastSegment(base.table)}`)) fail('row_source');
+  // A right row repeats once per left row it matches, so a SUM over a right column totals a
+  // per-left-row copy, not a real whole. In a join query a SUM may read only left-source columns.
+  if (joins !== null && kind === 'sum') {
+    some(exprs[measIdx], o => {
+      if (o.type === 'column_ref' && !(typeof o.table === 'string' && joins.quals[0].has(o.table.toLowerCase()))) fail('sum_joined_column');
+      return false;
+    });
+  }
   const usedKeys = new Set(joins?.usedKeys ?? []);
   for (const arg of distinctArgs ?? []) {
     const own = joins === null ? fromQualifiers(sel) : joins.quals[0];

@@ -196,8 +196,8 @@ export async function handleSummaryOverride(
     if (summary) {
       const blocks: KnownBlock[] = [
         ...caveat,
-        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         { type: 'section', block_id: RESULT_SUMMARY_BLOCK_ID, text: { type: 'mrkdwn', text: summary } } as KnownBlock,
+        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'summary')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: summary, blocks });
@@ -207,11 +207,11 @@ export async function handleSummaryOverride(
       const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       const blocks: KnownBlock[] = [
         ...caveat,
-        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         // No caption here on purpose: this notice already leads, and a second lead line would compete with it.
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config, 'override_summary_fallback')),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
+        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
         buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });

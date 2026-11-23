@@ -223,7 +223,7 @@ Pure-function tests in `tests/execution/composition.test.ts` and `tests/executio
 **v1.1 (only if `answer.composition` telemetry shows `count_distinct` or `row_source` among the top reject reasons on real traffic):**
 - Parse dbt `unique` tests in `src/dbt/parser.ts` (`resource_type: 'test'`, `test_metadata.name: 'unique'`, `column_name`, attached model) into `TableContext.uniqueColumns?`.
 - Accept `COUNT(DISTINCT x)` when `x` is unique on the single source relation (passthrough-only through CTEs).
-- Accept many-to-one `LEFT JOIN`s whose right-side key is dbt-unique.
+- Accept many-to-one `LEFT JOIN`s whose right-side key is dbt-unique. A `SUM` in such a query may read only left-source columns: a right value repeats once per left row it matches, so its sum is not a real whole (`sum_joined_column`).
 - Persist `compositionUniqueKeys` for override parity (§4.3). ≈ 2 d.
 
 ## 9. Open questions / decisions made (non-interactive run: answered by the designer)

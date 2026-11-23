@@ -167,6 +167,19 @@ describe('override handlers preserve assumptions', () => {
     const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
     expect(updated).toContain('order_status = completed');
     expect(updated).toContain('refine_assumptions');
+    // The summary leads, assumptions follow it (same order as the Table override).
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_summary'));
+    expect(updated.indexOf('anna_view_summary')).toBeGreaterThan(-1);
+  });
+
+  it('Summary fallback: the notice and table lead, assumptions follow them', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    mockGetCtx.mockResolvedValue({ ...baseCtx, assumptions: ['order_status = completed'] });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+    expect(updated.indexOf("Couldn't generate a summary")).toBeGreaterThan(-1);
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_table'));
+    expect(updated.indexOf('anna_view_table')).toBeGreaterThan(updated.indexOf("Couldn't generate a summary"));
   });
 });
 
