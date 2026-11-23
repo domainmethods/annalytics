@@ -11,12 +11,12 @@ const DEC_RE = /^-?\d+(\.\d+)?$/;
 
 type Kind = 'int' | 'decimal';
 
-/** Maps BigQuery type names (including legacy REST names) to a parse kind. */
 /** True for a BigQuery numeric column type, standard names and legacy aliases alike. */
 export function isNumericColumnType(type: string | undefined): boolean {
   return type !== undefined && kindOf(type) !== null;
 }
 
+/** Maps BigQuery type names (including legacy REST names) to a parse kind. */
 function kindOf(type: string): Kind | null {
   switch (type.toUpperCase()) {
     case 'INT64':
