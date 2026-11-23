@@ -46,6 +46,13 @@ describe('buildSingleValueBlocks', () => {
   });
 });
 
+describe('buildSingleValueBlocks escaping', () => {
+  it('escapes Slack control syntax in the headline', () => {
+    const blocks = buildSingleValueBlocks('90', 'visitors <!channel>');
+    expect(blocks[0]).toMatchObject({ text: { text: '*90*\nvisitors &lt;!channel&gt;' } });
+  });
+});
+
 describe('buildTableBlocks', () => {
   it('creates header and rows', () => {
     const rows = [

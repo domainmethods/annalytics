@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeShares, toExactDecimal } from '../../src/execution/shares.js';
+import { computeShares, isNumericColumnType, toExactDecimal } from '../../src/execution/shares.js';
 
 describe('toExactDecimal', () => {
   it.each([
@@ -80,5 +80,14 @@ describe('computeShares', () => {
   it('unknown type and >38 fraction digits are measure_value', () => {
     expect(computeShares([1], 'STRING')).toEqual({ ok: false, reason: 'measure_value' });
     expect(computeShares(['0.' + '1'.repeat(39)], 'NUMERIC')).toEqual({ ok: false, reason: 'measure_value' });
+  });
+});
+
+describe('isNumericColumnType', () => {
+  it('accepts standard names and legacy aliases, and nothing else', () => {
+    for (const t of ['INT64', 'INTEGER', 'NUMERIC', 'DECIMAL', 'BIGNUMERIC', 'BIGDECIMAL', 'FLOAT64', 'FLOAT']) {
+      expect(isNumericColumnType(t)).toBe(true);
+    }
+    for (const t of ['STRING', 'DATE', 'BOOL', 'INT64[]', undefined]) expect(isNumericColumnType(t)).toBe(false);
   });
 });

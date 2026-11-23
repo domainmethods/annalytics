@@ -4,6 +4,8 @@ export interface CompositionLogger {
   info(obj: Record<string, unknown>, msg: string): void;
 }
 
+export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
+
 /**
  * Verify a result for an answer surface (pipeline, Table override, Summary
  * fallback). Never throws: any error is treated as ineligible so a share
@@ -11,8 +13,6 @@ export interface CompositionLogger {
  * telemetry only — never row values, labels, SQL or table names.
  * Returns the composition only when it is eligible.
  */
-export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
-
 export function verifyAnswerComposition(
   input: CompositionInput,
   logger: CompositionLogger,

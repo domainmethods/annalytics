@@ -1,4 +1,4 @@
-import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
+import { boundedPreview, boundedText, escapeMrkdwn, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { EligibleComposition } from '../execution/composition.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
@@ -66,7 +66,7 @@ export function buildSingleValueBlocks(value: string, headline: string): KnownBl
     {
       type: 'section',
       // Bound each part separately so truncation never drops the closing bold marker.
-      text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(headline, HEADLINE_LIMIT)}` },
+      text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(escapeMrkdwn(headline), HEADLINE_LIMIT)}` },
     } as SectionBlock,
   ];
 }

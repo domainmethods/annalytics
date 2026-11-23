@@ -63,3 +63,12 @@ export function sqlSections(sql: string, prefix = '', blockId?: string): Section
   }
   return blocks;
 }
+
+/**
+ * Slack mrkdwn entity escapes, for text Slack would otherwise parse as control
+ * syntax: a "<!here>" or "<url|label>" from a model or a stored question would
+ * ping or link instead of rendering as written.
+ */
+export function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}

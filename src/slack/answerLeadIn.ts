@@ -1,7 +1,8 @@
 import type { KnownBlock, SectionBlock } from '@slack/types';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
 import type { EligibleComposition } from '../execution/composition.js';
-import { boundedText, MAX_DISPLAY_ROWS } from './limits.js';
+import { isNumericColumnType } from '../execution/shares.js';
+import { boundedText, escapeMrkdwn, MAX_DISPLAY_ROWS } from './limits.js';
 
 /**
  * A one-line, answer-first sentence above a result table, computed in code
@@ -35,8 +36,6 @@ const MAX_LABEL_LENGTH = 200;
 const NUMERIC_TEXT = /^\d+(\.\d+)?$/;
 const SIGNED_NUMERIC_TEXT = /^[+-]?\d+(\.\d+)?$/;
 // ISO-ish dates, datetimes and times ("2026-11-01", "2026-11", "2026-11-01 10:00:00Z", "10:00").
-// Standard names plus the legacy aliases the BigQuery REST schema still reports.
-const NUMERIC_TYPES = new Set(['INT64', 'INTEGER', 'NUMERIC', 'DECIMAL', 'BIGNUMERIC', 'BIGDECIMAL', 'FLOAT64', 'FLOAT']);
 const TEMPORAL_TEXT = /^(\d{4}-\d{2}(-\d{2})?([T ][\d:.]+)?(Z|[+-]\d{2}:?\d{2})?|\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?)$/;
 
 interface Measure { text: string; num: number }
@@ -116,10 +115,6 @@ function limitIsSafe(sql: string, rowCount: number, measureCol: string, measureP
   return topN.test(code);
 }
 
-function escapeMrkdwn(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 /** Bold the label only when it holds no mrkdwn control characters that would break the bold. */
 function emphasize(label: string): string {
   const escaped = escapeMrkdwn(label);
@@ -136,7 +131,7 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const types = input.columnTypes;
   if (types && types.length === columnNames.length) {
     // A numeric-looking STRING (a zip code) is not a measure.
-    if (!NUMERIC_TYPES.has(types[columnNames.indexOf(measureCol[0])])) return null;
+    if (!isNumericColumnType(types[columnNames.indexOf(measureCol[0])])) return null;
     if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
   }
   if (!limitIsSafe(sql, rows.length, measureCol[0], columnNames.indexOf(measureCol[0]) + 1)) return null;
@@ -167,12 +162,14 @@ export function computeLeadIn(input: LeadInInput): string | null {
  * otherwise the generator's one-line headline (what the table represents), else
  * nothing.
  */
-export function buildAnswerCaptionBlocks(input: LeadInInput & { headline?: string; composition?: EligibleComposition }): KnownBlock[] {
-  const { composition, ...leadInput } = input;
-  const leaderShare = leadInput.leaderShare ?? (composition && composition.shares.length === leadInput.rows.length && composition.topIndex !== null && composition.shares[composition.topIndex]
+export function buildAnswerCaptionBlocks(input: Omit<LeadInInput, 'leaderShare'> & { headline?: string; composition?: EligibleComposition }): KnownBlock[] {
+  const { composition, headline, ...leadInput } = input;
+  const leaderShare = (composition && composition.shares.length === leadInput.rows.length && composition.topIndex !== null && composition.shares[composition.topIndex]
     ? { label: composition.shares[composition.topIndex].label, rowIndex: composition.topIndex }
     : undefined);
-  const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) }) ?? input.headline?.trim();
+  // The headline is model text: escaped so "<!here>" or link syntax renders as written.
+  const fallback = headline?.trim();
+  const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) }) ?? (fallback ? escapeMrkdwn(fallback) : undefined);
   if (!text) return [];
   return [{ type: 'section', text: { type: 'mrkdwn', text: boundedText(text) } } as SectionBlock];
 }

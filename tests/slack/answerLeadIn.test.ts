@@ -264,6 +264,11 @@ describe('buildAnswerCaptionBlocks', () => {
     ]);
   });
 
+  it('escapes Slack control syntax in the headline fallback', () => {
+    const blocks = buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: 'Sessions <!here> & <https://x.example|more>' });
+    expect(blocks).toEqual([{ type: 'section', text: { type: 'mrkdwn', text: 'Sessions &lt;!here&gt; &amp; &lt;https://x.example|more&gt;' } }]);
+  });
+
   it('renders nothing when ineligible and there is no headline', () => {
     expect(buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL })).toEqual([]);
     expect(buildAnswerCaptionBlocks({ rows: channelRows, columnNames: COLS, truncated: true, sql: SQL, headline: '   ' })).toEqual([]);
