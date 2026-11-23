@@ -176,6 +176,16 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     expect(lead(rows, ['c', 'n'])).toBeNull();
   });
 
+  it('an unaliased measure (BigQuery names it f0_, f1_, ...)', () => {
+    const rows = [{ c: 'A', f0_: 9 }, { c: 'B', f0_: 3 }];
+    expect(lead(rows, ['c', 'f0_'], { sql: 'SELECT c, COUNT(*) FROM t GROUP BY 1' })).toBeNull();
+    const rows12 = [{ c: 'A', f12_: 9 }, { c: 'B', f12_: 3 }];
+    expect(lead(rows12, ['c', 'f12_'])).toBeNull();
+    // A real column that merely starts with f is still a measure.
+    const fees = [{ c: 'A', f0_fees: 9 }, { c: 'B', f0_fees: 3 }];
+    expect(lead(fees, ['c', 'f0_fees'])).toBe('*A* has the highest f0 fees (9), followed by B (3).');
+  });
+
   it('negative values', () => {
     const rows = [{ c: 'A', n: 100 }, { c: 'B', n: -90 }];
     expect(lead(rows, ['c', 'n'])).toBeNull();

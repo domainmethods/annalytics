@@ -89,6 +89,9 @@ function escapeRegExp(text: string): string {
  * tiebreaker, the label column) proves nothing, and any OFFSET may skip the top.
  * QUALIFY or any window (OVER, including a named WINDOW) also means silence: a ranked filter such as
  * `QUALIFY ROW_NUMBER() OVER (ORDER BY n) <= 3` cuts rows with no LIMIT at all.
+ * The Share column has its own, stricter AST rule (composition.ts S5: a LIMIT must have
+ * returned fewer rows than its bound); keep the two in step so a caption never treats as
+ * whole a result the Share column treats as cut, or the reverse.
  */
 function limitIsSafe(sql: string, rowCount: number, measureCol: string, measurePos: number): boolean {
   // One pass, so a quote inside a comment ("-- don't") never opens a fake string
@@ -131,6 +134,8 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const measureCol = columnNames.filter((c) => rows.every((r) => readMeasure(r[c]) !== null));
   const labelCol = columnNames.filter((c) => rows.every((r) => readLabel(r[c]) !== null));
   if (measureCol.length !== 1 || labelCol.length !== 1 || measureCol[0] === labelCol[0]) return null;
+  // BigQuery names an unaliased expression `f0_`, `f1_`, ...: "the highest f0" names nothing a reader asked about.
+  if (/^f\d+_$/.test(measureCol[0])) return null;
   // Without the schema a numeric-looking STRING (a zip code) could pass as the measure, so unknown types mean silence.
   const types = input.columnTypes;
   if (!types || types.length !== columnNames.length) return null;

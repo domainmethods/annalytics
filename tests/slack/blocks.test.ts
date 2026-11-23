@@ -278,6 +278,16 @@ describe('result view tagging', () => {
     expect(currentViewFromBlocks([{ type: 'section' }])).toBeUndefined();
     expect(currentViewFromBlocks(undefined)).toBeUndefined();
   });
+
+  it('reads the view back from a rendered answer with a caption above the table', () => {
+    const rendered = [
+      { type: 'section', text: { type: 'mrkdwn', text: '*y* has the highest b (2), followed by x (1).' } },
+      ...buildTableBlocks(rows, ['a', 'b']),
+    ] as Array<{ type?: string; block_id?: string }>;
+    const view = currentViewFromBlocks(rendered);
+    expect(view).toBe('table');
+    expect(overrideButtonsForResultShape(2, 2, view)).toEqual({ table: false });
+  });
 });
 
 describe('overrideButtonsForResultShape — current view', () => {
