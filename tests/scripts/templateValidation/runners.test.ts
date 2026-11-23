@@ -319,6 +319,18 @@ it('retries an item after a transient provider failure and keeps only the succes
   expect(run.nodeUsage.get('summaryOverride')?.latencies).toHaveLength(1);
 });
 
+it('discards the generation usage of an attempt whose judge call failed transiently', async () => {
+  generateContent.mockResolvedValue({ text: 'There was 1 order.' });
+  const judge = vi.fn().mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 503 }))
+    .mockResolvedValue(true);
+  const env = { ...await loadTemplateEnv('test'), judge };
+  const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
+  const run = await createTemplateRunner('summaryOverride', [item], env, { sleep: async () => {}, log: () => {} })();
+  expect(generateContent).toHaveBeenCalledTimes(2);
+  expect(run.perEntry[0].failure).toBeUndefined();
+  expect(run.nodeUsage.get('summaryOverride')?.latencies).toHaveLength(1);
+});
+
 it('gives up after the configured retries', async () => {
   generateContent.mockRejectedValue(Object.assign(new Error('provider response'), { status: 429 }));
   const env = await loadTemplateEnv('test');

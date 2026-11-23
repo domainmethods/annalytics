@@ -54,6 +54,8 @@ export async function openSweepCheckpoint(
       }
       saved.set(parsed.key, { perEntry: parsed.perEntry, nodeUsage: new Map(parsed.nodeUsage) as CorpusRunResult['nodeUsage'] });
     }
+    // Terminate a line cut off mid-write so the next appended pass starts on its own line.
+    if (text.length > 0 && !text.endsWith('\n')) await appendFile(path, '\n', 'utf8');
     log(`Checkpoint: resuming from ${path} (${saved.size} completed pass${saved.size === 1 ? '' : 'es'})`);
   } else {
     await rm(path, { force: true });
