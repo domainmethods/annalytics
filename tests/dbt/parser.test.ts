@@ -472,6 +472,7 @@ describe('parseDbtArtifacts uniqueColumns', () => {
     ['warn_if tolerance', uniqueTest({ config: { warn_if: '>5' } })],
     ['expression column', uniqueTest({}, 'lower(x)')],
     ['backticked column', uniqueTest({}, '`session_key`')],
+    ['column_name vs kwargs mismatch', uniqueTest({ column_name: 'email', test_metadata: { name: 'unique', kwargs: { column_name: 'lower(email)' } } })],
     ['no column', uniqueTest({ test_metadata: { name: 'unique', kwargs: {} } })],
   ])('ignores %s', (_label, test) => {
     const result = parse({ t1: test });
@@ -482,6 +483,15 @@ describe('parseDbtArtifacts uniqueColumns', () => {
   it('keeps ERROR severity and default-equivalent thresholds', () => {
     expect(parse({ a: uniqueTest({ config: { severity: 'ERROR' } }) }).uniqueColumns).toEqual(['session_key']);
     expect(parse({ a: uniqueTest({ config: { error_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('keeps dbt default manifest config (severity ERROR, error_if/warn_if !=0)', () => {
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR', error_if: '!=0', warn_if: '!=0' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR', error_if: '!= 0', warn_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('keeps matching column_name and kwargs.column_name case-insensitively', () => {
+    expect(parse({ a: uniqueTest({ column_name: ' Session_Key ' }) }).uniqueColumns).toEqual(['session_key']);
   });
 
   it('accepts null or empty namespace and empty where', () => {

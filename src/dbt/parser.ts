@@ -221,7 +221,18 @@ function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<strin
       modelId = models[0];
     }
 
-    const column = rawNode.column_name ?? optionalRecord(meta.kwargs).column_name;
+    const kwargColumn = optionalRecord(meta.kwargs).column_name;
+    // kwargs can override the tested expression; require agreement when both exist.
+    if (
+      rawNode.column_name != null &&
+      kwargColumn != null &&
+      (typeof rawNode.column_name !== 'string' ||
+        typeof kwargColumn !== 'string' ||
+        rawNode.column_name.trim().toLowerCase() !== kwargColumn.trim().toLowerCase())
+    ) {
+      continue;
+    }
+    const column = rawNode.column_name ?? kwargColumn;
     if (typeof column !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(column.trim())) continue;
 
     const set = result.get(modelId) ?? new Set<string>();
