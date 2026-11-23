@@ -208,6 +208,10 @@ describe('verifyComposition: eligible (§6 A-rows)', () => {
   it('S8: the R2a CTE without a WHERE is eligible (control for the R2a probe)', () => {
     expectEligible(`${R2A_CTE} GROUP BY a`, result(three, { names: ['a', 'n'] }));
   });
+
+  it('an explicit alias hides the table name: a bare `sessions` under `AS s` is an ordinary column', () => {
+    expectEligible(`SELECT s.ch, COUNT(*) AS n FROM ${T} s WHERE sessions IS NOT NULL GROUP BY s.ch`, result(three));
+  });
 });
 
 describe('verifyComposition: rejected (§6 R-rows)', () => {
@@ -460,6 +464,10 @@ describe('verifyComposition: rejected (§6 R-rows)', () => {
     ['C2-2', `SELECT ch, COUNT(*) AS n FROM ${T} WHERE TO_JSON_STRING(sessions) LIKE '%Direct%' GROUP BY ch`],
     ['C2-3', `SELECT ch, COUNT(*) AS n FROM (SELECT LOWER(channel) AS ch FROM ${T}) t WHERE TO_JSON_STRING(t) LIKE '%direct%' GROUP BY ch`],
     ['C2-4', `SELECT ch, COUNT(*) AS n FROM (SELECT TO_JSON_STRING(t) AS j, LOWER(channel) AS ch FROM ${T} t) WHERE j LIKE '%Direct%' GROUP BY ch`],
+    ['C2-5', `SELECT s.ch, COUNT(*) AS n FROM ${T} s WHERE TO_JSON_STRING(s) LIKE '%Direct%' GROUP BY s.ch`],
+    ['C2-6', `SELECT sessions.ch, COUNT(*) AS n FROM ${T} WHERE TO_JSON_STRING(sessions) LIKE '%Direct%' GROUP BY sessions.ch`],
+    ['C2-7', `WITH c AS (SELECT s AS r, channel AS ch FROM ${T} s) SELECT ch, COUNT(*) AS n FROM c WHERE TO_JSON_STRING(r) LIKE '%Direct%' GROUP BY ch`],
+    ['C2-8', `SELECT s.ch, COUNT(*) AS n FROM ${T} s WHERE sessions.ch = 'Direct' GROUP BY s.ch`],
   ])('S8 review probe %s: a WHERE on a whole-row range variable', (_id, sql) => {
     expectReject(sql, result(three), 'where_on_dimension');
   });

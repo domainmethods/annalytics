@@ -121,8 +121,8 @@ function isColumnRef(n: unknown): n is Node {
 }
 
 /**
- * Names a select's own FROM item can be qualified by (its alias, full table
- * name, and the table name's last segment). Unrecognised shapes add nothing, so
+ * Names a select's own FROM item can be qualified by: its alias, or, only when
+ * it has none, its full table name and the table name's last segment. Unrecognised shapes add nothing, so
  * their qualifiers stay tracked as names (fail closed).
  */
 function fromQualifiers(s: Node): Set<string> {
@@ -130,8 +130,9 @@ function fromQualifiers(s: Node): Set<string> {
   for (const item of Array.isArray(s.from) ? s.from : []) {
     if (!isObj(item)) continue;
     const alias = typeof item.as === 'string' ? item.as : isObj(item.as) && typeof item.as.value === 'string' ? item.as.value : null;
-    if (alias !== null) out.add(alias.toLowerCase());
-    if (typeof item.table === 'string') {
+    // An explicit alias hides the table name (`FROM t AS s`: `t.x` is a struct column `t`).
+    if (alias !== null && alias !== '') out.add(alias.toLowerCase());
+    else if (typeof item.table === 'string') {
       out.add(item.table.toLowerCase());
       out.add(item.table.split('.').pop()!.toLowerCase());
     }
