@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // flash/3 nodes — the un-measured minimal/low roles still pinned to flash-preview.
 const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
-// Classifier nodes on flash-lite/3.5@low (slackIntake measured on tv-v1 2026-11-22,
-// ambiguityClassifier provisional). followUpClassifier is tested separately.
-const CLASSIFIER_LITE_NODES = ['slackIntake','ambiguityClassifier'] as const;
+// Classifier nodes on flash-lite/3.5@low (slackIntake measured on tv-v1 2026-11-22).
+// The Hydrogen classifiers are tested separately.
+const CLASSIFIER_LITE_NODES = ['slackIntake'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
@@ -15,7 +15,7 @@ describe('nodeProfiles', () => {
     for (const n of FLASH_NODES) expect(resolveNodeModel(n)).toBe('gemini-3-flash-preview');
   });
 
-  it('defaults the classifier nodes to gemini-3.5-flash-lite at low thinking', async () => {
+  it('defaults slackIntake to gemini-3.5-flash-lite at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
     for (const n of CLASSIFIER_LITE_NODES) {
       expect(resolveNodeModel(n)).toBe('gemini-3.5-flash-lite');
@@ -23,10 +23,12 @@ describe('nodeProfiles', () => {
     }
   });
 
-  it('defaults followUpClassifier to gemini-4-hydrogen at low thinking', async () => {
+  it('defaults followUpClassifier and ambiguityClassifier to gemini-4-hydrogen at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    expect(resolveNodeModel('followUpClassifier')).toBe('gemini-4-hydrogen');
-    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('low');
+    for (const n of ['followUpClassifier', 'ambiguityClassifier'] as const) {
+      expect(resolveNodeModel(n)).toBe('gemini-4-hydrogen');
+      expect(getNodeProfile(n).thinkingLevel).toBe('low');
+    }
   });
 
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
@@ -41,7 +43,7 @@ describe('nodeProfiles', () => {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
     // low — light open judgment over provided context, plus slackIntake/ambiguityClassifier
-    // (followUpClassifier is measured on Hydrogen; see its own test)
+    // (both Hydrogen classifiers are also tested on their own)
     for (const n of ['slackIntake', 'ambiguityClassifier', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }

@@ -36,8 +36,12 @@ export interface NodeProfile {
 //    gemini-3-flash-preview as superseded by gemini-3.6-flash. A Hydrogen thinking walk
 //    (same day, ε 0.01) scored low, medium, high and default all 1.000; low was fastest
 //    (p95 3.0s vs 4.3-4.8s at high) and cheapest (~30% below high).
-//  - ambiguityClassifier: still PROVISIONAL at flash-lite/3.5@low. ε 0.054 > 0.05, so the
-//    tv-v1 result is not applicable (governance Evidence Log, 2026-11-22).
+//  - ambiguityClassifier: flash/4-hydrogen@low, sized on tv-v2 (79 items, 2026-11-22,
+//    ε 0.025). Stage 1 put Hydrogen first at high (0.861; the old flash-lite/3.5@low
+//    default scored ~0.65). Hydrogen's thinking walk: high 0.861 (p95 11.5s), medium and
+//    default 0.823 (~7.8s), low 0.810 (4.7s). The sweep's pick is @high; the owner chose
+//    @low for latency, accepting 0.051 below it, so @low is outside ε of the pick.
+//    pro/4-carbon was not measured (provider timeouts on two attempts).
 //
 // The remaining levels are PROVISIONAL role-based HEURISTICS, not measured (tiers
 // are NOT provisional — they encode real domain knowledge: flash for classify/format,
@@ -51,7 +55,7 @@ export interface NodeProfile {
 // limited on the SQL path (ε too large on the 12-question corpus to size safely) and
 // stay model-managed — see docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md.
 const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'low' };
-const FOLLOW_UP_HYDROGEN: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'low' };
+const HYDROGEN_LOW: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'low' };
 const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'minimal' };
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
@@ -64,9 +68,10 @@ const DEFAULTS: Record<NodeId, NodeProfile> = {
   // axis was not walked on the frozen set); followUpClassifier's @low is from a Hydrogen
   // thinking walk. Both models are owner overrides of the sweep's cost tie-break for
   // model-sunset risk; see the classifier notes above.
-  slackIntake: CLASSIFIER_LITE, followUpClassifier: FOLLOW_UP_HYDROGEN,
-  // PROVISIONAL — tv-v1 2026-11-22 not applicable (ε 0.054 > 0.05).
-  ambiguityClassifier: CLASSIFIER_LITE,
+  slackIntake: CLASSIFIER_LITE, followUpClassifier: HYDROGEN_LOW,
+  // MEASURED — tv-v2, 2026-11-22 (model). @low is an owner latency override of the
+  // sweep's @high pick and sits outside ε of it; see the classifier notes above.
+  ambiguityClassifier: HYDROGEN_LOW,
   // minimal — closed-set routing / structured selection / reformatting (un-measured)
   dbtStatus: FLASH_MINIMAL, chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
   // low — light open judgment over provided context

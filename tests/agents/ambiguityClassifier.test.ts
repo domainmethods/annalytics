@@ -42,7 +42,7 @@ describe('classifyAmbiguity', () => {
     expect(result.type).toBe('org_knowledge');
     expect(result.domain).toBe('revenue');
     const call = mockGenerateContent.mock.calls[0][0];
-    expect(call.model).toBe('gemini-3.5-flash-lite');
+    expect(call.model).toBe('gemini-4-hydrogen');
     expect(call.config.thinkingConfig).toEqual({ thinkingLevel: 'low' });
   });
 
