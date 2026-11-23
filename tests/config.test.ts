@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { loadConfig } from '../src/config.js';
 
 // Minimal env so loadConfig() does not throw on requireEnv().
@@ -224,6 +224,10 @@ describe('loadConfig answerShares', () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
     baseEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('defaults to disabled when ANSWER_SHARES_ENABLED is unset', () => {

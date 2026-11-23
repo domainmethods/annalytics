@@ -257,4 +257,13 @@ describe('leader share', () => {
     }) as any[];
     expect(blocks[0].text.text).toContain('(198, 79% of the total)');
   });
+
+  it('adds no share when the composition is not aligned with the rows', () => {
+    const blocks = buildAnswerCaptionBlocks({
+      rows: channelRows, columnNames: COLS, truncated: false, sql: SQL,
+      composition: { eligible: true, dimension: COLS[0], measure: COLS[1], measureKind: 'count', total: '250',
+        shares: [...channelRows, channelRows[0]].map(() => ({ basisPoints: 7920, label: '79%' })), topIndex: 0, usedUniqueKeys: [] },
+    }) as any[];
+    expect(blocks[0].text.text).toBe('*Direct* has the highest session count (198), followed by Unassigned (42).');
+  });
 });

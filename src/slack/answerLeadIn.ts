@@ -150,7 +150,7 @@ export function computeLeadIn(input: LeadInInput): string | null {
  */
 export function buildAnswerCaptionBlocks(input: LeadInInput & { headline?: string; composition?: EligibleComposition }): KnownBlock[] {
   const { composition, ...leadInput } = input;
-  const leaderShare = leadInput.leaderShare ?? (composition && composition.topIndex !== null && composition.shares[composition.topIndex]
+  const leaderShare = leadInput.leaderShare ?? (composition && composition.shares.length === leadInput.rows.length && composition.topIndex !== null && composition.shares[composition.topIndex]
     ? { label: composition.shares[composition.topIndex].label, rowIndex: composition.topIndex }
     : undefined);
   const text = computeLeadIn({ ...leadInput, ...(leaderShare ? { leaderShare } : {}) }) ?? input.headline?.trim();
