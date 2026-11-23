@@ -255,6 +255,21 @@ describe('handleCsvOverride', () => {
     expect(csv).toContain('EU,500');
   });
 
+  it('after a CSV click on a Summary message, keeps Summary hidden and Table offered', async () => {
+    const summaryBlocks = [
+      { type: 'section', block_id: 'anna_view_summary', text: { type: 'mrkdwn', text: 'summary text' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_table_trace-abc' }, { type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', summaryBlocks, mockClient, overrideConfig);
+
+    const blocks = mockClient.chat.update.mock.calls[0][0].blocks as any[];
+    const ids = blocks.filter((b) => b.type === 'actions').flatMap((b) => b.elements.map((e: any) => e.action_id ?? ''));
+    expect(ids.some((id: string) => id.startsWith('override_table'))).toBe(true);
+    expect(ids.some((id: string) => id.startsWith('override_summary'))).toBe(false);
+    expect(ids.some((id: string) => id.startsWith('override_csv'))).toBe(false);
+    expect(blocks[0].block_id).toBe('anna_view_summary');
+  });
+
   it('exports unsafe INT64 strings verbatim in scalar and nested cells', async () => {
     mockExecute.mockResolvedValue({
       ...queryResult,

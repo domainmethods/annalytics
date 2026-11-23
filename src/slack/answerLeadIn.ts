@@ -186,6 +186,8 @@ export function computeLeadIn(input: LeadInInput): string | null {
   const types = input.columnTypes;
   if (!types || types.length !== columnNames.length) return null;
   if (!isNumericColumnType(types[columnNames.indexOf(measureCol[0])])) return null;
+  // Stricter than the share proof, which picks its dimension by type alone: a BOOL
+  // label can still get a Share column with no leader share in the caption.
   if (types[columnNames.indexOf(labelCol[0])] !== 'STRING') return null;
   const code = sqlCode(sql);
   const measurePos = columnNames.indexOf(measureCol[0]) + 1;
