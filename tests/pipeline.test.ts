@@ -42,7 +42,7 @@ import { recordAmbiguityLabel, saveClarificationState } from '../src/state/clari
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue, overrideButtonsForResultShape } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue, overrideButtonsForResultShape, buildTableBlocks, buildTruncatedBlocks } from '../src/slack/blocks.js';
 import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
@@ -240,6 +240,18 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
       userQuestion: 'What is paid revenue? (Data team guidance: x)',
     }));
+  });
+
+  it('persists the generator headline for the Table re-render caption, omitting it when blank', async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '  Revenue by region ' } } as any);
+    await runPipeline(baseInput);
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ headline: 'Revenue by region' }));
+
+    mockSaveCtx.mockClear();
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '   ' } } as any);
+    await runPipeline(baseInput);
+    // Firestore rejects undefined, so a blank headline is omitted, not set to undefined.
+    expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('headline');
   });
 
   it('MEDIUM confidence: includes assumptions in response', async () => {
@@ -759,6 +771,42 @@ describe('buildResponseBlocks', () => {
     expect(controls.map(control => control.action_id)).toEqual([
       'refine_assumptions', 'thumbs_up_trace-1', 'thumbs_down_trace-1', 'show_reasoning_trace-1', 'show_sql_trace-1',
     ]);
+  });
+
+  describe('table answers', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+      vi.mocked(buildTableBlocks).mockImplementation(actual.buildTableBlocks);
+      vi.mocked(buildTruncatedBlocks).mockImplementation(actual.buildTruncatedBlocks);
+      vi.mocked(overrideButtonsForResultShape).mockImplementation(actual.overrideButtonsForResultShape);
+    });
+
+    const rows = [{ channel: 'Direct', sessions: 198 }, { channel: 'Unassigned', sessions: 42 }];
+    const render = (format: string, result: Record<string, unknown>, headline = 'Sessions by channel') =>
+      buildResponseBlocks(
+        format,
+        { ...baseQualityResult.sqlResult, sql: 'SELECT channel, COUNT(*) AS sessions FROM t GROUP BY 1', headline } as any,
+        { rows, columnNames: ['channel', 'sessions'], totalRows: 2, bytesProcessed: 0, truncated: false, ...result } as any,
+        'trace-1', 'T1', 'S1', [],
+      );
+
+    it.each(['table', 'wide_table', 'summary'])('%s: leads with the computed caption above the table', (format) => {
+      const blocks = render(format, {});
+      expect((blocks[0] as any).text.text).toBe('*Direct* has the highest sessions (198), followed by Unassigned (42).');
+      expect((blocks[1] as any).block_id).toBe('anna_view_table');
+    });
+
+    it('hides the Table button (the answer is already a table) but keeps Summary and CSV', () => {
+      const ids = render('table', {}).flatMap((b) => (b.type === 'actions' ? b.elements : [])).map((e: any) => e.action_id);
+      expect(ids).not.toContain('override_table_trace-1');
+      expect(ids).toEqual(expect.arrayContaining(['override_summary_trace-1', 'override_csv_trace-1', 'show_sql_trace-1', 'thumbs_up_trace-1']));
+    });
+
+    it('falls back to the headline when the result was truncated (and keeps the row notice)', () => {
+      const blocks = render('table', { truncated: true, totalRows: 5000 });
+      expect((blocks[0] as any).text.text).toBe('Sessions by channel');
+      expect(JSON.stringify(blocks)).toMatch(/Showing 2 of 5,?000/);
+    });
   });
 
   it('single_value: answer first, then assumptions, then feedback actions', () => {

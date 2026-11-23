@@ -9,6 +9,10 @@ import {
   overrideButtonsForResultShape,
   formatValue,
   buildAssumptionBlocks,
+  formatAssumptions,
+  currentViewFromBlocks,
+  RESULT_TABLE_BLOCK_ID,
+  RESULT_SUMMARY_BLOCK_ID,
 } from '../../src/slack/blocks.js';
 
 describe('buildAssumptionBlocks', () => {
@@ -216,5 +220,72 @@ describe('overrideButtonsForResultShape', () => {
   it('treats a single multi-column row as a table (no suppression)', () => {
     // 1 row but >1 column is a table, not a scalar — Summary stays useful.
     expect(overrideButtonsForResultShape(1, 3)).toEqual({});
+  });
+});
+
+describe('formatAssumptions', () => {
+  it('joins sentence-style assumptions without doubled punctuation', () => {
+    expect(formatAssumptions([
+      "'Traffic' refers to session count.",
+      "'Where' refers to the session default channel grouping.",
+      'Session count is distinct session keys',
+    ])).toBe("'Traffic' refers to session count; 'Where' refers to the session default channel grouping; Session count is distinct session keys");
+  });
+
+  it('drops blanks and trailing separators', () => {
+    expect(formatAssumptions(['  USD only;  ', '', 'excludes test accounts,'])).toBe('USD only; excludes test accounts');
+  });
+});
+
+describe('buildAssumptionBlocks — copy', () => {
+  it('uses the cleaned join and the short refine label', () => {
+    const blocks = buildAssumptionBlocks(['Traffic is sessions.', 'Last 30 days.'], 'trace-1') as any[];
+    expect(blocks[0].elements[0].text).toBe('🔍 *Assumptions:* Traffic is sessions; Last 30 days');
+    expect(blocks[1].elements[0].text.text).toBe('Change assumptions');
+  });
+});
+
+describe('result view tagging', () => {
+  const rows = [{ a: 'x', b: 1 }, { a: 'y', b: 2 }];
+
+  it('tags the native table block with the table view id', () => {
+    expect((buildTableBlocks(rows, ['a', 'b'])[0] as any).block_id).toBe(RESULT_TABLE_BLOCK_ID);
+  });
+
+  it('tags the code-block fallback table with the table view id', () => {
+    const cols = Array.from({ length: 21 }, (_, i) => `c${i}`);
+    const wide = [Object.fromEntries(cols.map((c) => [c, 1]))];
+    expect((buildTableBlocks(wide, cols)[0] as any).block_id).toBe(RESULT_TABLE_BLOCK_ID);
+  });
+
+  it('reads the current view from message blocks', () => {
+    expect(currentViewFromBlocks([{ type: 'section', block_id: RESULT_TABLE_BLOCK_ID }])).toBe('table');
+    expect(currentViewFromBlocks([{ type: 'section', block_id: RESULT_SUMMARY_BLOCK_ID }])).toBe('summary');
+    // Legacy messages rendered before tagging: a native table block still counts.
+    expect(currentViewFromBlocks([{ type: 'table' }])).toBe('table');
+    expect(currentViewFromBlocks([{ type: 'section' }])).toBeUndefined();
+    expect(currentViewFromBlocks(undefined)).toBeUndefined();
+  });
+});
+
+describe('overrideButtonsForResultShape — current view', () => {
+  it('hides Table when a table is already showing', () => {
+    expect(overrideButtonsForResultShape(5, 2, 'table')).toEqual({ table: false });
+  });
+
+  it('hides Summary when a summary is already showing', () => {
+    expect(overrideButtonsForResultShape(5, 2, 'summary')).toEqual({ summary: false });
+  });
+
+  it('keeps the shape rules ahead of the view (zero rows / scalar hide all three)', () => {
+    expect(overrideButtonsForResultShape(0, 2, 'table')).toEqual({ table: false, summary: false, csv: false });
+    expect(overrideButtonsForResultShape(1, 1, 'summary')).toEqual({ table: false, summary: false, csv: false });
+  });
+});
+
+describe('assumption lines with nothing left after cleaning', () => {
+  it('renders no assumptions block and no filters line', () => {
+    expect(buildAssumptionBlocks(['  ', '.;'], 't')).toEqual([]);
+    expect(JSON.stringify(buildZeroRowBlocks([' ', ',']))).not.toContain('Filters applied');
   });
 });

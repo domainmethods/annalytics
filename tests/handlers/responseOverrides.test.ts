@@ -549,3 +549,63 @@ describe('missing response context', () => {
     expect(mockClient.chat.postEphemeral).not.toHaveBeenCalled();
   });
 });
+
+describe('override re-renders hide the button for the view on screen', () => {
+  const lastBlocksJson = () => JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(baseCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('Table override: no Table button, keeps Summary, and leads with the computed caption', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+    expect(updated).toContain('*US* has the highest revenue (1000), followed by EU (500).');
+  });
+
+  it('Table override: falls back to the persisted headline when the lead-in is ineligible', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, headline: 'Revenue by region' });
+    mockExecute.mockResolvedValue({ ...queryResult, truncated: true });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).toContain('Revenue by region');
+    expect(updated).not.toContain('has the highest');
+  });
+
+  it('Summary override: no Summary button, keeps Table, and tags the summary view', async () => {
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).not.toContain('override_summary_');
+    expect(updated).toContain('override_table_');
+    expect(updated).toContain('anna_view_summary');
+  });
+
+  it('Summary fallback renders a table, so it hides Table and keeps Summary', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).toContain("Couldn't generate a summary");
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+  });
+
+  it('CSV export keeps the current view: no Table button under a tagged table', async () => {
+    const currentBlocks = [
+      { type: 'table', block_id: 'anna_view_table', rows: [] },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+    expect(updated).not.toContain('override_csv_');
+  });
+});

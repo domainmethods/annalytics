@@ -24,18 +24,29 @@ export function formatValue(val: unknown): string {
 // the refine affordance survives an override click. Returns [] when there are no
 // assumptions. The context block carries text in `elements` (not a top-level
 // `text`) — clients/tests rely on that exact shape.
+// Assumptions arrive as full sentences ("'Traffic' refers to session count."),
+// so a comma join reads as "count., 'Where'". Strip each item's trailing
+// separator and join with "; " so the list reads as one clause sequence.
+export function formatAssumptions(assumptions: string[]): string {
+  return assumptions
+    .map((a) => a.trim().replace(/[.;,]+$/, '').trim())
+    .filter((a) => a.length > 0)
+    .join('; ');
+}
+
 export function buildAssumptionBlocks(assumptions: string[], traceId: string): KnownBlock[] {
-  if (!assumptions || assumptions.length === 0) return [];
+  const formatted = formatAssumptions(assumptions ?? []);
+  if (formatted.length === 0) return [];
   return [
     {
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${assumptions.join(', ')}` }],
+      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${formatted}` }],
     } as KnownBlock,
     {
       type: 'actions',
       elements: [{
         type: 'button',
-        text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' },
+        text: { type: 'plain_text', text: 'Change assumptions' },
         action_id: 'refine_assumptions',
         value: traceId,
       }],
@@ -56,6 +67,22 @@ export function buildSingleValueBlocks(value: string, headline: string): KnownBl
       text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(headline, HEADLINE_LIMIT)}` },
     } as SectionBlock,
   ];
+}
+
+// block_ids tag which result view a message is showing, so re-renders (CSV,
+// reasoning/SQL toggles) can hide the button for the view already on screen
+// without persisting the view anywhere.
+export const RESULT_TABLE_BLOCK_ID = 'anna_view_table';
+export const RESULT_SUMMARY_BLOCK_ID = 'anna_view_summary';
+
+export type ResultView = 'table' | 'summary';
+
+export function currentViewFromBlocks(blocks: ReadonlyArray<{ type?: string; block_id?: string }> | undefined): ResultView | undefined {
+  if (!blocks) return undefined;
+  if (blocks.some((b) => b.block_id === RESULT_SUMMARY_BLOCK_ID)) return 'summary';
+  // A native table block also counts, for messages rendered before tagging.
+  if (blocks.some((b) => b.block_id === RESULT_TABLE_BLOCK_ID || b.type === 'table')) return 'table';
+  return undefined;
 }
 
 const NATIVE_TABLE_MAX_COLS = TABLE_COLUMN_LIMIT; // Slack native table block hard cap.
@@ -81,7 +108,7 @@ export function buildTableBlocks(
   // rather than silently dropping rows or cells from the native table.
   const tableChars = tableRows.flat().reduce((sum, c) => sum + c.text.length, 0);
   if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(rows, columnNames);
-  return [{ type: 'table', rows: tableRows } satisfies TableBlock];
+  return [{ type: 'table', block_id: RESULT_TABLE_BLOCK_ID, rows: tableRows } satisfies TableBlock];
 }
 
 // Legacy monospace renderer: the fallback for >20 columns and for tables over
@@ -99,15 +126,14 @@ function buildCodeBlockTable(
     columnNames.map((col, i) => formatValue(row[col]).padEnd(widths[i])).join(' | '),
   );
   const tableText = [header, separator, ...dataRows].join('\n');
-  return [{ type: 'section', text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
+  return [{ type: 'section', block_id: RESULT_TABLE_BLOCK_ID, text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
 }
 
 export function buildZeroRowBlocks(
   assumptions: string[],
 ): KnownBlock[] {
-  const filterList = assumptions.length > 0
-    ? `\n*Filters applied:* ${assumptions.join(', ')}`
-    : '';
+  const formatted = formatAssumptions(assumptions);
+  const filterList = formatted.length > 0 ? `\n*Filters applied:* ${formatted}` : '';
 
   // No SQL block here either — the query is available via "Show SQL" if the
   // user wants to inspect why nothing came back.
@@ -236,12 +262,17 @@ export function buildFeedbackActions(
 //   - zero rows: nothing to tabulate, summarize, or export → hide all three
 //   - single scalar: the value + explanation already IS the prose answer, so
 //     Table/CSV/Summary of one cell are all redundant → hide all three
-//   - anything else (tables): show all three
+//   - anything else (tables): show all three, minus the button for the view
+//     already on screen (no "Table" under a table, no "Summary" under a summary);
+//     an unknown view (legacy messages) keeps all three
 export function overrideButtonsForResultShape(
   rowCount: number,
   columnCount: number,
+  view?: ResultView,
 ): OverrideButtons {
   if (rowCount === 0) return { table: false, summary: false, csv: false };
   if (rowCount === 1 && columnCount === 1) return { table: false, summary: false, csv: false };
+  if (view === 'table') return { table: false };
+  if (view === 'summary') return { summary: false };
   return {};
 }

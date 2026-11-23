@@ -51,6 +51,12 @@ export interface ResponseContext {
   reasoningChain: string;
   generatedSql: string;
   explanation: string;
+  /**
+   * The generator's one-line label for the answer, re-shown as the table
+   * caption when the Table override re-renders. Omitted when empty and absent
+   * on legacy records (Firestore rejects undefined).
+   */
+  headline?: string;
   tablesUsed: string[];
   confidence: 'high' | 'medium' | 'low';
   // R9.3: Store all three confidence values for observability

@@ -26,6 +26,7 @@ import {
   EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
+import { buildAnswerCaptionBlocks } from './slack/answerLeadIn.js';
 import { recordAmbiguityLabel, saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
 import { conversationThreadKey } from './state/threadScope.js';
@@ -632,6 +633,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
+      // Firestore rejects undefined: persist the headline only when present.
+      ...(qualityResult.sqlResult.headline?.trim() ? { headline: qualityResult.sqlResult.headline.trim() } : {}),
       tablesUsed: qualityResult.sqlResult.tablesUsed,
       confidence,
       clarificationConfidence: clarification.confidence,
@@ -828,11 +831,21 @@ export function buildResponseBlocks(
     case 'summary': {
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncatedDisplay = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
+      // Every format in this branch renders a table, so the Table button is
+      // hidden. The caption is computed from all returned rows, not just the
+      // displayed ones, so its ranking covers the whole result.
       return [
+        ...buildAnswerCaptionBlocks({
+          rows: result.rows,
+          columnNames: result.columnNames,
+          truncated: result.truncated,
+          sql: gen.sql,
+          headline: gen.headline,
+        }),
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         ...assumptionBlocks,
-        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
     }
     case 'zero_rows':

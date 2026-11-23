@@ -5,7 +5,8 @@ import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
 import type { ResponseContext } from '../types.js';
-import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
+import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks, currentViewFromBlocks, RESULT_SUMMARY_BLOCK_ID } from '../slack/blocks.js';
+import { buildAnswerCaptionBlocks } from '../slack/answerLeadIn.js';
 import { summarizeResults } from '../agents/summaryAgent.js';
 import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
 import { rootLogger } from '../logging.js';
@@ -105,10 +106,17 @@ export async function handleTableOverride(
     const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
     // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
     // message consistent with the original answer's layout.
-    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
+    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table');
     const blocks: KnownBlock[] = [
       ...verificationCaveatBlocks(ctx),
       ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
+      ...buildAnswerCaptionBlocks({
+        rows: result.rows,
+        columnNames: result.columnNames,
+        truncated: result.truncated,
+        sql: ctx.generatedSql,
+        ...(ctx.headline ? { headline: ctx.headline } : {}),
+      }),
       ...buildTableBlocks(displayRows, result.columnNames),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
@@ -163,13 +171,12 @@ export async function handleSummaryOverride(
       apiKey: config.geminiApiKey,
     });
 
-    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
       const blocks: KnownBlock[] = [
         ...caveat,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
-        { type: 'section', text: { type: 'mrkdwn', text: summary } } as KnownBlock,
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
+        { type: 'section', block_id: RESULT_SUMMARY_BLOCK_ID, text: { type: 'mrkdwn', text: summary } } as KnownBlock,
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'summary')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: summary, blocks });
     } else {
@@ -183,7 +190,7 @@ export async function handleSummaryOverride(
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
         ...buildTableBlocks(displayRows, result.columnNames),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
     }
@@ -255,7 +262,7 @@ export async function handleCsvOverride(
             e.action_id.startsWith('hide_')),
       );
     const preserved = currentBlocks.filter((b) => !isOverrideActions(b));
-    const overrides = { ...overrideButtonsForResultShape(result.totalRows, result.columnNames.length), csv: false };
+    const overrides = { ...overrideButtonsForResultShape(result.totalRows, result.columnNames.length, currentViewFromBlocks(currentBlocks)), csv: false };
     const blocks: KnownBlock[] = [
       ...preserved,
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
