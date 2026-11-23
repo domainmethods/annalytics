@@ -213,7 +213,7 @@ describe('computeLeadIn — stays silent when it cannot prove the claim', () => 
     }
     // A label that only contains the word is still a category.
     const rows = [{ c: 'Total Wine', revenue: 1000 }, { c: 'Paid', revenue: 600 }];
-    expect(lead(rows, ['c', 'revenue'])).toBe('*Total Wine* has the highest revenue (1000), followed by Paid (600).');
+    expect(lead(rows, ['c', 'revenue'], { sql: "SELECT c, revenue FROM t UNION ALL SELECT 'Total Wine', SUM(revenue) FROM t" })).toBe('*Total Wine* has the highest revenue (1000), followed by Paid (600).');
   });
 
   it('a STRING period label (a time series has no winner)', () => {
