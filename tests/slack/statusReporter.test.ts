@@ -219,6 +219,22 @@ describe('createStatusReporter', () => {
       ]);
     });
 
+    it('stops rewriting once the outermost of nested regions has ended', async () => {
+      const { texts, write } = recordingWrites();
+      const status = createStatusReporter({ write });
+
+      await status.withHeartbeat(async () => {
+        await status.set('Researching the best approach...');
+        await status.withHeartbeat(async () => {
+          await vi.advanceTimersByTimeAsync(10_000);
+        });
+      });
+      const written = texts.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(texts).toHaveLength(written);
+    });
+
     it('returns what the work returns', async () => {
       const status = createStatusReporter({ write: vi.fn().mockResolvedValue(undefined) });
 
