@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { openSweepCheckpoint } from '../../../scripts/template-validation/checkpoint.js';
 
 it('keeps a pass appended after a truncated line readable on the next resume', async () => {
@@ -51,12 +51,12 @@ it('misses the checkpoint when a node profile changed', () => withDir(async path
   const first = await openSweepCheckpoint(path, 'h', false, () => {});
   await first.wrap('slackIntake', async () => passOf(1))();
   const second = await openSweepCheckpoint(path, 'h', true, () => {});
-  process.env.NODE_PROFILE_OVERRIDES = JSON.stringify({ slackIntake: { tier: 'flash', version: '3', thinkingLevel: 'high' } });
+  vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({ slackIntake: { tier: 'flash', version: '3', thinkingLevel: 'high' } }));
   let ran = false;
   try {
     await second.wrap('slackIntake', async () => { ran = true; return passOf(1); })();
   } finally {
-    delete process.env.NODE_PROFILE_OVERRIDES;
+    vi.unstubAllEnvs();
   }
   expect(ran).toBe(true);
   expect(second.replayed).toBe(0);

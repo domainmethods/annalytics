@@ -59,7 +59,10 @@ export async function openSweepCheckpoint(
     log(`Checkpoint: resuming from ${path} (${saved.size} completed pass${saved.size === 1 ? '' : 'es'})`);
   } else {
     // A leftover checkpoint is paid work from an interrupted run: never discard it implicitly.
-    const exists = await access(path).then(() => true, () => false);
+    const exists = await access(path).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
     if (exists) {
       throw new Error(`A sweep checkpoint from an interrupted run exists at ${path}. Pass --resume to continue it, or delete it to start fresh.`);
     }
