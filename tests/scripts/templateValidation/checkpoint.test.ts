@@ -70,3 +70,8 @@ it('starts empty when --resume finds no checkpoint, and refuses a fresh run over
   await resumed.discard();
   await expect(openSweepCheckpoint(path, 'h', false, () => {})).resolves.toBeDefined();
 }));
+
+it('surfaces a filesystem error other than ENOENT instead of treating it as no checkpoint', () => withDir(async path => {
+  await writeFile(path, 'not a directory', 'utf8');
+  await expect(openSweepCheckpoint(join(path, 'cp.jsonl'), 'h', false, () => {})).rejects.toMatchObject({ code: 'ENOTDIR' });
+}));
