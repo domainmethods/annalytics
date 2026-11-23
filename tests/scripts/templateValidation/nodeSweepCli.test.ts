@@ -238,7 +238,7 @@ it.each([
       expect(profiles.every(profile => profile?.includes('"slackIntake"'))).toBe(true);
       expect(logged).toContain('(2 passes replayed from checkpoint)');
     } else {
-      expect(profiles.slice(0, 4).every(profile => profile === previous)).toBe(true);
+      expect(profiles.slice(0, 4)).toEqual([previous, previous, previous, previous]);
       expect(logged.some(line => line.includes('replayed from checkpoint'))).toBe(false);
     }
     expect(await readdir(dir)).not.toContain(checkpoint);
