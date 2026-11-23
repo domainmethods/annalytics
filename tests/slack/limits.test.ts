@@ -148,6 +148,14 @@ describe('boundedText', () => {
     }
   });
 
+  it('drops only the partial entity, keeping a whole one at the boundary', () => {
+    expect(boundedText(escapeMrkdwn('&'.repeat(40)), 20)).toBe('&amp;&amp;&amp;…');
+    expect(boundedText(escapeMrkdwn(`xxxx${'&'.repeat(40)}`), 20)).toBe('xxxx&amp;&amp;&amp;…');
+    expect(boundedText(escapeMrkdwn('<'.repeat(40)), 20)).toBe('&lt;&lt;&lt;&lt;…');
+    expect(boundedText(escapeMrkdwn('>'.repeat(40)), 20)).toBe('&gt;&gt;&gt;&gt;…');
+    expect(boundedText('short &amp; more', 10)).toBe('short…');
+  });
+
   it('leaves short text and a cut away from entities unchanged', () => {
     expect(boundedText('a & b', 20)).toBe('a & b');
     expect(boundedText('a'.repeat(30), 20)).toBe(`${'a'.repeat(19)}…`);

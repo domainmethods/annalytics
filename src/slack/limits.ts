@@ -29,7 +29,7 @@ export function boundedText(text: string, limit = SECTION_TEXT_LIMIT): string {
   const marker = '…';
   const head = text.slice(0, limit - marker.length);
   const space = head.lastIndexOf(' ');
-  return (space > limit / 2 ? head.slice(0, space) : head).replace(/&(?:a(?:m(?:p)?)?|l(?:t)?|g(?:t)?)?$/, '') + marker;
+  return (space > limit / 2 ? head.slice(0, space) : head).replace(/&(?:a(?:m(?:p)?)?|l(?:t)?|g(?:t)?)?$/, '').trimEnd() + marker;
 }
 
 // Show SQL verbatim across up to MAX_SQL_SECTIONS sections; each section
