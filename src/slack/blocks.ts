@@ -1,5 +1,6 @@
-import { boundedPreview, boundedText, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
+import { boundedPreview, boundedText, escapeMrkdwn, SECTION_TEXT_LIMIT, TABLE_COLUMN_LIMIT, TABLE_ROW_LIMIT, TABLE_TEXT_LIMIT } from './limits.js';
 import { unwrapBigQueryScalar } from '../execution/bigqueryScalar.js';
+import type { EligibleComposition } from '../execution/composition.js';
 import type { KnownBlock, ActionsBlock, SectionBlock, TableBlock, RawTextElement } from '@slack/types';
 
 /** Display for an empty single-value answer. */
@@ -24,18 +25,30 @@ export function formatValue(val: unknown): string {
 // the refine affordance survives an override click. Returns [] when there are no
 // assumptions. The context block carries text in `elements` (not a top-level
 // `text`) — clients/tests rely on that exact shape.
+// Assumptions arrive as full sentences ("'Traffic' refers to session count."),
+// so a comma join reads as "count., 'Where'". Strip each item's trailing
+// separator and join with "; " so the list reads as one clause sequence.
+export function formatAssumptions(assumptions: string[]): string {
+  return assumptions
+    // The lookbehind keeps a capital-letter abbreviation's final period ("the U.S."; "etc." still loses it); a trailing ; or , always goes.
+    .map((a) => a.trim().replace(/(?:(?<!\.[A-Z])\.|[;,])+$/, '').trim())
+    .filter((a) => a.length > 0)
+    .join('; ');
+}
+
 export function buildAssumptionBlocks(assumptions: string[], traceId: string): KnownBlock[] {
-  if (!assumptions || assumptions.length === 0) return [];
+  const formatted = formatAssumptions(assumptions ?? []);
+  if (formatted.length === 0) return [];
   return [
     {
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${assumptions.join(', ')}` }],
+      elements: [{ type: 'mrkdwn', text: `🔍 *Assumptions:* ${formatted}` }],
     } as KnownBlock,
     {
       type: 'actions',
       elements: [{
         type: 'button',
-        text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' },
+        text: { type: 'plain_text', text: 'Change assumptions' },
         action_id: 'refine_assumptions',
         value: traceId,
       }],
@@ -53,9 +66,25 @@ export function buildSingleValueBlocks(value: string, headline: string): KnownBl
     {
       type: 'section',
       // Bound each part separately so truncation never drops the closing bold marker.
-      text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(headline, HEADLINE_LIMIT)}` },
+      text: { type: 'mrkdwn', text: `*${boundedText(value, SECTION_TEXT_LIMIT - HEADLINE_LIMIT - 3)}*\n${boundedText(escapeMrkdwn(headline), HEADLINE_LIMIT)}` },
     } as SectionBlock,
   ];
+}
+
+// block_ids tag which result view a message is showing, so re-renders (CSV,
+// reasoning/SQL toggles) can hide the button for the view already on screen
+// without persisting the view anywhere.
+export const RESULT_TABLE_BLOCK_ID = 'anna_view_table';
+export const RESULT_SUMMARY_BLOCK_ID = 'anna_view_summary';
+
+export type ResultView = 'table' | 'summary';
+
+export function currentViewFromBlocks(blocks: ReadonlyArray<{ type?: string; block_id?: string }> | undefined): ResultView | undefined {
+  if (!blocks) return undefined;
+  if (blocks.some((b) => b.block_id === RESULT_SUMMARY_BLOCK_ID)) return 'summary';
+  // A native table block also counts, for messages rendered before tagging.
+  if (blocks.some((b) => b.block_id === RESULT_TABLE_BLOCK_ID || b.type === 'table')) return 'table';
+  return undefined;
 }
 
 const NATIVE_TABLE_MAX_COLS = TABLE_COLUMN_LIMIT; // Slack native table block hard cap.
@@ -63,51 +92,65 @@ const NATIVE_TABLE_MAX_COLS = TABLE_COLUMN_LIMIT; // Slack native table block ha
 export function buildTableBlocks(
   rows: Record<string, unknown>[],
   columnNames: string[],
+  composition?: EligibleComposition,
 ): KnownBlock[] {
+  // Fail safe: shares that don't line up with the rows would misattribute a
+  // percentage, so render the plain Phase 1 table instead.
+  const usable =
+    composition !== undefined &&
+    composition.shares.length === rows.length &&
+    columnNames.includes(composition.dimension) &&
+    columnNames.includes(composition.measure)
+      ? composition
+      : undefined;
+  const header = usable ? [...columnNames, 'Share'] : columnNames;
+  const body = rows.map((row, i) => {
+    const cells = columnNames.map((col) => {
+      const text = formatValue(row[col]);
+      return usable && col === usable.dimension && text.length === 0 ? EMPTY_VALUE : text;
+    });
+    return usable ? [...cells, usable.shares[i].label] : cells;
+  });
+  if (usable) {
+    body.push([
+      ...columnNames.map((col) => (col === usable.dimension ? 'Total' : col === usable.measure ? usable.total : '')),
+      '100%',
+    ]);
+  }
+  const textRows = [header, ...body];
   // Slack's native table caps at 20 columns; wide results degrade to the legacy
   // monospace renderer rather than dropping columns.
-  if (columnNames.length > NATIVE_TABLE_MAX_COLS) {
-    return buildCodeBlockTable(rows, columnNames);
-  }
-  const cell = (text: string): RawTextElement => ({
-    type: 'raw_text',
-    // raw_text requires length >= 1; empty cells render as an em dash.
-    text: text.length > 0 ? text : '—',
-  });
-  const header = columnNames.map((c) => cell(c));
-  const dataRows = rows.map((row) => columnNames.map((col) => cell(formatValue(row[col]))));
-  const tableRows = [header, ...dataRows];
+  if (header.length > NATIVE_TABLE_MAX_COLS) return buildCodeBlockTable(textRows);
+  const tableRows = textRows.map((r) =>
+    r.map((text): RawTextElement => ({
+      type: 'raw_text',
+      // raw_text requires length >= 1; empty cells render as an em dash.
+      text: text.length > 0 ? text : '—',
+    })),
+  );
   // Oversized tables fall back to the bounded text preview (which points to CSV)
   // rather than silently dropping rows or cells from the native table.
   const tableChars = tableRows.flat().reduce((sum, c) => sum + c.text.length, 0);
-  if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(rows, columnNames);
-  return [{ type: 'table', rows: tableRows } satisfies TableBlock];
+  if (tableRows.length > TABLE_ROW_LIMIT || tableChars > TABLE_TEXT_LIMIT) return buildCodeBlockTable(textRows);
+  return [{ type: 'table', block_id: RESULT_TABLE_BLOCK_ID, rows: tableRows } satisfies TableBlock];
 }
 
 // Legacy monospace renderer: the fallback for >20 columns and for tables over
-// Slack's native row or character limits.
-function buildCodeBlockTable(
-  rows: Record<string, unknown>[],
-  columnNames: string[],
-): KnownBlock[] {
-  const widths = columnNames.map((col) =>
-    Math.max(col.length, ...rows.map((r) => formatValue(r[col]).length)),
-  );
-  const header = columnNames.map((c, i) => c.padEnd(widths[i])).join(' | ');
+// Slack's native row or character limits. Takes header + body as text cells.
+function buildCodeBlockTable(textRows: string[][]): KnownBlock[] {
+  const [header, ...body] = textRows;
+  const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i].length)));
+  const line = (r: string[]) => r.map((c, i) => c.padEnd(widths[i])).join(' | ');
   const separator = widths.map((w) => '-'.repeat(w)).join('-+-');
-  const dataRows = rows.map((row) =>
-    columnNames.map((col, i) => formatValue(row[col]).padEnd(widths[i])).join(' | '),
-  );
-  const tableText = [header, separator, ...dataRows].join('\n');
-  return [{ type: 'section', text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
+  const tableText = [line(header), separator, ...body.map(line)].join('\n');
+  return [{ type: 'section', block_id: RESULT_TABLE_BLOCK_ID, text: { type: 'mrkdwn', text: boundedPreview(`\`\`\`\n${tableText}\n\`\`\``) } } as SectionBlock];
 }
 
 export function buildZeroRowBlocks(
   assumptions: string[],
 ): KnownBlock[] {
-  const filterList = assumptions.length > 0
-    ? `\n*Filters applied:* ${assumptions.join(', ')}`
-    : '';
+  const formatted = formatAssumptions(assumptions);
+  const filterList = formatted.length > 0 ? `\n*Filters applied:* ${formatted}` : '';
 
   // No SQL block here either — the query is available via "Show SQL" if the
   // user wants to inspect why nothing came back.
@@ -236,12 +279,17 @@ export function buildFeedbackActions(
 //   - zero rows: nothing to tabulate, summarize, or export → hide all three
 //   - single scalar: the value + explanation already IS the prose answer, so
 //     Table/CSV/Summary of one cell are all redundant → hide all three
-//   - anything else (tables): show all three
+//   - anything else (tables): show all three, minus the button for the view
+//     already on screen (no "Table" under a table, no "Summary" under a summary);
+//     an unknown view (legacy messages) keeps all three
 export function overrideButtonsForResultShape(
   rowCount: number,
   columnCount: number,
+  view?: ResultView,
 ): OverrideButtons {
   if (rowCount === 0) return { table: false, summary: false, csv: false };
   if (rowCount === 1 && columnCount === 1) return { table: false, summary: false, csv: false };
+  if (view === 'table') return { table: false };
+  if (view === 'summary') return { summary: false };
   return {};
 }

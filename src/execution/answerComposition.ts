@@ -1,0 +1,64 @@
+import { uniqueKeyCase, verifyComposition, type CompositionInput, type CompositionRejectReason, type EligibleComposition } from './composition.js';
+
+export interface CompositionLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+}
+
+export type CompositionSurface = 'answer' | 'override_table' | 'override_summary_fallback';
+
+/** Every `reason` the `answer.composition` log can carry: the verifier's own, plus a throw caught here. */
+export type AnswerCompositionReason = CompositionRejectReason | 'verifier_error';
+
+/**
+ * The `project.dataset.table.column` unique keys (column lowercased, table case kept) that the loaded dbt metadata declares, for `CompositionInput.uniqueKeys`.
+ * A model with no `database` yields a two-part table name (`dataset.table`), so its three-part keys never match the
+ * proof's four-part `project.dataset.table.column` keys (fail closed).
+ */
+export function declaredUniqueKeys(tables: ReadonlyArray<{ name: string; uniqueColumns?: string[] }>): string[] {
+  return tables.flatMap(t => (t.uniqueColumns ?? []).map(c => uniqueKeyCase(`${t.name}.${c}`)));
+}
+
+/**
+ * The keys a saved answer's proof relied on that the loaded metadata still
+ * declares. A re-render never trusts a key whose dbt `unique` test has since
+ * been removed; with no current metadata, it trusts none.
+ */
+export function stillDeclaredKeys(stored: readonly string[], current: readonly string[] | undefined): string[] {
+  if (!current) return [];
+  const declared = new Set(current);
+  return stored.filter(k => declared.has(k));
+}
+
+/**
+ * Verify a result for an answer surface (pipeline, Table override, Summary
+ * fallback). Never throws: any error is treated as ineligible so a share
+ * feature can't break an answer. Logs `answer.composition` with shape
+ * telemetry only — never row values, labels, SQL or table names.
+ * Returns the composition only when it is eligible.
+ */
+export function verifyAnswerComposition(
+  input: CompositionInput,
+  logger: CompositionLogger,
+  meta: { surface: CompositionSurface; traceId?: string },
+): EligibleComposition | undefined {
+  let composition: EligibleComposition | undefined;
+  let fields: { eligible: true; measureKind: EligibleComposition['measureKind']; usedUniqueKeyCount: number } | { eligible: false; reason: AnswerCompositionReason };
+  try {
+    const verdict = verifyComposition(input);
+    if (verdict.eligible) {
+      composition = verdict;
+      fields = { eligible: true, measureKind: verdict.measureKind, usedUniqueKeyCount: verdict.usedUniqueKeys.length };
+    } else {
+      fields = { eligible: false, reason: verdict.reason };
+    }
+  } catch {
+    composition = undefined;
+    fields = { eligible: false, reason: 'verifier_error' };
+  }
+  try {
+    logger.info({ event: 'answer.composition', surface: meta.surface, ...(meta.traceId ? { traceId: meta.traceId } : {}), ...fields, rowCount: input.result?.rows?.length ?? 0 }, 'answer.composition');
+  } catch {
+    // Telemetry must never affect the answer.
+  }
+  return composition;
+}

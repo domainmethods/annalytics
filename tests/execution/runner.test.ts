@@ -190,4 +190,35 @@ describe('executeQuery', () => {
 
     expect(result.columnNames).toEqual([]);
   });
+
+  it('fills columnTypes from the results schema', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([{ ch: 'a', n: 1 }], '1', undefined, {
+      schema: { fields: [{ name: 'ch', type: 'STRING' }, { name: 'n', type: 'INT64' }] },
+    }));
+
+    const result = await executeQuery('SELECT ch, n FROM t', OPTS);
+
+    expect(result.columnTypes).toEqual(['STRING', 'INT64']);
+  });
+
+  it('marks REPEATED fields with []', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([{ tags: ['x'] }], '1', undefined, {
+      schema: { fields: [{ name: 'tags', type: 'STRING', mode: 'REPEATED' }] },
+    }));
+
+    const result = await executeQuery('SELECT tags FROM t', OPTS);
+
+    expect(result.columnTypes).toEqual(['STRING[]']);
+  });
+
+  it('omits columnTypes when schema names do not match columnNames in order', async () => {
+    mockGetQueryResults.mockResolvedValueOnce(page([{ a: 1, b: 2 }], '1', undefined, {
+      schema: { fields: [{ name: 'b', type: 'INT64' }, { name: 'a', type: 'INT64' }] },
+    }));
+
+    const result = await executeQuery('SELECT a, b FROM t', OPTS);
+
+    expect(result.columnTypes).toBeUndefined();
+    expect('columnTypes' in result).toBe(false);
+  });
 });

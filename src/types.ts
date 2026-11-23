@@ -28,6 +28,8 @@ export interface ValidationResult {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   columnNames: string[];
+  /** BigQuery type per column, aligned with columnNames; REPEATED adds a `[]` suffix. Absent when the schema is unavailable or misaligned. */
+  columnTypes?: string[];
   totalRows: number;          // full result count from the results response (at least rows.length)
   bytesProcessed: number;
   truncated: boolean;         // true if the result holds more rows than were returned
@@ -51,6 +53,20 @@ export interface ResponseContext {
   reasoningChain: string;
   generatedSql: string;
   explanation: string;
+  /**
+   * The generator's one-line label for the answer, re-shown as the table
+   * caption when the Table override re-renders. Omitted when empty and absent
+   * on legacy records (Firestore rejects undefined).
+   */
+  headline?: string;
+  /**
+   * dbt unique keys (`project.dataset.table.column`; column lower-cased, table case kept) a verified
+   * composition proof relied on (COUNT(DISTINCT) on a key, or a many-to-one
+   * LEFT JOIN onto a keyed table), so the Table override re-verifies the same
+   * shares. Omitted when no key was used and absent on legacy
+   * records (Firestore rejects undefined).
+   */
+  compositionUniqueKeys?: string[];
   tablesUsed: string[];
   confidence: 'high' | 'medium' | 'low';
   // R9.3: Store all three confidence values for observability

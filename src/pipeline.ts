@@ -13,6 +13,7 @@ import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { executeQuery } from './execution/runner.js';
 import { chooseFormat } from './execution/formatter.js';
 import { buildThreadContext } from './slack/threadContext.js';
+import { MAX_DISPLAY_ROWS } from './slack/limits.js';
 import { buildClarificationBlocks } from './slack/clarificationBlocks.js';
 import {
   buildSingleValueBlocks,
@@ -26,6 +27,7 @@ import {
   EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
+import { buildAnswerCaptionBlocks } from './slack/answerLeadIn.js';
 import { recordAmbiguityLabel, saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
 import { conversationThreadKey } from './state/threadScope.js';
@@ -41,6 +43,8 @@ import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlo
 import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
 import { handleDbtStatus } from './agents/dbtStatusAgent.js';
 import { getRunHistoryForModel, getLatestRun } from './state/dbtRunHistory.js';
+import { verifyAnswerComposition, declaredUniqueKeys } from './execution/answerComposition.js';
+import type { EligibleComposition } from './execution/composition.js';
 
 export interface PipelineConfig {
   geminiApiKey: string;
@@ -62,6 +66,8 @@ export interface PipelineConfig {
     timeoutHours: number;
     onNegativeFeedback?: boolean;
   };
+  /** Verified Share column / Total row on table answers (ANSWER_SHARES_ENABLED). */
+  answerSharesEnabled?: boolean;
 }
 
 interface FallbackTableRef {
@@ -114,6 +120,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
       timeoutHours: config.escalation.timeoutHours,
       onNegativeFeedback: config.escalation.onNegativeFeedback,
     },
+    answerSharesEnabled: config.answerShares.enabled,
   };
 }
 
@@ -605,7 +612,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     // the clarifier never made; the answer and its saved context show both.
     const answerAssumptions = mergeAssumptions(assumptions, qualityResult.sqlResult.assumptions);
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
+    // Verified shares: only a composition proof over the FULL result (never the
+    // display slice) earns a Share column; anything unproven renders Phase 1.
+    // Table only on purpose: a summary-format result is never eligible (governance caveat (a)).
+    const composition = config.answerSharesEnabled && format === 'table'
+      ? verifyAnswerComposition({
+          sql: qualityResult.sqlResult.sql,
+          result: queryResult,
+          maxDisplayRows: MAX_DISPLAY_ROWS,
+          uniqueKeys: declaredUniqueKeys(pipelineTables),
+        }, logger, { surface: 'answer', traceId })
+      : undefined;
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions, composition);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
@@ -632,6 +650,10 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
+      // Firestore rejects undefined: persist the headline only when present.
+      ...(qualityResult.sqlResult.headline?.trim() ? { headline: qualityResult.sqlResult.headline.trim() } : {}),
+      // Only the keys a proof relied on, so the Table override re-verifies identically.
+      ...(composition?.usedUniqueKeys.length ? { compositionUniqueKeys: composition.usedUniqueKeys } : {}),
       tablesUsed: qualityResult.sqlResult.tablesUsed,
       confidence,
       clarificationConfidence: clarification.confidence,
@@ -801,10 +823,9 @@ export function buildResponseBlocks(
   threadTs: string,
   statusMsgTs: string,
   assumptions?: string[],
+  composition?: EligibleComposition,
 ): KnownBlock[] {
   const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
-
-  const MAX_DISPLAY_ROWS = 20;
 
   // Which override buttons this result shape warrants — single source of truth
   // shared with the toggle-restore handlers in app.ts. The raw SQL is no longer
@@ -828,11 +849,23 @@ export function buildResponseBlocks(
     case 'summary': {
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncatedDisplay = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
+      // Every format in this branch renders a table, so the Table button is
+      // hidden. The caption is computed from all returned rows, not just the
+      // displayed ones, so its ranking covers the whole result.
       return [
-        ...buildTableBlocks(displayRows, result.columnNames),
+        ...buildAnswerCaptionBlocks({
+          rows: result.rows,
+          columnNames: result.columnNames,
+          truncated: result.truncated,
+          sql: gen.sql,
+          headline: gen.headline,
+          ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
+          ...(composition ? { composition } : {}),
+        }),
+        ...buildTableBlocks(displayRows, result.columnNames, composition),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         ...assumptionBlocks,
-        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
     }
     case 'zero_rows':

@@ -13,7 +13,8 @@ import { registerEscalationReaction } from './handlers/escalationReaction.js';
 import { recordFeedback, getSlackResponseContext } from './state/responseContext.js';
 import { buildReasoningBlocks, REASONING_BLOCK_PREFIX } from './slack/reasoningBlocks.js';
 import { buildSqlBlocks, SQL_BLOCK_PREFIX } from './slack/sqlBlocks.js';
-import { buildFeedbackActions, overrideButtonsForResultShape } from './slack/blocks.js';
+import { buildFeedbackActions, overrideButtonsForResultShape, currentViewFromBlocks } from './slack/blocks.js';
+import { declaredUniqueKeys } from './execution/answerComposition.js';
 import { handleTableOverride, handleSummaryOverride, handleCsvOverride, notifyContextUnavailable, type OverrideViewer } from './handlers/responseOverrides.js';
 import { promptRefinement, REFINE_SAVE_FAILED_TEXT } from './handlers/refinePrompt.js';
 import { promptFeedbackReason, handleFeedbackReason, handleOtherNoteSubmission } from './handlers/feedbackEscalation.js';
@@ -291,7 +292,7 @@ app.view(OTHER_NOTE_CALLBACK_ID, async ({ ack, body, view, client }) => {
   });
 });
 
-// "Wrong assumptions? Click to refine" button handler
+// "Change assumptions" button handler
 app.action('refine_assumptions', async ({ ack, body, client }) => {
   await ack();
   const message = (body as any).message;
@@ -383,7 +384,7 @@ app.action(/hide_reasoning_.*/, async ({ action, ack, body, client }) => {
   // SQL panel is additive and survives the reasoning toggle, so detect whether
   // it's still showing and flip the SQL button to match (Hide SQL vs Show SQL).
   const [threadTs, statusMsgTs] = compoundKey.split('_');
-  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length, currentViewFromBlocks(currentBlocks));
   const sqlShown = withoutReasoning.some((b: any) => b.block_id?.startsWith(SQL_BLOCK_PREFIX));
   withoutReasoning.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, sqlShown));
 
@@ -424,7 +425,7 @@ app.action(/show_sql_.*/, async ({ action, ack, body, client }) => {
   // Rebuild the feedback row with sqlShown=true so its SQL button reads
   // "Hide SQL". Keep the result-shape-aware override set intact.
   const [threadTs, statusMsgTs] = compoundKey.split('_');
-  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length, currentViewFromBlocks(currentBlocks));
   const feedback = buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, true);
 
   await client.chat.update({
@@ -463,7 +464,7 @@ app.action(/hide_sql_.*/, async ({ action, ack, body, client }) => {
   // Re-add the feedback actions in the hidden state with the result-shape-aware
   // override set.
   const [threadTs, statusMsgTs] = compoundKey.split('_');
-  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length);
+  const overrides = overrideButtonsForResultShape(ctx.queryResults.rowCount, ctx.queryResults.columnNames.length, currentViewFromBlocks(currentBlocks));
   withoutSql.push(buildFeedbackActions(ctx.traceId, threadTs, statusMsgTs, overrides, false));
 
   await client.chat.update({
@@ -480,6 +481,8 @@ const overrideConfig = {
   queryTimeoutMs: config.limits.queryTimeoutMs,
   maxResultRows: config.limits.maxResultRows,
   geminiApiKey: config.gemini.apiKey,
+  answerSharesEnabled: config.answerShares.enabled,
+  currentUniqueKeys: () => declaredUniqueKeys(getTables()),
 };
 
 function overrideViewer(body: unknown): OverrideViewer | undefined {

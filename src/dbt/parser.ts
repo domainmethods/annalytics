@@ -185,6 +185,66 @@ function tagsFor(node: ManifestNode): string[] {
   return stringArray(node.tags);
 }
 
+/**
+ * Collects columns covered by an unconditional, enabled, un-namespaced dbt
+ * `unique` test, keyed by the model node id. Fail closed: any unknown shape is
+ * skipped, since a wrongly-unique column would yield wrong percentages.
+ */
+function uniqueColumnsByModel(manifestNodes: Record<string, unknown>): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  const isModel = (id: unknown): id is string =>
+    typeof id === 'string' && isRecord(manifestNodes[id]) && manifestNodes[id].resource_type === 'model';
+
+  for (const rawNode of Object.values(manifestNodes)) {
+    if (!isRecord(rawNode) || rawNode.resource_type !== 'test') continue;
+    const meta = rawNode.test_metadata;
+    if (!isRecord(meta) || meta.name !== 'unique') continue;
+    if (meta.namespace !== undefined && meta.namespace !== null && meta.namespace !== '') continue;
+
+    const config = optionalRecord(rawNode.config);
+    if (config.enabled === false) continue;
+    if (typeof config.where === 'string' && config.where.trim() !== '') continue;
+    // A non-error severity or a tolerance threshold lets duplicates pass the build.
+    if (typeof config.severity === 'string' && config.severity.trim().toLowerCase() !== 'error') continue;
+    const tolerant = (v: unknown): boolean =>
+      v !== undefined && v !== null && (typeof v !== 'string' || v.replace(/\s+/g, '') !== '!=0');
+    if (tolerant(config.error_if) || tolerant(config.warn_if)) continue;
+    // So does a custom fail_calc (the default counts failing rows).
+    if (config.fail_calc !== undefined && config.fail_calc !== null
+      && (typeof config.fail_calc !== 'string' || config.fail_calc.replace(/\s+/g, '').toLowerCase() !== 'count(*)')) continue;
+
+    let modelId: string | undefined;
+    if (rawNode.attached_node !== undefined && rawNode.attached_node !== null) {
+      if (!isModel(rawNode.attached_node)) continue;
+      modelId = rawNode.attached_node;
+    } else {
+      const deps = stringArray(optionalRecord(rawNode.depends_on).nodes);
+      const models = deps.filter(isModel);
+      if (deps.length !== 1 || models.length !== 1) continue;
+      modelId = models[0];
+    }
+
+    const kwargColumn = optionalRecord(meta.kwargs).column_name;
+    // kwargs can override the tested expression; require agreement when both exist.
+    if (
+      rawNode.column_name != null &&
+      kwargColumn != null &&
+      (typeof rawNode.column_name !== 'string' ||
+        typeof kwargColumn !== 'string' ||
+        rawNode.column_name.trim().toLowerCase() !== kwargColumn.trim().toLowerCase())
+    ) {
+      continue;
+    }
+    const column = rawNode.column_name ?? kwargColumn;
+    if (typeof column !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(column.trim())) continue;
+
+    const set = result.get(modelId) ?? new Set<string>();
+    set.add(column.trim().toLowerCase());
+    result.set(modelId, set);
+  }
+  return result;
+}
+
 export function parseDbtArtifacts(
   manifest: DbtArtifact | null | undefined,
   catalog: DbtArtifact | null | undefined,
@@ -198,6 +258,7 @@ export function parseDbtArtifacts(
     options.onWarnings?.(warnings);
   }
 
+  const uniqueByModel = uniqueColumnsByModel(manifestNodes);
   const tables: TableContext[] = [];
 
   for (const [nodeId, rawNode] of Object.entries(manifestNodes)) {
@@ -252,6 +313,9 @@ export function parseDbtArtifacts(
       sampleDDL: generateDDL(qualifiedSchema, name, columns, omittedColumnCount),
       dependsOn: dependsOnFor(node),
       tags: tagsFor(node),
+      ...(uniqueByModel.get(nodeId)?.size
+        ? { uniqueColumns: [...uniqueByModel.get(nodeId)!].sort() }
+        : {}),
     };
 
     tables.push(table);

@@ -22,13 +22,20 @@ vi.mock('../src/dbt/sampleRowCache.js');
 vi.mock('../src/agents/escalationDecision.js');
 vi.mock('../src/state/escalationState.js');
 vi.mock('../src/slack/escalationBlocks.js');
+const mockLogger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn() }));
 vi.mock('../src/logging.js', () => ({
   createTraceId: () => 'trace-abc',
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn() }),
+  createLogger: () => mockLogger,
   logStage: vi.fn(),
 }));
+// Real verifier by default; one case forces a throw to prove it never breaks an answer.
+vi.mock('../src/execution/composition.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/execution/composition.js')>();
+  return { ...actual, verifyComposition: vi.fn(actual.verifyComposition) };
+});
 
-import { runPipeline, buildResponseBlocks, mergeAssumptions } from '../src/pipeline.js';
+import { runPipeline, buildResponseBlocks, mergeAssumptions, toPipelineConfig } from '../src/pipeline.js';
+import { verifyComposition } from '../src/execution/composition.js';
 import { classifyQuestion } from '../src/agents/clarificationAgent.js';
 import { classifyAmbiguity } from '../src/agents/ambiguityClassifier.js';
 import { qualityLoop } from '../src/qualityLoop.js';
@@ -42,7 +49,7 @@ import { recordAmbiguityLabel, saveClarificationState } from '../src/state/clari
 import { releaseThreadLock } from '../src/state/threadLock.js';
 import { getTeachingSummaries } from '../src/teachings/summaryMap.js';
 import { getSampleRows } from '../src/dbt/sampleRowCache.js';
-import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue, overrideButtonsForResultShape } from '../src/slack/blocks.js';
+import { buildSingleValueBlocks, buildFeedbackActions, buildAssumptionBlocks, buildZeroRowBlocks, formatValue, overrideButtonsForResultShape, buildTableBlocks, buildTruncatedBlocks } from '../src/slack/blocks.js';
 import { BigQuery } from '@google-cloud/bigquery';
 import { buildClarificationBlocks } from '../src/slack/clarificationBlocks.js';
 import { decideEscalation } from '../src/agents/escalationDecision.js';
@@ -240,6 +247,18 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({
       userQuestion: 'What is paid revenue? (Data team guidance: x)',
     }));
+  });
+
+  it('persists the generator headline for the Table re-render caption, omitting it when blank', async () => {
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '  Revenue by region ' } } as any);
+    await runPipeline(baseInput);
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ headline: 'Revenue by region' }));
+
+    mockSaveCtx.mockClear();
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, headline: '   ' } } as any);
+    await runPipeline(baseInput);
+    // Firestore rejects undefined, so a blank headline is omitted, not set to undefined.
+    expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('headline');
   });
 
   it('MEDIUM confidence: includes assumptions in response', async () => {
@@ -761,6 +780,42 @@ describe('buildResponseBlocks', () => {
     ]);
   });
 
+  describe('table answers', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+      vi.mocked(buildTableBlocks).mockImplementation(actual.buildTableBlocks);
+      vi.mocked(buildTruncatedBlocks).mockImplementation(actual.buildTruncatedBlocks);
+      vi.mocked(overrideButtonsForResultShape).mockImplementation(actual.overrideButtonsForResultShape);
+    });
+
+    const rows = [{ channel: 'Direct', sessions: 198 }, { channel: 'Unassigned', sessions: 42 }];
+    const render = (format: string, result: Record<string, unknown>, headline = 'Sessions by channel') =>
+      buildResponseBlocks(
+        format,
+        { ...baseQualityResult.sqlResult, sql: 'SELECT channel, COUNT(*) AS sessions FROM t GROUP BY 1', headline } as any,
+        { rows, columnNames: ['channel', 'sessions'], columnTypes: ['STRING', 'INT64'], totalRows: 2, bytesProcessed: 0, truncated: false, ...result } as any,
+        'trace-1', 'T1', 'S1', [],
+      );
+
+    it.each(['table', 'wide_table', 'summary'])('%s: leads with the computed caption above the table', (format) => {
+      const blocks = render(format, {});
+      expect((blocks[0] as any).text.text).toBe('*Direct* has the highest sessions (198), followed by Unassigned (42).');
+      expect((blocks[1] as any).block_id).toBe('anna_view_table');
+    });
+
+    it('hides the Table button (the answer is already a table) but keeps Summary and CSV', () => {
+      const ids = render('table', {}).flatMap((b) => (b.type === 'actions' ? b.elements : [])).map((e: any) => e.action_id);
+      expect(ids).not.toContain('override_table_trace-1');
+      expect(ids).toEqual(expect.arrayContaining(['override_summary_trace-1', 'override_csv_trace-1', 'show_sql_trace-1', 'thumbs_up_trace-1']));
+    });
+
+    it('falls back to the headline when the result was truncated (and keeps the row notice)', () => {
+      const blocks = render('table', { truncated: true, totalRows: 5000 });
+      expect((blocks[0] as any).text.text).toBe('Sessions by channel');
+      expect(JSON.stringify(blocks)).toMatch(/Showing 2 of 5,?000/);
+    });
+  });
+
   it('single_value: answer first, then assumptions, then feedback actions', () => {
     const blocks = buildResponseBlocks(
       'single_value',
@@ -795,5 +850,190 @@ describe('buildResponseBlocks', () => {
       'trace-1', 'T1', 'S1', [],
     );
     expect((blocks[0] as any).text.text).toBe('*—*\nlatest refund');
+  });
+});
+
+describe('answer shares (ANSWER_SHARES_ENABLED)', () => {
+  const COUNT_SQL = 'SELECT ch, COUNT(*) AS n FROM `proj.ds.sessions` GROUP BY ch ORDER BY n DESC';
+  const DISTINCT_SQL = 'SELECT ch, COUNT(DISTINCT session_key) AS n FROM `proj.ds.sessions` GROUP BY ch';
+  const pairs: [string, number][] = [['Direct', 198], ['Organic', 120], ['Unassigned', 42]];
+  const queryResultOf = (rows: [string, number][]) => ({
+    rows: rows.map(([ch, n]) => ({ ch, n })),
+    columnNames: ['ch', 'n'],
+    columnTypes: ['STRING', 'INT64'],
+    totalRows: rows.length,
+    bytesProcessed: 100,
+    truncated: false,
+  });
+  const sessionsTable = {
+    name: 'proj.ds.sessions', schema: 'ds', description: '', materialization: 'table',
+    columns: [], sampleDDL: '', dependsOn: [], tags: [], uniqueColumns: ['session_key'],
+  };
+  const sharesOn = { ...baseInput.config, answerSharesEnabled: true };
+
+  const withSql = (sql: string) =>
+    mockQualityLoop.mockResolvedValue({ ...baseQualityResult, sqlResult: { ...baseQualityResult.sqlResult, sql } } as any);
+  const postedBlocks = () => mockClient.chat.update.mock.calls.at(-1)![0].blocks as any[];
+  const compositionLogs = () => mockLogger.info.mock.calls.filter(([, msg]) => msg === 'answer.composition');
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    vi.mocked(validateSql).mockResolvedValue({ valid: true, layer: 'all' });
+    setupHappyPath();
+    const actual = await vi.importActual<typeof import('../src/slack/blocks.js')>('../src/slack/blocks.js');
+    const composition = await vi.importActual<typeof import('../src/execution/composition.js')>('../src/execution/composition.js');
+    vi.mocked(verifyComposition).mockImplementation(composition.verifyComposition);
+    vi.mocked(buildTableBlocks).mockImplementation(actual.buildTableBlocks);
+    vi.mocked(buildTruncatedBlocks).mockImplementation(actual.buildTruncatedBlocks);
+    vi.mocked(overrideButtonsForResultShape).mockImplementation(actual.overrideButtonsForResultShape);
+    mockFormat.mockReturnValue('table');
+    mockExecute.mockResolvedValue(queryResultOf(pairs) as any);
+    withSql(COUNT_SQL);
+  });
+
+  it('toPipelineConfig carries the flag', () => {
+    const app = { gemini: {}, limits: {}, gcp: {}, escalation: {}, fastPath: undefined } as any;
+    expect(toPipelineConfig({ ...app, answerShares: { enabled: true } }).answerSharesEnabled).toBe(true);
+    expect(toPipelineConfig({ ...app, answerShares: { enabled: false } }).answerSharesEnabled).toBe(false);
+  });
+
+  it('flag on: an eligible COUNT(*) answer posts a Share column, a Total row and a leader share', async () => {
+    await runPipeline({ ...baseInput, config: sharesOn });
+    const table = postedBlocks().find((b) => b.type === 'table');
+    const cells = table.rows.map((r: any[]) => r.map((c) => c.text));
+    expect(cells[0]).toEqual(['ch', 'n', 'Share']);
+    expect(cells[1]).toEqual(['Direct', '198', '55%']);
+    expect(cells.at(-1)).toEqual(['Total', '360', '100%']);
+    expect(postedBlocks()[0].text.text).toContain('55%');
+  });
+
+  it('flag on: logs answer.composition telemetry without row values', async () => {
+    await runPipeline({ ...baseInput, config: sharesOn });
+    const logs = compositionLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', rowCount: 3, usedUniqueKeyCount: 0, surface: 'answer', traceId: expect.any(String) });
+    const text = JSON.stringify(logs[0]);
+    expect(text).not.toContain('Direct');
+    expect(text).not.toContain('198');
+    expect(text).not.toContain('sessions');
+  });
+
+  it('flag on: a COUNT(DISTINCT unique key) answer persists the keys the proof used', async () => {
+    withSql(DISTINCT_SQL);
+    await runPipeline({ ...baseInput, tables: [sessionsTable] as any, config: sharesOn });
+    expect(JSON.stringify(postedBlocks())).toContain('"Share"');
+    expect(mockSaveCtx).toHaveBeenCalledWith(expect.objectContaining({ compositionUniqueKeys: ['proj.ds.sessions.session_key'] }));
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: true, usedUniqueKeyCount: 1 });
+  });
+
+  it('flag on: an ineligible answer logs the reason, renders Phase 1, and persists no compositionUniqueKeys', async () => {
+    withSql(DISTINCT_SQL); // no unique key declared
+    await runPipeline({ ...baseInput, config: sharesOn });
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', eligible: false, reason: 'count_distinct' });
+    expect(JSON.stringify(postedBlocks())).not.toContain('"Share"');
+    expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('compositionUniqueKeys');
+  });
+
+  it('flag on: an eligible COUNT(*) answer persists no compositionUniqueKeys (no key used)', async () => {
+    await runPipeline({ ...baseInput, config: sharesOn });
+    expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('compositionUniqueKeys');
+  });
+
+  it('flag on: a 21-row result is ineligible (row_count) and the lead-in carries no share', async () => {
+    const many: [string, number][] = Array.from({ length: 21 }, (_, i) => [`c${i}`, 100 - i]);
+    mockExecute.mockResolvedValue(queryResultOf(many) as any);
+    await runPipeline({ ...baseInput, config: sharesOn });
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, reason: 'row_count', rowCount: 21 });
+    const blocks = postedBlocks();
+    expect(JSON.stringify(blocks)).not.toContain('"Share"');
+    expect(JSON.stringify(blocks)).not.toContain('%');
+    expect(JSON.stringify(blocks)).toMatch(/Showing 20 of 21/);
+  });
+
+  it('flag on: a verifier throw renders the Phase 1 answer and logs verifier_error', async () => {
+    const phase1 = await (async () => {
+      await runPipeline(baseInput);
+      return postedBlocks();
+    })();
+    mockClient.chat.update.mockClear();
+    vi.mocked(verifyComposition).mockImplementation(() => { throw new Error('boom'); });
+    await runPipeline({ ...baseInput, config: sharesOn });
+    expect(postedBlocks()).toEqual(phase1);
+    expect(compositionLogs().at(-1)![0]).toMatchObject({ event: 'answer.composition', eligible: false, reason: 'verifier_error' });
+  });
+
+  it('flag off: blocks equal the Phase 1 output and nothing is verified or logged', async () => {
+    await runPipeline(baseInput);
+    expect(postedBlocks()).toMatchInlineSnapshot(`
+      [
+        {
+          "text": {
+            "text": "*Direct* has the highest n (198), followed by Organic (120).",
+            "type": "mrkdwn",
+          },
+          "type": "section",
+        },
+        {
+          "block_id": "anna_view_table",
+          "rows": [
+            [
+              {
+                "text": "ch",
+                "type": "raw_text",
+              },
+              {
+                "text": "n",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Direct",
+                "type": "raw_text",
+              },
+              {
+                "text": "198",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Organic",
+                "type": "raw_text",
+              },
+              {
+                "text": "120",
+                "type": "raw_text",
+              },
+            ],
+            [
+              {
+                "text": "Unassigned",
+                "type": "raw_text",
+              },
+              {
+                "text": "42",
+                "type": "raw_text",
+              },
+            ],
+          ],
+          "type": "table",
+        },
+        {
+          "elements": [],
+          "type": "actions",
+        },
+      ]
+    `);
+    expect(JSON.stringify(postedBlocks())).not.toContain('"Share"');
+    expect(compositionLogs()).toHaveLength(0);
+    expect(verifyComposition).not.toHaveBeenCalled();
+    expect(Object.keys(mockSaveCtx.mock.calls[0][0])).not.toContain('compositionUniqueKeys');
+  });
+
+  it('flag off with answerSharesEnabled:false behaves the same as absent', async () => {
+    await runPipeline({ ...baseInput, config: { ...baseInput.config, answerSharesEnabled: false } });
+    expect(JSON.stringify(postedBlocks())).not.toContain('"Share"');
+    expect(verifyComposition).not.toHaveBeenCalled();
   });
 });

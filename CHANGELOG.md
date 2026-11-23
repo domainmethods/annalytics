@@ -15,6 +15,14 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ## Unreleased
 
+### Changed
+
+- Answer cards are easier to read (#244). A table answer now leads with a caption that names the top row and runner-up, computed from the table itself and silent whenever the ranking can't be proven (a cut, tied or time-series result); otherwise the existing headline is shown. The button for the view already on screen is hidden, the assumptions line reads as one clause list, and the refine button now reads "Change assumptions". In model-written headlines, including on single-value answers, Slack link or mention syntax now renders literally. 👍/👎, refine, Show SQL and the "Showing X of Y rows" note are unchanged.
+
+### Added
+
+- Behind `ANSWER_SHARES_ENABLED` (default off), a table answer can show a `Share` column, a `Total` row and the leader's share, only when the result is proven to be an additive split of a whole (#244). Anything unproven renders as before; CSV, the Summary text and WhatsApp never get shares.
+
 ### Fixed
 
 - After the bot answers an @mention or `/anna` greeting or help request in a channel, an unmentioned follow-up question in that thread now gets an answer instead of being ignored (#53). Greeting replies, mention replies and `/anna` status messages now mark the thread in a new `thread_participation` collection, so this also holds when a run ends in an error without a saved answer. **Action required:** apply the new TTL policy (`thread_participation.expiresAt`) from `infra/firestore.ttls.json`; see README "Firestore TTL Policy".

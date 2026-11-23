@@ -4,11 +4,15 @@ import { getSlackResponseContext } from '../state/responseContext.js';
 import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import type { OverrideConfig } from '../execution/overrideTypes.js';
-import type { ResponseContext } from '../types.js';
-import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks } from '../slack/blocks.js';
+import type { QueryResult, ResponseContext } from '../types.js';
+import { buildTableBlocks, buildTruncatedBlocks, buildFeedbackActions, overrideButtonsForResultShape, formatValue, buildAssumptionBlocks, currentViewFromBlocks, RESULT_SUMMARY_BLOCK_ID } from '../slack/blocks.js';
+import { buildAnswerCaptionBlocks } from '../slack/answerLeadIn.js';
 import { summarizeResults } from '../agents/summaryAgent.js';
 import { buildBestEffortCaveatBlocks } from '../slack/escalationBlocks.js';
+import { MAX_DISPLAY_ROWS } from '../slack/limits.js';
 import { rootLogger } from '../logging.js';
+import { verifyAnswerComposition, stillDeclaredKeys } from '../execution/answerComposition.js';
+import type { EligibleComposition } from '../execution/composition.js';
 
 export class ResponseContextNotFoundError extends Error {
   constructor() {
@@ -70,6 +74,22 @@ export async function notifyContextUnavailable(
     .catch(error => rootLogger.warn({ error: (error as Error).message }, 'override.context_unavailable_notice_failed'));
 }
 
+/**
+ * The verified composition for a re-rendered table, behind the flag. Re-uses
+ * the unique keys the original proof relied on that the loaded dbt metadata
+ * still declares; a legacy context without them, or a key whose unique test
+ * was since removed, verifies with none, so a key-dependent answer
+ * (COUNT(DISTINCT), or a many-to-one LEFT JOIN) stays rank-only.
+ */
+function overrideComposition(ctx: ResponseContext, result: QueryResult, config: OverrideConfig, surface: 'override_table' | 'override_summary_fallback'): EligibleComposition | undefined {
+  if (!config.answerSharesEnabled) return undefined;
+  return verifyAnswerComposition(
+    { sql: ctx.generatedSql, result, maxDisplayRows: MAX_DISPLAY_ROWS, uniqueKeys: stillDeclaredKeys(ctx.compositionUniqueKeys ?? [], config.currentUniqueKeys?.()) },
+    rootLogger,
+    { surface, traceId: ctx.traceId },
+  );
+}
+
 async function reExecuteSql(ctx: ResponseContext, config: OverrideConfig) {
   const validation = await validateSql(ctx.generatedSql, config.maxBytesProcessed);
   if (!validation.valid) {
@@ -100,17 +120,27 @@ export async function handleTableOverride(
     const ctx = await loadContext(channel, compoundKey);
     const { result } = await reExecuteSql(ctx, config);
 
-    const MAX_DISPLAY_ROWS = 20;
     const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
     const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
     // SQL stays behind the "Show SQL" toggle here too — keep the re-rendered
     // message consistent with the original answer's layout.
-    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
+    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table');
+    const composition = overrideComposition(ctx, result, config, 'override_table');
     const blocks: KnownBlock[] = [
       ...verificationCaveatBlocks(ctx),
-      ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
-      ...buildTableBlocks(displayRows, result.columnNames),
+      // Same order as the original answer: caption, table, then assumptions.
+      ...buildAnswerCaptionBlocks({
+        rows: result.rows,
+        columnNames: result.columnNames,
+        truncated: result.truncated,
+        sql: ctx.generatedSql,
+        ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
+        ...(ctx.headline ? { headline: ctx.headline } : {}),
+        ...(composition ? { composition } : {}),
+      }),
+      ...buildTableBlocks(displayRows, result.columnNames, composition),
       ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
+      ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
     ];
 
@@ -163,27 +193,26 @@ export async function handleSummaryOverride(
       apiKey: config.geminiApiKey,
     });
 
-    const overrides = overrideButtonsForResultShape(result.totalRows, result.columnNames.length);
     if (summary) {
       const blocks: KnownBlock[] = [
         ...caveat,
+        { type: 'section', block_id: RESULT_SUMMARY_BLOCK_ID, text: { type: 'mrkdwn', text: summary } } as KnownBlock,
         ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
-        { type: 'section', text: { type: 'mrkdwn', text: summary } } as KnownBlock,
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'summary')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: summary, blocks });
     } else {
       // Fallback to table format when Flash summarization fails
-      const MAX_DISPLAY_ROWS = 20;
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncated = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
       const blocks: KnownBlock[] = [
         ...caveat,
-        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
+        // No caption here on purpose: this notice already leads, and a second lead line would compete with it.
         { type: 'section', text: { type: 'mrkdwn', text: "Couldn't generate a summary. Here's the raw data:" } } as KnownBlock,
-        ...buildTableBlocks(displayRows, result.columnNames),
+        ...buildTableBlocks(displayRows, result.columnNames, overrideComposition(ctx, result, config, 'override_summary_fallback')),
         ...(isTruncated ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
-        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
+        ...buildAssumptionBlocks(ctx.assumptions, ctx.traceId),
+        buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
       await client.chat.update({ channel, ts: messageTs, text: ctx.explanation, blocks });
     }
@@ -255,7 +284,7 @@ export async function handleCsvOverride(
             e.action_id.startsWith('hide_')),
       );
     const preserved = currentBlocks.filter((b) => !isOverrideActions(b));
-    const overrides = { ...overrideButtonsForResultShape(result.totalRows, result.columnNames.length), csv: false };
+    const overrides = { ...overrideButtonsForResultShape(result.totalRows, result.columnNames.length, currentViewFromBlocks(currentBlocks)), csv: false };
     const blocks: KnownBlock[] = [
       ...preserved,
       buildFeedbackActions(ctx.traceId, ctx.threadTs, ctx.statusMsgTs, overrides),
