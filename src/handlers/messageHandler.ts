@@ -25,14 +25,17 @@ import {
   markSlackEventVisible,
   releaseSlackEventClaim,
 } from '../state/slackEventDedupe.js';
-import { preflightChecks, THREAD_BUSY_TEXT } from './preflightChecks.js';
+import { preflightChecks } from './preflightChecks.js';
 import { markThreadParticipation } from './threadParticipationMark.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
 import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
 import { finishRefinementTarget, lookupRefinementTarget, REFINE_LOOKUP_FAILED_TEXT } from './refinePrompt.js';
 import { buildThreadContext } from '../slack/threadContext.js';
-import { buildAnsweredClarificationBlocks } from '../slack/clarificationBlocks.js';
+import {
+  buildAnsweredClarificationBlocks,
+  CLARIFICATION_ANSWER_NOT_TAKEN_TEXT,
+} from '../slack/clarificationBlocks.js';
 import { createTraceId, rootLogger } from '../logging.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
@@ -156,6 +159,7 @@ export interface SlackRequest {
   text?: string;
   ts: string;
   thread_ts?: string;
+  /** On a `message` event only. `shouldRespond` reads it, and a mention skips that check. */
   channel_type?: string;
 }
 
@@ -163,7 +167,7 @@ export interface HandleSlackRequestParams {
   request: SlackRequest;
   /**
    * True for an `app_mention` event. The bot was addressed, so it answers
-   * wherever the message is, and `text` arrives with the mention removed.
+   * wherever the message is, and `text` arrives without the mention of the bot.
    */
   mentioned: boolean;
   body: unknown;
@@ -204,10 +208,16 @@ export async function handleSlackRequest({
       const lock = await lockThreadForResume(msg.channel, threadTs, ownerToken);
       if (lock === 'busy') {
         // Another run has the thread. The answer stays pending and the user is
-        // told to wait, here. Sent on as an ordinary message, it would count
-        // against the rate limit, and preflight would ask for the answer again
-        // if the other run let go of the thread in between.
-        await client.chat.postMessage({ channel: msg.channel, thread_ts: threadTs, text: THREAD_BUSY_TEXT });
+        // asked to send it again, here. Sent on as an ordinary message, it would
+        // count against the rate limit, and preflight would say "still working on
+        // your previous question", which leaves them waiting on an answer that no
+        // run has, or ask for the answer they just gave if the other run let go
+        // of the thread in between.
+        await client.chat.postMessage({
+          channel: msg.channel,
+          thread_ts: threadTs,
+          text: CLARIFICATION_ANSWER_NOT_TAKEN_TEXT,
+        });
         visibleResponse = true;
         await markSlackEventVisible(eventId).catch(() => {});
         return;

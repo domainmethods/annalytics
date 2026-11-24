@@ -17,6 +17,7 @@ import {
   checkClarificationReply,
   hasPendingClarification,
   isOwnedByMentionListener,
+  stripBotMention,
 } from '../../src/handlers/messages.js';
 
 const mockBotHasReplied = vi.mocked(botHasRepliedInThread);
@@ -40,6 +41,29 @@ describe('canMessageEventReachPipeline', () => {
     expect(canMessageEventReachPipeline({
       channel_type: 'channel',
     } as any)).toBe(false);
+  });
+});
+
+describe('stripBotMention', () => {
+  it("removes the bot's own mention", () => {
+    expect(stripBotMention('<@UBOT> show leads', 'UBOT')).toBe('show leads');
+  });
+
+  it('removes it wherever it is, however often', () => {
+    expect(stripBotMention('thanks <@UBOT>, by region? <@UBOT>', 'UBOT')).toBe('thanks , by region?');
+  });
+
+  it('keeps the other people named in the text', () => {
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', 'UBOT')).toBe('ask <@UCFO> if unsure');
+  });
+
+  it('does not take a longer id for its own', () => {
+    expect(stripBotMention('<@UBOT2> show leads', 'UBOT')).toBe('<@UBOT2> show leads');
+  });
+
+  it('removes every user mention when the bot user id is not known', () => {
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', undefined)).toBe('ask  if unsure');
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', '')).toBe('ask  if unsure');
   });
 });
 

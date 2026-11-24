@@ -81,6 +81,18 @@ export function isOwnedByMentionListener(event: MessageEvent, botUserId: string 
   return (event.text || '').includes(`<@${botUserId}>`);
 }
 
+/**
+ * The text of an @mention without the mention of the bot itself. The other
+ * people named in it stay: the text can be a clarification answer or an
+ * analyst's guidance, passed on as written. It removes the form
+ * {@link isOwnedByMentionListener} looks for. Without the bot's user id every
+ * user mention goes, since the bot's own can't be told from the others.
+ */
+export function stripBotMention(text: string, botUserId: string | undefined): string {
+  const stripped = botUserId ? text.replaceAll(`<@${botUserId}>`, '') : text.replace(/<@[A-Z0-9]+>/g, '');
+  return stripped.trim();
+}
+
 export async function shouldRespond(event: MessageEvent & { channel: string }): Promise<boolean> {
   // Always respond in DMs
   if (isDirectMessageSurface(event)) return true;

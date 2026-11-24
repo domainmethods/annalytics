@@ -82,6 +82,13 @@ export interface PendingClarificationBlocksOptions {
 export const PENDING_CLARIFICATION_TEXT =
   "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.";
 
+/**
+ * What a clarification answer is told when another run has the thread. The
+ * answer was not taken and nothing running will use it, so it asks for it again.
+ */
+export const CLARIFICATION_ANSWER_NOT_TAKEN_TEXT =
+  "I'm still finishing something in this thread, so I haven't picked up your answer yet. Please send it again in a moment.";
+
 /** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,

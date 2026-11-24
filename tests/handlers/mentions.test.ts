@@ -99,13 +99,16 @@ import { registerMentions } from '../../src/handlers/mentions.js';
 
 const STATUS_TEXT = 'Got it. Let me get things ready...';
 
+// Bolt hands every listener its context. The events below mention the bot as <@U1>.
+const BOLT_CONTEXT = { botUserId: 'U1' };
+
 function captureMentionHandler() {
   let handler: any;
   const app = { event: vi.fn((_name: string, h: any) => { handler = h; }) } as any;
   const config = { limits: { rateLimitPerHour: 50 }, gemini: { apiKey: 'api-key' }, escalation: {} };
   registerMentions(app, () => config as any, () => []);
   expect(app.event).toHaveBeenCalledWith('app_mention', expect.any(Function));
-  return handler;
+  return (args: Record<string, unknown>) => handler({ context: BOLT_CONTEXT, ...args });
 }
 
 function makeClient() {
@@ -175,6 +178,30 @@ describe('registerMentions app_mention seam', () => {
       channel: 'C1',
       threadTs: 'T1',
       statusMsgTs: 'status-1',
+    });
+  });
+
+  describe('the mention in the text', () => {
+    const named = { text: '<@U1> compare with <@U9> numbers', user: 'U2', channel: 'C1', ts: 'T1' };
+
+    beforeEach(() => {
+      mockMaybeHandleSlackIntake.mockResolvedValue(false);
+    });
+
+    it("removes the bot's own mention and keeps the other people named", async () => {
+      const handler = captureMentionHandler();
+
+      await handler({ event: named, body: {}, client: makeClient() });
+
+      expect(mockRunPipeline.mock.calls[0][0].question).toBe('compare with <@U9> numbers');
+    });
+
+    it('removes every user mention when Bolt gives no bot user id', async () => {
+      const handler = captureMentionHandler();
+
+      await handler({ event: named, body: {}, client: makeClient(), context: {} });
+
+      expect(mockRunPipeline.mock.calls[0][0].question).toBe('compare with  numbers');
     });
   });
 

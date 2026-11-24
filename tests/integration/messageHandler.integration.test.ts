@@ -478,6 +478,9 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     // ── The resumed run holds the thread lock like every other run ──
     const LOCK_PATH = `processing_threads/D123:${THREAD_TS}`;
     const STILL_WORKING_TEXT = "I'm still working on your previous question...";
+    // What a refused answer is told: it was not taken, so it has to be sent again.
+    const SEND_AGAIN_TEXT =
+      "I'm still finishing something in this thread, so I haven't picked up your answer yet. Please send it again in a moment.";
 
     it('takes the thread lock for the resumed run and hands it to the pipeline to release', async () => {
       pendingClarification();
@@ -547,18 +550,20 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
     });
 
-    it('leaves the answer untaken and asks the user to wait when another run holds the thread', async () => {
+    it('leaves the answer untaken and asks for it again when another run holds the thread', async () => {
       pendingClarification();
       heldByAnotherRun();
 
       await answer();
 
       expect(mockRunPipeline).not.toHaveBeenCalled();
-      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      // Not "I'm still working on your previous question...": nothing that is
+      // running will use this answer, so the user must not be left waiting on it.
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
       expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
         channel: 'D123',
         thread_ts: THREAD_TS,
-        text: STILL_WORKING_TEXT,
+        text: SEND_AGAIN_TEXT,
       });
       // Still pending, so the same answer works once the other run is done.
       expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
@@ -574,7 +579,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expect(firestoreStore.has('rate_limits/U1')).toBe(false);
     });
 
-    it('tells a user at the rate limit to wait, not that they are out of queries', async () => {
+    it('asks a user at the rate limit for the answer again, and does not say they are out of queries', async () => {
       pendingClarification();
       heldByAnotherRun();
       firestoreStore.set('rate_limits/U1', {
@@ -584,10 +589,10 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
 
       await answer();
 
-      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
     });
 
-    it('still asks the user to wait when the other run lets go of the thread a moment later', async () => {
+    it('still asks for the answer again when the other run lets go of the thread a moment later', async () => {
       pendingClarification();
       heldByAnotherRun();
       const realTransaction = mockDb.runTransaction.getMockImplementation()!;
@@ -612,12 +617,12 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       }
 
       // Not "I'm still waiting on your answer": they just gave it.
-      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
       expect(mockRunPipeline).not.toHaveBeenCalled();
       expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
     });
 
-    it('asks the user to wait once when Slack sends the same answer again a minute later', async () => {
+    it('asks for the answer again once when Slack sends the same answer a minute later', async () => {
       pendingClarification();
       heldByAnotherRun();
       vi.useFakeTimers({ toFake: ['Date'] });
@@ -631,7 +636,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         vi.useRealTimers();
       }
 
-      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
     });
 
     it('gives the thread lock back when another reply already took the clarification', async () => {
@@ -701,7 +706,8 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       await resumed;
 
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-      expect(statusPosts()).toContain(STILL_WORKING_TEXT);
+      // The first reply was the answer. This one was not picked up, and is told so.
+      expect(statusPosts()).toContain(SEND_AGAIN_TEXT);
     });
   });
 
@@ -963,6 +969,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         event: { type: 'app_mention', text: '<@UBOT> hi', user: 'U1', channel: 'C-CHAN', ts: '1700000000.000100' },
         body: bodyWithEventId('EvMentionHi'),
         client: mockClient,
+        context: { botUserId: 'UBOT' },
       });
       expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
       expect(mockRunPipeline).not.toHaveBeenCalled();
@@ -1181,6 +1188,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       registerMentions({ event: vi.fn((_name: string, h: any) => { handler = h; }) } as any, () => cfg, getTables);
       return (eventId: string, overrides: Record<string, unknown> = {}) => handler({
         event: { type: 'app_mention', ...reply, ...overrides }, body: bodyWithEventId(eventId), client: mockClient,
+        context: { botUserId: BOT },
       });
     };
     const botIsInThread = () => firestoreStore.set(`thread_participation/C-CHAN:${ROOT_TS}`, {
@@ -1290,8 +1298,9 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expect(firestoreStore.has(`thread_participation/C-CHAN:${ROOT_TS}`)).toBe(true);
     });
 
-    it("passes on an analyst's mentioned reply in an escalation thread once, and starts no run there", async () => {
-      const ESCALATION_TS = '1700000000.000900';
+    const ESCALATION_TS = '1700000000.000900';
+    // An escalation is open, and the analyst replies in its thread with a mention.
+    const analystReplies = (text: string) => {
       const escalation = {
         escalationId: 'esc-open',
         originalThreadTs: '1700000000.000100',
@@ -1312,10 +1321,14 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       firestoreQueryResults.set('escalation_state', {
         empty: false, docs: [{ data: () => escalation, ref: { update: vi.fn(async () => {}) } }],
       });
-      const guidance = {
-        text: `<@${BOT}> use net revenue`,
+      return {
+        text,
         user: 'U-ANALYST', channel: 'C-ESCALATION', ts: '1700000000.000950', thread_ts: ESCALATION_TS,
       };
+    };
+
+    it("passes on an analyst's mentioned reply in an escalation thread once, and starts no run there", async () => {
+      const guidance = analystReplies(`<@${BOT}> use net revenue`);
       const deliverAsMention = registerMentionHandler(escalationConfig);
 
       await handleMessageEvent({
@@ -1331,6 +1344,15 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         channel: 'D123',
         thread_ts: '1700000000.000100',
       });
+    });
+
+    it('keeps the people an analyst names in the guidance it passes on', async () => {
+      const guidance = analystReplies(`<@${BOT}> use net revenue, and ask <@UCFO> if unsure`);
+      const deliverAsMention = registerMentionHandler(escalationConfig);
+
+      await deliverAsMention('EvGuidanceNamesSomeone', guidance);
+
+      expect(statusPosts()).toEqual(['use net revenue, and ask <@UCFO> if unsure']);
     });
 
     describe('on the message listener', () => {
