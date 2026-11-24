@@ -26,7 +26,7 @@ export async function handleClarificationCancel(
   const { clarificationId, channel, messageTs, client } = params;
 
   let text = 'No problem — cancelled. Ask me something new whenever.';
-  let blocks: Record<string, unknown>[] = [];
+  let blocks: KnownBlock[] = [];
   try {
     await deleteClarificationState(clarificationId);
   } catch (err) {
@@ -41,7 +41,7 @@ export async function handleClarificationCancel(
   }
 
   await client.chat
-    .update({ channel, ts: messageTs, text, blocks: blocks as unknown as KnownBlock[] })
+    .update({ channel, ts: messageTs, text, blocks })
     .catch((err) =>
       rootLogger.warn(
         { error: (err as Error).message, clarificationId },

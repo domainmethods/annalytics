@@ -9,12 +9,13 @@ import {
   canMessageEventReachPipeline,
   shouldRespond,
   checkClarificationReply,
+  type ClarificationReply,
 } from './messages.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
 import { checkEscalationResponse, resumeFromEscalation } from './escalationResponse.js';
 import { checkOverdueEscalations } from './escalationLifecycle.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
-import { releaseThreadLock } from '../state/threadLock.js';
+import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
 import {
   claimSlackEvent,
   extractSlackEventId,
@@ -27,9 +28,66 @@ import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassif
 import { routeFollowUp } from './followUpRouter.js';
 import { finishRefinementTarget, lookupRefinementTarget, REFINE_LOOKUP_FAILED_TEXT } from './refinePrompt.js';
 import { buildThreadContext } from '../slack/threadContext.js';
+import { buildAnsweredClarificationBlocks } from '../slack/clarificationBlocks.js';
 import { createTraceId, rootLogger } from '../logging.js';
 import { friendlyErrorMessage } from '../errors.js';
 import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
+
+/** The first thing a user sees in reply; the pipeline rewrites it as it works. */
+const STATUS_PLACEHOLDER_TEXT = 'Got it. Let me get things ready...';
+
+/**
+ * Takes the thread lock for a resumed clarification, so a later message in the
+ * thread waits for the run as it does on every other path. The user's answer is
+ * already consumed by now, so a lock that can't be taken must not drop it: the
+ * resume then runs without one.
+ */
+async function lockClarificationResume(reply: ClarificationReply, ownerToken: string): Promise<boolean> {
+  try {
+    return await acquireThreadLock(reply.channel, reply.threadTs, ownerToken);
+  } catch (err) {
+    rootLogger.warn({ error: (err as Error).message }, 'clarification.resume.lock_failed');
+    return false;
+  }
+}
+
+/**
+ * Picks the message a resumed clarification reports on. Normally that is a new
+ * status message below the user's reply, and the clarifying questions stay in
+ * the thread, redrawn without their Cancel button. When the new message can't
+ * be posted, or the saved state has no questions to redraw (so the button would
+ * be left live), the pipeline reuses the clarifying message itself, which
+ * replaces the questions and the button with its status.
+ */
+async function startClarificationResume(reply: ClarificationReply, client: WebClient): Promise<string> {
+  const questions = reply.clarifyingQuestions;
+  if (!questions?.length) return reply.clarifyingMessageTs;
+
+  let statusMsgTs: string | undefined;
+  try {
+    const statusMsg = await client.chat.postMessage({
+      channel: reply.channel,
+      thread_ts: reply.threadTs,
+      text: STATUS_PLACEHOLDER_TEXT,
+    });
+    statusMsgTs = statusMsg.ts;
+  } catch (err) {
+    rootLogger.warn({ error: (err as Error).message }, 'clarification.resume.status_post_failed');
+  }
+  if (!statusMsgTs) return reply.clarifyingMessageTs;
+
+  await client.chat
+    .update({
+      channel: reply.channel,
+      ts: reply.clarifyingMessageTs,
+      text: questions.join('\n'),
+      blocks: buildAnsweredClarificationBlocks(questions),
+    })
+    .catch((err) =>
+      rootLogger.warn({ error: (err as Error).message }, 'clarification.resume.question_redraw_failed'),
+    );
+  return statusMsgTs;
+}
 
 /**
  * Wire the `message` event (DMs + channel thread follow-ups) to {@link handleMessageEvent}.
@@ -85,13 +143,20 @@ export async function handleMessageEvent({
     if (clarificationReply) {
       visibleResponse = true;
       await markSlackEventVisible(eventId).catch(() => {});
-      // Resume pipeline with clarified question
+      lockHeld = await lockClarificationResume(clarificationReply, ownerToken);
+      const statusMsgTs = await startClarificationResume(clarificationReply, client);
+      // Resume pipeline with clarified question. Up to this point `lockHeld`
+      // has the `finally` below release the lock if anything throws. From here
+      // the pipeline owns the lock, when it was taken, and releases it itself.
+      const resumeLock = lockHeld ? { ownerToken } : {};
+      lockHeld = false;
       await runPipeline({
+        ...resumeLock,
         question: clarificationReply.clarifiedQuestion,
         originalQuestion: clarificationReply.originalQuestion,
         channel: clarificationReply.channel,
         threadTs: clarificationReply.threadTs,
-        statusMsgTs: clarificationReply.clarifyingMessageTs,
+        statusMsgTs,
         client,
         tables: getTables(),
         config: toPipelineConfig(config),
@@ -178,7 +243,7 @@ export async function handleMessageEvent({
     const statusMsg = await client.chat.postMessage({
       channel: msg.channel,
       thread_ts: threadTs,
-      text: 'Got it. Let me get things ready...',
+      text: STATUS_PLACEHOLDER_TEXT,
     });
     visibleResponse = true;
     await markSlackEventVisible(eventId).catch(() => {});
@@ -201,10 +266,13 @@ export async function handleMessageEvent({
             ts: threadTs,
             oldest: threadTs,
           });
+          // The status message above is already in the thread; leave it out so
+          // the follow-up is classified against what came before it.
           const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
             summarizeOlder: true,
             stripQueryResults: true,
             maxTokens: 1000,
+            excludeTs: statusMsg.ts,
           });
           if (threadContext.length > 0) {
             ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));

@@ -24,6 +24,7 @@ const {
   function createDocRef(collectionName: string, docId: string) {
     const path = `${collectionName}/${docId}`;
     return {
+      path,
       get: vi.fn(async () => ({
         exists: firestoreStore.has(path),
         data: () => firestoreStore.get(path),
@@ -130,6 +131,7 @@ vi.mock('../../src/handlers/followUpRouter.js', () => ({
 
 // ─── Real imports (system under test + real collaborators) ───────
 import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
+import { checkClarificationReply } from '../../src/handlers/messages.js';
 import { registerMentions } from '../../src/handlers/mentions.js';
 import { registerCommands } from '../../src/handlers/commands.js';
 import { promptRefinement } from '../../src/handlers/refinePrompt.js';
@@ -343,41 +345,228 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
   });
 
   // ── A recognized clarification reply resumes the pipeline ──
-  it('resumes the pipeline with the clarified question when a thread reply answers a clarification', async () => {
-    firestoreQueryResults.set('clarification_state', {
-      empty: false,
-      docs: [{
-        data: () => ({
-          clarificationId: 'clar-9',
-          threadTs: '1700000000.000900',
-          channel: 'D123',
-          originalQuestion: 'revenue?',
-          clarifyingMessageTs: '1700000000.000800',
-          state: 'awaiting_reply',
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-        }),
-        ref: { delete: vi.fn(async () => {}) },
-      }],
-    });
+  describe('clarification reply', () => {
+    const THREAD_TS = '1700000000.000900';
+    const CLARIFYING_TS = '1700000000.000800';
+    const NEW_STATUS_TS = '1700000000.000200'; // what the mock postMessage returns
 
-    await handleMessageEvent({
-      // A genuine thread reply (carries thread_ts) → checkClarificationReply claims it.
-      event: dmEvent('last quarter', { thread_ts: '1700000000.000900', ts: '1700000000.000950' }),
+    // The lookup by thread is a query and the claim then reads the doc itself, so
+    // a pending clarification is seeded in both. The query result stays put after
+    // the doc is deleted, which is what a reply sees when its lookup ran just
+    // before another reply took the clarification.
+    const pendingClarification = (overrides: Record<string, unknown> = {}) => {
+      const data = {
+        clarificationId: 'clar-9',
+        threadTs: THREAD_TS,
+        channel: 'D123',
+        originalQuestion: 'revenue?',
+        clarifyingQuestions: ['Which period?', 'Gross or net?'],
+        clarifyingMessageTs: CLARIFYING_TS,
+        state: 'awaiting_reply',
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        ...overrides,
+      };
+      firestoreQueryResults.set('clarification_state', {
+        empty: false,
+        docs: [{ data: () => data, ref: { delete: vi.fn(async () => {}) } }],
+      });
+      firestoreStore.set('clarification_state/clar-9', data);
+    };
+
+    // A genuine thread reply (carries thread_ts) → checkClarificationReply claims it.
+    const answer = () => handleMessageEvent({
+      event: dmEvent('last quarter', { thread_ts: THREAD_TS, ts: '1700000000.000950' }),
       body: bodyWithEventId('EvClarReply'),
       client: mockClient,
       config,
       getTables,
     });
 
-    expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-    expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
-      question: 'revenue? (Clarification: last quarter)',
-      originalQuestion: 'revenue? (Clarification: last quarter)',
-      threadTs: '1700000000.000900',
-      statusMsgTs: '1700000000.000800',
+    it('resumes with the clarified question on a new status message below the reply', async () => {
+      pendingClarification();
+
+      await answer();
+
+      expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'D123',
+        thread_ts: THREAD_TS,
+        text: STATUS_TEXT,
+      });
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
+        question: 'revenue? (Clarification: last quarter)',
+        originalQuestion: 'revenue? (Clarification: last quarter)',
+        threadTs: THREAD_TS,
+        statusMsgTs: NEW_STATUS_TS,
+      });
     });
-    // No new status message — it resumes on the existing clarifying message.
-    expect(statusPosts()).not.toContain(STATUS_TEXT);
+
+    it('leaves the clarifying questions in the thread, without their cancel button', async () => {
+      pendingClarification();
+
+      await answer();
+
+      expect(mockClient.chat.update).toHaveBeenCalledTimes(1);
+      const redraw = mockClient.chat.update.mock.calls[0][0];
+      expect(redraw).toMatchObject({
+        channel: 'D123',
+        ts: CLARIFYING_TS,
+        text: 'Which period?\nGross or net?',
+      });
+      const blocks = JSON.stringify(redraw.blocks);
+      expect(blocks).toContain('Which period?');
+      expect(blocks).toContain('Gross or net?');
+      expect(blocks).not.toContain('clarification_cancel');
+    });
+
+    it('still resumes on the new status message when the clarifying message cannot be redrawn', async () => {
+      pendingClarification();
+      mockClient.chat.update.mockRejectedValue(new Error('ratelimited'));
+
+      await answer();
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({ statusMsgTs: NEW_STATUS_TS });
+    });
+
+    it('resumes on the clarifying message when a new status message cannot be posted', async () => {
+      pendingClarification();
+      mockClient.chat.postMessage.mockRejectedValue(new Error('ratelimited'));
+
+      await answer();
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({ statusMsgTs: CLARIFYING_TS });
+      // The pipeline is about to write its status there; nothing to redraw.
+      expect(mockClient.chat.update).not.toHaveBeenCalled();
+    });
+
+    it('resumes on the clarifying message for a clarification saved without its questions', async () => {
+      // Saved before the questions were stored: it can't be redrawn without its button.
+      pendingClarification({ clarifyingQuestions: undefined });
+
+      await answer();
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({ statusMsgTs: CLARIFYING_TS });
+      expect(statusPosts()).not.toContain(STATUS_TEXT);
+      expect(mockClient.chat.update).not.toHaveBeenCalled();
+    });
+
+    // ── The resumed run holds the thread lock like every other run ──
+    const LOCK_PATH = `processing_threads/D123:${THREAD_TS}`;
+    const STILL_WORKING_TEXT = "I'm still working on your previous question...";
+
+    it('takes the thread lock for the resumed run and hands it to the pipeline to release', async () => {
+      pendingClarification();
+
+      await answer();
+
+      const lock = firestoreStore.get(LOCK_PATH);
+      expect(lock).toBeDefined();
+      expect(mockRunPipeline.mock.calls[0][0].ownerToken).toBe(lock.ownerToken);
+    });
+
+    it('tells a second reply to wait while the resumed run is still working', async () => {
+      pendingClarification();
+      let finishRun!: () => void;
+      mockRunPipeline.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRun = resolve; }));
+
+      const resumed = answer();
+      await vi.waitFor(() => expect(mockRunPipeline).toHaveBeenCalledTimes(1));
+      // The clarification is answered, so the next reply is an ordinary thread message.
+      firestoreQueryResults.delete('clarification_state');
+      // Firestore reads a stored Date back as a Timestamp; the in-memory store doesn't.
+      const lock = firestoreStore.get(LOCK_PATH);
+      if (lock) firestoreStore.set(LOCK_PATH, { ...lock, expiresAt: { toDate: () => lock.expiresAt } });
+
+      await handleMessageEvent({
+        event: dmEvent('and by region?', { thread_ts: THREAD_TS, ts: '1700000000.000960' }),
+        body: bodyWithEventId('EvSecondReply'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+      finishRun();
+      await resumed;
+
+      expect(statusPosts()).toContain(STILL_WORKING_TEXT);
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('still resumes, without a lock of its own, when the thread lock is already held', async () => {
+      // The answer is already consumed by now, so it must not be dropped.
+      pendingClarification();
+      firestoreStore.set(LOCK_PATH, {
+        ownerToken: 'another-run',
+        expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
+      });
+
+      await answer();
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0].ownerToken).toBeUndefined();
+      expect(firestoreStore.get(LOCK_PATH).ownerToken).toBe('another-run');
+      expect(statusPosts()).not.toContain(STILL_WORKING_TEXT);
+    });
+
+    it('still resumes when the thread lock cannot be taken at all', async () => {
+      pendingClarification();
+      const realTransaction = mockDb.runTransaction.getMockImplementation()!;
+      // Only the lock is unavailable; the clarification itself can still be taken.
+      mockDb.runTransaction.mockImplementation((callback: (tx: any) => Promise<any>) =>
+        realTransaction((tx: any) => callback({
+          ...tx,
+          get: (ref: any) => ref.path.startsWith('processing_threads/')
+            ? Promise.reject(new Error('unavailable'))
+            : tx.get(ref),
+        })));
+
+      try {
+        await answer();
+      } finally {
+        mockDb.runTransaction.mockImplementation(realTransaction);
+      }
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0].ownerToken).toBeUndefined();
+    });
+
+    // ── One reply answers a clarification ──
+    it('lets only one of two simultaneous replies take the clarification', async () => {
+      pendingClarification();
+      const reply = (text: string) => checkClarificationReply({ channel: 'D123', thread_ts: THREAD_TS, text });
+
+      const taken = await Promise.all([reply('last quarter'), reply('net')]);
+
+      expect(taken.filter(Boolean)).toHaveLength(1);
+    });
+
+    it('resumes once when a second reply also finds the clarification', async () => {
+      pendingClarification();
+      let finishRun!: () => void;
+      mockRunPipeline.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRun = resolve; }));
+
+      const resumed = answer();
+      await vi.waitFor(() => expect(mockRunPipeline).toHaveBeenCalledTimes(1));
+      // Firestore reads a stored Date back as a Timestamp; the in-memory store doesn't.
+      const lock = firestoreStore.get(LOCK_PATH);
+      if (lock) firestoreStore.set(LOCK_PATH, { ...lock, expiresAt: { toDate: () => lock.expiresAt } });
+
+      // The lookup still shows this reply the clarification the first one took.
+      await handleMessageEvent({
+        event: dmEvent('net', { thread_ts: THREAD_TS, ts: '1700000000.000960' }),
+        body: bodyWithEventId('EvSecondAnswer'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+      finishRun();
+      await resumed;
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(statusPosts()).toContain(STILL_WORKING_TEXT);
+    });
   });
 
   // ── Bug #4 (RED→GREEN): a pending clarification must never silently drop ──
@@ -554,6 +743,34 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
       expect(mockRouteFollowUp).not.toHaveBeenCalled();
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+    });
+
+    it('classifies the follow-up against the earlier exchange only, not against itself', async () => {
+      // What Slack really returns by the time the thread is read: the follow-up
+      // and the status message just posted for it are both already in the thread.
+      mockClient.conversations.replies.mockResolvedValue({
+        messages: [
+          { user: 'U1', text: 'show revenue last month', ts: '1700000000.000100' },
+          { bot_id: 'B1', text: 'Revenue last month was 42.', ts: '1700000000.000120' },
+          { user: 'U1', text: 'how was that calculated?', ts: '1700000000.000150' },
+          { bot_id: 'B1', text: STATUS_TEXT, ts: '1700000000.000200' },
+        ],
+      });
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvClassifyContext'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockClassifyFollowUp.mock.calls[0][0]).toBe('how was that calculated?');
+      expect(mockClassifyFollowUp.mock.calls[0][1]).toEqual([
+        { role: 'user', content: 'show revenue last month' },
+        { role: 'assistant', content: 'Revenue last month was 42.' },
+      ]);
     });
   });
 

@@ -1,5 +1,5 @@
 import { botHasRepliedInThread } from '../state/responseContext.js';
-import { getClarificationState, deleteClarificationState } from '../state/clarificationState.js';
+import { claimClarificationState } from '../state/clarificationState.js';
 
 interface MessageEvent {
   channel_type?: string;
@@ -14,11 +14,15 @@ export interface ClarificationReply {
   channel: string;
   threadTs: string;
   clarifyingMessageTs: string;
+  /** The questions that were asked. Absent when the saved state did not keep them. */
+  clarifyingQuestions?: string[];
 }
 
 /**
- * Check if a message in a thread is a reply to a pending clarification.
- * Returns the clarification context if so, null otherwise.
+ * Check if a message in a thread is a reply to a pending clarification, and
+ * take the clarification if so. Returns its context, or null when there is
+ * none to take: only one reply gets it, so a second reply that arrives at the
+ * same moment is handled as an ordinary thread message.
  */
 export async function checkClarificationReply(
   event: MessageEvent & { channel: string },
@@ -26,7 +30,7 @@ export async function checkClarificationReply(
   const threadTs = event.thread_ts;
   if (!threadTs) return null;
 
-  const state = await getClarificationState(event.channel, threadTs);
+  const state = await claimClarificationState(event.channel, threadTs);
   if (!state) return null;
 
   // Merge user reply into clarified question
@@ -35,15 +39,13 @@ export async function checkClarificationReply(
   // Legacy docs (and unrewritten questions) carry no separate user wording.
   const originalQuestion = `${state.supervisorQuestion ?? state.originalQuestion}${answer}`;
 
-  // Delete clarification state — it's been answered
-  await deleteClarificationState(state.clarificationId);
-
   return {
     clarifiedQuestion,
     originalQuestion,
     channel: event.channel,
     threadTs,
     clarifyingMessageTs: state.clarifyingMessageTs,
+    clarifyingQuestions: state.clarifyingQuestions,
   };
 }
 

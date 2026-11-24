@@ -55,4 +55,57 @@ describe('buildThreadContext', () => {
     // Should have dropped the oldest message (messages[0])
     expect(context.length).toBeLessThan(3);
   });
+
+  // The bot posts its status message before the thread is read, so that message
+  // is the last one in the thread. Without excludeTs it is the one dropped as
+  // "current", and the question being answered stays behind as context.
+  describe('excludeTs (the bot status message for this request)', () => {
+    it('returns no context for a first question followed only by the status message', () => {
+      const messages = [
+        { ts: '100.1', bot_id: undefined, text: 'What is total revenue?' },
+        { ts: '100.2', bot_id: 'B123', text: 'Got it. Let me get things ready...' },
+      ];
+
+      expect(buildThreadContext(messages, 4, { excludeTs: '100.2' })).toEqual([]);
+    });
+
+    it('keeps the earlier exchange and drops both the follow-up and its status message', () => {
+      const messages = [
+        { ts: '100.1', bot_id: undefined, text: 'What is total revenue?' },
+        { ts: '100.2', bot_id: 'B123', text: 'Total revenue is $5M' },
+        { ts: '100.3', bot_id: undefined, text: 'Break it down by region' },
+        { ts: '100.4', bot_id: 'B123', text: 'Got it. Let me get things ready...' },
+      ];
+
+      expect(buildThreadContext(messages, 4, { excludeTs: '100.4' })).toEqual([
+        { role: 'user', content: 'What is total revenue?' },
+        { role: 'assistant', content: 'Total revenue is $5M' },
+      ]);
+    });
+
+    it('drops the status message even when it is not the last message', () => {
+      const messages = [
+        { ts: '100.1', bot_id: undefined, text: 'What is total revenue?' },
+        { ts: '100.2', bot_id: 'B123', text: 'Reading your question...' },
+        { ts: '100.3', bot_id: undefined, text: 'For last month' },
+      ];
+
+      expect(buildThreadContext(messages, 4, { excludeTs: '100.2' })).toEqual([
+        { role: 'user', content: 'What is total revenue?' },
+      ]);
+    });
+
+    it('behaves as before when no message has that ts', () => {
+      const messages = [
+        { ts: '100.1', bot_id: undefined, text: 'question' },
+        { ts: '100.2', bot_id: 'B123', text: 'answer' },
+        { ts: '100.3', bot_id: undefined, text: 'follow-up' },
+      ];
+
+      expect(buildThreadContext(messages, 4, { excludeTs: '999.9' })).toEqual([
+        { role: 'user', content: 'question' },
+        { role: 'assistant', content: 'answer' },
+      ]);
+    });
+  });
 });
