@@ -9,7 +9,11 @@
  *    finished, so a late rewrite can never land on top of the answer.
  *
  * Inside a heartbeat region the current status is rewritten with the time
- * elapsed, so a long step still shows that the request is alive.
+ * elapsed, so a long step still shows that the request is alive. The time moves
+ * in ten-second steps for the first minute and thirty-second steps after it,
+ * and a rewrite happens only when the text changes, so a long request settles
+ * at two rewrites a minute. Every rewrite counts against the same Slack rate
+ * budget as the answers.
  */
 
 export interface StatusReporterOptions {
@@ -17,7 +21,10 @@ export interface StatusReporterOptions {
   write: (text: string) => Promise<unknown>;
   /** Called with the failure and the text that could not be written. */
   onError?: (err: unknown, text: string) => void;
-  /** How often to refresh the elapsed time inside a heartbeat region. */
+  /**
+   * How often a heartbeat region checks whether the elapsed time has moved on
+   * a step. It rewrites the status only when it has.
+   */
   intervalMs?: number;
 }
 
@@ -32,16 +39,19 @@ export interface StatusReporter {
 }
 
 const DEFAULT_INTERVAL_MS = 10_000;
-const ELAPSED_STEP_SECONDS = 10;
+const FIRST_MINUTE_STEP_SECONDS = 10;
+const LATER_STEP_SECONDS = 30;
 
 /**
- * Elapsed time in ten-second steps: '' under ten seconds, then '10s', '50s',
- * '1m', '1m 10s'. Coarse on purpose, so the text changes only when the
- * heartbeat rewrites it.
+ * Elapsed time in steps: '' under ten seconds, then '10s' to '50s', then
+ * '1m', '1m 30s', '2m'. The steps set how often the heartbeat writes, because
+ * it rewrites the status only when this text changes.
  */
 export function formatElapsed(ms: number): string {
-  const total = Math.floor(ms / (ELAPSED_STEP_SECONDS * 1000)) * ELAPSED_STEP_SECONDS;
-  if (total < ELAPSED_STEP_SECONDS) return '';
+  const elapsed = Math.floor(ms / 1000);
+  const step = elapsed < 60 ? FIRST_MINUTE_STEP_SECONDS : LATER_STEP_SECONDS;
+  const total = Math.floor(elapsed / step) * step;
+  if (total < FIRST_MINUTE_STEP_SECONDS) return '';
   const minutes = Math.floor(total / 60);
   const seconds = total % 60;
   if (minutes === 0) return `${seconds}s`;
