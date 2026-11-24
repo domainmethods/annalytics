@@ -275,10 +275,21 @@ export async function handleMessageEvent({
             excludeTs: statusMsg.ts,
           });
           if (threadContext.length > 0) {
-            ({ intent } = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey));
+            const followUp = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
+            intent = followUp.intent;
+            // The only classification of this reply: the pipeline does not
+            // classify again, so this is the one record of the route taken.
+            rootLogger.info(
+              { intent, reasoning: followUp.reasoning, channel: msg.channel, threadTs },
+              'followup.classified',
+            );
           }
-        } catch {
-          // Classification failed — fall through to standard pipeline
+        } catch (err) {
+          // Classification failed: fall through to the standard pipeline.
+          rootLogger.warn(
+            { err: (err as Error).message, channel: msg.channel, threadTs },
+            'followup.classify_failed',
+          );
         }
       }
       if (intent !== 'new_query') {

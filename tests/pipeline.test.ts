@@ -384,25 +384,13 @@ describe('runPipeline', () => {
     expect(mockSaveCtx).toHaveBeenCalledTimes(1);
   });
 
-  it('answers without waiting for the log-only follow-up classification', async () => {
+  it('leaves follow-up intent classification to the routing step before it', async () => {
     mockBuildThread.mockReturnValue([{ role: 'user', content: 'What is total revenue?' }]);
-    mockClassifyFollowUp.mockReturnValue(new Promise(() => {}));
 
     await runPipeline(baseInput);
 
-    expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+    expect(mockClassifyFollowUp).not.toHaveBeenCalled();
     expect(mockExecute).toHaveBeenCalledTimes(1);
-    expect(mockClient.chat.update.mock.calls.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
-  });
-
-  it('a failed follow-up classification does not affect the answer', async () => {
-    mockBuildThread.mockReturnValue([{ role: 'user', content: 'What is total revenue?' }]);
-    mockClassifyFollowUp.mockRejectedValue(new Error('model unavailable'));
-
-    await runPipeline(baseInput);
-
-    expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
-    expect(mockClient.chat.update.mock.calls.at(-1)![0].text).toBe(baseQualityResult.sqlResult.explanation);
   });
 
   it('pipeline failure: replaces the status with an error that carries the trace id', async () => {
