@@ -32,8 +32,15 @@ describe('formatElapsed', () => {
 
   it('switches to minutes at one minute', () => {
     expect(formatElapsed(60_000)).toBe('1m');
-    expect(formatElapsed(75_000)).toBe('1m 10s');
-    expect(formatElapsed(130_000)).toBe('2m 10s');
+    expect(formatElapsed(120_000)).toBe('2m');
+  });
+
+  it('moves in thirty-second steps after the first minute', () => {
+    expect(formatElapsed(75_000)).toBe('1m');
+    expect(formatElapsed(89_999)).toBe('1m');
+    expect(formatElapsed(90_000)).toBe('1m 30s');
+    expect(formatElapsed(130_000)).toBe('2m');
+    expect(formatElapsed(150_000)).toBe('2m 30s');
   });
 });
 
@@ -114,6 +121,42 @@ describe('createStatusReporter', () => {
       });
 
       expect(texts).toEqual(['Retrieving the data... (40s)', 'Retrieving the data... (50s)']);
+    });
+
+    it('rewrites every thirty seconds once the request is past its first minute', async () => {
+      const { texts, write } = recordingWrites();
+      const status = createStatusReporter({ write });
+
+      await status.withHeartbeat(async () => {
+        await status.set('Retrieving the data...');
+        await vi.advanceTimersByTimeAsync(125_000);
+      });
+
+      expect(texts).toEqual([
+        'Retrieving the data...',
+        'Retrieving the data... (10s)',
+        'Retrieving the data... (20s)',
+        'Retrieving the data... (30s)',
+        'Retrieving the data... (40s)',
+        'Retrieving the data... (50s)',
+        'Retrieving the data... (1m)',
+        'Retrieving the data... (1m 30s)',
+        'Retrieving the data... (2m)',
+      ]);
+    });
+
+    it('writes a new status at once after the first minute', async () => {
+      const { texts, write } = recordingWrites();
+      const status = createStatusReporter({ write });
+      await vi.advanceTimersByTimeAsync(75_000);
+
+      await status.withHeartbeat(async () => {
+        await status.set('Checking the cost...');
+        await vi.advanceTimersByTimeAsync(5_000);
+        await status.set('Retrieving the data...');
+      });
+
+      expect(texts).toEqual(['Checking the cost... (1m)', 'Retrieving the data... (1m)']);
     });
 
     it('does not rewrite when the text would not change', async () => {
@@ -274,6 +317,31 @@ describe('createStatusReporter', () => {
         'Researching the best approach...',
         'Researching the best approach... (10s)',
         'Researching the best approach... (20s)',
+      ]);
+    });
+
+    it('retries a failed rewrite at the next check, without waiting for the next step', async () => {
+      const texts: string[] = [];
+      let failed = false;
+      const write = vi.fn(async (text: string) => {
+        texts.push(text);
+        if (text.endsWith('(1m)') && !failed) {
+          failed = true;
+          throw new Error('ratelimited');
+        }
+      });
+      const status = createStatusReporter({ write, onError: vi.fn() });
+      await vi.advanceTimersByTimeAsync(55_000);
+
+      await status.withHeartbeat(async () => {
+        await status.set('Retrieving the data...');
+        await vi.advanceTimersByTimeAsync(30_000); // checks at 1m 05s, 1m 15s, 1m 25s
+      });
+
+      expect(texts).toEqual([
+        'Retrieving the data... (50s)',
+        'Retrieving the data... (1m)',
+        'Retrieving the data... (1m)',
       ]);
     });
   });
