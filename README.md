@@ -96,7 +96,9 @@ Subscribe to these bot events:
 
 Plain 1:1 DMs are delivered through `message.im`. Group DMs are delivered
 through `message.mpim`. Channel messages require `app_mention` unless the bot
-has already participated in the thread.
+has already participated in the thread. A channel message that @mentions the bot
+is answered through `app_mention` alone, so that subscription is required even
+for threads the bot is already in.
 
 ### App Home
 

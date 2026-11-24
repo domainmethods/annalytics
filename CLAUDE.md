@@ -102,17 +102,17 @@ These are called at startup in `src/app.ts` and must also be called in integrati
 
 ### Preflight Guards
 
-All entry points (commands, mentions, message handler) call `preflightChecks(channel, threadTs, client)` before launching the pipeline. This shared guard checks in order:
+All entry points (commands, and the flow that mentions and messages share, `handleSlackRequest()`) call `preflightChecks(channel, threadTs, client)` before launching the pipeline. This shared guard checks in order:
 
 1. **Thread lock** — prevents concurrent pipeline runs in the same thread
 2. **Pending clarification** — thread is waiting for user's clarifying answer
 3. **Pending escalation** — thread is waiting for data team response
 
-A reply that answers a pending clarification is consumed before preflight (`message` path only). It takes the clarification with a transactional claim (`claimClarificationState()`), so only one reply resumes; a second reply that also found it is handled as an ordinary thread message. The message handler then takes the thread lock for the resumed run itself. That lock is best-effort: the answer is already consumed, so the resume still runs when the lock can't be taken.
+A reply that answers a pending clarification is consumed before preflight, whether or not it @mentions the bot. The order is lock, then claim. A thread reply that finds a pending clarification (`hasPendingClarification()`, a read) takes the thread lock first, then takes the clarification with a transactional claim (`claimClarificationState()`), so only one reply resumes and the resumed run has the thread. When another run holds the lock, the answer is not taken: it stays pending and preflight tells the user to wait. When the claim finds nothing (another reply took it), the lock is released and the reply is handled as an ordinary thread message. Only when the lock can't be tried at all (logged as `clarification.resume.lock_failed`) does the resume run without one.
 
 ### Follow-Up Intent Routing
 
-Thread replies are classified by `followUpClassifier.ts` before entering the pipeline, except a reply from a user with a pending `refinement_targets` doc (left by a refine prompt, `handlers/refinePrompt.ts`): that reply skips intake and classification and goes straight to `refinement` against the answer they clicked. Both the `message` path and @mention thread replies (`app_mention`) consume targets. If the target can't be saved, the prompt isn't posted and the user is asked to retry; if it can't be read, the user is told and nothing runs, and the target stays for their retry. The `followUpRouter.ts` handler dispatches:
+Thread replies are classified by `followUpClassifier.ts` before entering the pipeline, except a reply from a user with a pending `refinement_targets` doc (left by a refine prompt, `handlers/refinePrompt.ts`): that reply skips intake and classification and goes straight to `refinement` against the answer they clicked. Mentioned and unmentioned thread replies consume targets through the same code (`handleSlackRequest()`). If the target can't be saved, the prompt isn't posted and the user is asked to retry; if it can't be read, the user is told and nothing runs, and the target stays for their retry. The `followUpRouter.ts` handler dispatches:
 
 - **`meta_question`** → Flash LLM call with persisted ResponseContext (no SQL, no supervisor)
 - **`refinement`** → Full pipeline re-run with composite question + previous SQL as hint
@@ -121,7 +121,7 @@ Thread replies are classified by `followUpClassifier.ts` before entering the pip
 
 If a `meta_question`/`refinement`/`discrepancy` handler fails, the user gets an error with a trace ID; it never falls back to a fresh SQL run. Only a failed *classification* falls back to the standard pipeline.
 
-A reply is classified once, by the `message` path before the pipeline; the pipeline does not classify again. The result is logged as `followup.classified` (intent, reasoning, channel, thread), and a failed classification as `followup.classify_failed`. Requests that reach the pipeline another way (an @mention reply, a clarification or escalation resume) are not classified and write neither line.
+A reply is classified once, in `handleSlackRequest()` before the pipeline; the pipeline does not classify again. The result is logged as `followup.classified` (intent, reasoning, channel, thread), and a failed classification as `followup.classify_failed`. An @mention reply is classified only when the bot had already replied in that thread; a first mention in a thread the bot was not in goes straight to the pipeline. A clarification or escalation resume is not classified and writes neither line.
 
 ### Escalation (Human-in-the-Loop)
 
@@ -197,7 +197,8 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 
 ### Bolt.js
 
-- `app_mention` events go to a separate Bolt listener (`registerMentions`), not the `message` handler
+- `app_mention` events go to a separate Bolt listener (`registerMentions`), not the `message` handler. It is a thin adapter: it removes the mention from the text and calls `handleSlackRequest()` (`handlers/messageHandler.ts`), the one flow both listeners run. New request handling goes in that flow, not in a listener.
+- A channel message that @mentions the bot arrives as both an `app_mention` event and a `message` event, with different event ids, so event dedupe does not join them. The `app_mention` listener owns it and the `message` listener returns early (`isOwnedByMentionListener()`: `channel_type` is `channel` or `group`, and the text contains `<@botUserId>`, from Bolt's `context.botUserId`). Direct conversations get no `app_mention`, so they stay with the `message` listener, and with no bot user id nothing is handed over.
 - `message` events never have `type: 'app_mention'` — don't check for it in `shouldRespond`
 - After filtering `bot_id`/`subtype`, narrow message events to `GenericMessageEvent` from `@slack/types`
 

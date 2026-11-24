@@ -9,6 +9,8 @@ import {
   canMessageEventReachPipeline,
   shouldRespond,
   checkClarificationReply,
+  hasPendingClarification,
+  isOwnedByMentionListener,
   type ClarificationReply,
 } from './messages.js';
 import { maybeHandleSlackIntake } from './slackIntake.js';
@@ -16,6 +18,7 @@ import { checkEscalationResponse, resumeFromEscalation } from './escalationRespo
 import { checkOverdueEscalations } from './escalationLifecycle.js';
 import { checkRateLimit } from '../state/rateLimiter.js';
 import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
+import { botHasRepliedInThread } from '../state/responseContext.js';
 import {
   claimSlackEvent,
   extractSlackEventId,
@@ -23,6 +26,7 @@ import {
   releaseSlackEventClaim,
 } from '../state/slackEventDedupe.js';
 import { preflightChecks } from './preflightChecks.js';
+import { markThreadParticipation } from './threadParticipationMark.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
 import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
 import { routeFollowUp } from './followUpRouter.js';
@@ -37,17 +41,22 @@ import { notifyEscalationTimeout } from '../slack/escalationTimeout.js';
 const STATUS_PLACEHOLDER_TEXT = 'Got it. Let me get things ready...';
 
 /**
- * Takes the thread lock for a resumed clarification, so a later message in the
- * thread waits for the run as it does on every other path. The user's answer is
- * already consumed by now, so a lock that can't be taken must not drop it: the
- * resume then runs without one.
+ * Takes the thread lock for a clarification answer. It is taken before the
+ * answer is, so an answer is never consumed by a run that can't have the
+ * thread. `busy`: another run holds the thread. `unavailable`: the lock could
+ * not be tried at all, and the resume then runs without one, because a user who
+ * answered must still get their answer.
  */
-async function lockClarificationResume(reply: ClarificationReply, ownerToken: string): Promise<boolean> {
+async function lockThreadForResume(
+  channel: string,
+  threadTs: string,
+  ownerToken: string,
+): Promise<'held' | 'busy' | 'unavailable'> {
   try {
-    return await acquireThreadLock(reply.channel, reply.threadTs, ownerToken);
+    return (await acquireThreadLock(channel, threadTs, ownerToken)) ? 'held' : 'busy';
   } catch (err) {
     rootLogger.warn({ error: (err as Error).message }, 'clarification.resume.lock_failed');
-    return false;
+    return 'unavailable';
   }
 }
 
@@ -99,8 +108,15 @@ export function registerMessageHandler(
   getConfig: () => AppConfig,
   getTables: () => TableContext[],
 ) {
-  app.event('message', async ({ event, body, client }) => {
-    await handleMessageEvent({ event: event as MessageEvent, body, client, config: getConfig(), getTables });
+  app.event('message', async ({ event, body, client, context }) => {
+    await handleMessageEvent({
+      event: event as MessageEvent,
+      body,
+      client,
+      config: getConfig(),
+      getTables,
+      botUserId: context.botUserId,
+    });
   });
 }
 
@@ -110,6 +126,8 @@ export interface HandleMessageEventParams {
   client: WebClient;
   config: AppConfig;
   getTables: () => TableContext[];
+  /** The bot's own user id, from Bolt. Unknown: no reply is left to the `app_mention` listener. */
+  botUserId?: string;
 }
 
 export async function handleMessageEvent({
@@ -118,13 +136,56 @@ export async function handleMessageEvent({
   client,
   config,
   getTables,
+  botUserId,
 }: HandleMessageEventParams): Promise<void> {
   // Skip bot messages, message_changed, etc.
   if ('bot_id' in event || 'subtype' in event) return;
 
   const msg = event as GenericMessageEvent;
   if (!canMessageEventReachPipeline(msg)) return;
+  // The `app_mention` listener gets this message too, and owns it.
+  if (isOwnedByMentionListener(msg, botUserId)) return;
 
+  await handleSlackRequest({ request: msg, mentioned: false, body, client, config, getTables });
+}
+
+/** What the shared flow reads from a Slack event, whichever listener received it. */
+export interface SlackRequest {
+  channel: string;
+  user: string;
+  text?: string;
+  ts: string;
+  thread_ts?: string;
+  channel_type?: string;
+}
+
+export interface HandleSlackRequestParams {
+  request: SlackRequest;
+  /**
+   * True for an `app_mention` event. The bot was addressed, so it answers
+   * wherever the message is, and `text` arrives with the mention removed.
+   */
+  mentioned: boolean;
+  body: unknown;
+  client: WebClient;
+  config: AppConfig;
+  getTables: () => TableContext[];
+}
+
+/**
+ * One flow for a message and for an @mention: clarification answers, escalation
+ * replies, rate limit, preflight, refine targets, intake, follow-up routing and
+ * the pipeline.
+ */
+export async function handleSlackRequest({
+  request: msg,
+  mentioned,
+  body,
+  client,
+  config,
+  getTables,
+}: HandleSlackRequestParams): Promise<void> {
+  const threadTs = msg.thread_ts || msg.ts;
   const eventId = extractSlackEventId(body);
   let visibleResponse = false;
   const ownerToken = randomUUID();
@@ -138,30 +199,43 @@ export async function handleMessageEvent({
       rootLogger.error({ error: (err as Error).message }, 'escalation.lifecycle.error'),
     );
 
-    // Check for pending clarification reply FIRST
-    const clarificationReply = await checkClarificationReply(msg);
-    if (clarificationReply) {
-      visibleResponse = true;
-      await markSlackEventVisible(eventId).catch(() => {});
-      lockHeld = await lockClarificationResume(clarificationReply, ownerToken);
-      const statusMsgTs = await startClarificationResume(clarificationReply, client);
-      // Resume pipeline with clarified question. Up to this point `lockHeld`
-      // has the `finally` below release the lock if anything throws. From here
-      // the pipeline owns the lock, when it was taken, and releases it itself.
-      const resumeLock = lockHeld ? { ownerToken } : {};
-      lockHeld = false;
-      await runPipeline({
-        ...resumeLock,
-        question: clarificationReply.clarifiedQuestion,
-        originalQuestion: clarificationReply.originalQuestion,
-        channel: clarificationReply.channel,
-        threadTs: clarificationReply.threadTs,
-        statusMsgTs,
-        client,
-        tables: getTables(),
-        config: toPipelineConfig(config),
-      });
-      return;
+    // A reply to a pending clarification is the user's answer. Checked FIRST.
+    if (await hasPendingClarification(msg)) {
+      const lock = await lockThreadForResume(msg.channel, threadTs, ownerToken);
+      // `busy`: the answer stays pending and this reply goes on as an ordinary
+      // message, which preflight tells to wait for the run that has the thread.
+      if (lock !== 'busy') {
+        lockHeld = lock === 'held';
+        const clarificationReply = await checkClarificationReply(msg);
+        if (clarificationReply) {
+          visibleResponse = true;
+          await markSlackEventVisible(eventId).catch(() => {});
+          const statusMsgTs = await startClarificationResume(clarificationReply, client);
+          // Resume pipeline with clarified question. Up to this point `lockHeld`
+          // has the `catch` below release the lock if anything throws. From here
+          // the pipeline owns the lock, when it was taken, and releases it itself.
+          const resumeLock = lockHeld ? { ownerToken } : {};
+          lockHeld = false;
+          await runPipeline({
+            ...resumeLock,
+            question: clarificationReply.clarifiedQuestion,
+            originalQuestion: clarificationReply.originalQuestion,
+            channel: clarificationReply.channel,
+            threadTs: clarificationReply.threadTs,
+            statusMsgTs,
+            client,
+            tables: getTables(),
+            config: toPipelineConfig(config),
+          });
+          return;
+        }
+        // Another reply took the clarification between the lookup and the claim.
+        // Give the lock back: this one is an ordinary thread message.
+        if (lockHeld) {
+          await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+          lockHeld = false;
+        }
+      }
     }
 
     // Check for escalation response (data team replying in escalation channel or DM)
@@ -186,10 +260,16 @@ export async function handleMessageEvent({
       }
     }
 
-    const respond = await shouldRespond(msg);
-    if (!respond) return;
-
-    const threadTs = msg.thread_ts || msg.ts;
+    // An unmentioned message is answered only where the bot already is, so a
+    // thread reply there can be a follow-up to something the bot said. A mention
+    // is always answered, but it can be the bot's first message in the thread,
+    // and then there is nothing for it to follow up on.
+    let classifyFollowUps = Boolean(msg.thread_ts);
+    if (mentioned) {
+      classifyFollowUps = msg.thread_ts ? await botHasRepliedInThread(msg.channel, msg.thread_ts) : false;
+    } else if (!(await shouldRespond(msg))) {
+      return;
+    }
 
     // Rate limit check
     const rateCheck = await checkRateLimit(msg.user, config.limits.rateLimitPerHour);
@@ -246,12 +326,17 @@ export async function handleMessageEvent({
       text: STATUS_PLACEHOLDER_TEXT,
     });
     visibleResponse = true;
-    await markSlackEventVisible(eventId).catch(() => {});
+    await Promise.all([
+      // A mention can open a thread the bot was not in. Mark it, so that later
+      // replies there reach the bot without a mention (#53).
+      mentioned ? markThreadParticipation(msg.channel, threadTs) : undefined,
+      markSlackEventVisible(eventId).catch(() => {}),
+    ]);
     // Consume the target only now that the reply is visibly underway (#51).
     if (refinementTargetKey) await finishRefinementTarget(msg.channel, threadTs, msg.user, refinementTargetKey);
 
     // Follow-up intent routing for thread replies
-    if (msg.thread_ts) {
+    if (msg.thread_ts && (refinementTargetKey || classifyFollowUps)) {
       // Only a failed *classification* falls back to the standard pipeline.
       // Once a follow-up route is chosen, its failures must not start an
       // unrelated SQL run (#48).
@@ -277,15 +362,15 @@ export async function handleMessageEvent({
           if (threadContext.length > 0) {
             const followUp = await classifyFollowUp(msg.text || '', threadContext, config.gemini.apiKey);
             intent = followUp.intent;
-            // The only classification of this reply: the pipeline does not
-            // classify again, so this is the one record of the route taken.
+            // Routing is the one place a reply is classified; log the route taken.
             rootLogger.info(
               { intent, reasoning: followUp.reasoning, channel: msg.channel, threadTs },
               'followup.classified',
             );
           }
         } catch (err) {
-          // Classification failed: fall through to the standard pipeline.
+          // The thread read or the classification failed: fall through to
+          // the standard pipeline.
           rootLogger.warn(
             { err: (err as Error).message, channel: msg.channel, threadTs },
             'followup.classify_failed',
@@ -327,7 +412,7 @@ export async function handleMessageEvent({
     });
   } catch (error) {
     if (!visibleResponse) await releaseSlackEventClaim(eventId).catch(() => {});
-    if (lockHeld) await releaseThreadLock(msg.channel, msg.thread_ts || msg.ts, ownerToken).catch(() => {});
+    if (lockHeld) await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
     throw error;
   }
 }

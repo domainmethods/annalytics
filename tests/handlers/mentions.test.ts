@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// ─── Hoisted mocks for mentions.ts direct dependencies ───────────
+// ─── Hoisted mocks for what an @mention reaches: mentions.ts hands the event
+//     to the flow it shares with the `message` listener (messageHandler.ts) ───
 const {
   mockRunPipeline,
   mockToPipelineConfig,
@@ -16,6 +17,10 @@ const {
   mockGetRefinementTarget,
   mockRouteFollowUp,
   mockConsumeRefinementTarget,
+  mockAcquireThreadLock,
+  mockCheckOverdueEscalations,
+  mockGetClarificationState,
+  mockBotHasRepliedInThread,
 } = vi.hoisted(() => ({
   mockRunPipeline: vi.fn(),
   mockToPipelineConfig: vi.fn(),
@@ -31,6 +36,10 @@ const {
   mockGetRefinementTarget: vi.fn(),
   mockRouteFollowUp: vi.fn(),
   mockConsumeRefinementTarget: vi.fn(),
+  mockAcquireThreadLock: vi.fn(),
+  mockCheckOverdueEscalations: vi.fn(),
+  mockGetClarificationState: vi.fn(),
+  mockBotHasRepliedInThread: vi.fn(),
 }));
 
 vi.mock('../../src/pipeline.js', () => ({
@@ -38,6 +47,7 @@ vi.mock('../../src/pipeline.js', () => ({
   toPipelineConfig: mockToPipelineConfig,
 }));
 vi.mock('../../src/state/threadLock.js', () => ({
+  acquireThreadLock: mockAcquireThreadLock,
   releaseThreadLock: mockReleaseThreadLock,
 }));
 vi.mock('../../src/state/rateLimiter.js', () => ({
@@ -67,6 +77,23 @@ vi.mock('../../src/state/refinementTarget.js', () => ({
 vi.mock('../../src/handlers/followUpRouter.js', () => ({
   routeFollowUp: mockRouteFollowUp,
 }));
+vi.mock('../../src/handlers/escalationLifecycle.js', () => ({
+  checkOverdueEscalations: mockCheckOverdueEscalations,
+}));
+vi.mock('../../src/handlers/escalationResponse.js', () => ({
+  checkEscalationResponse: vi.fn(),
+  resumeFromEscalation: vi.fn(),
+}));
+vi.mock('../../src/state/clarificationState.js', () => ({
+  getClarificationState: mockGetClarificationState,
+  claimClarificationState: vi.fn(),
+}));
+vi.mock('../../src/state/responseContext.js', () => ({
+  botHasRepliedInThread: mockBotHasRepliedInThread,
+}));
+vi.mock('../../src/agents/followUpClassifier.js', () => ({
+  classifyFollowUp: vi.fn(),
+}));
 
 import { registerMentions } from '../../src/handlers/mentions.js';
 
@@ -75,7 +102,7 @@ const STATUS_TEXT = 'Got it. Let me get things ready...';
 function captureMentionHandler() {
   let handler: any;
   const app = { event: vi.fn((_name: string, h: any) => { handler = h; }) } as any;
-  const config = { limits: { rateLimitPerHour: 50 }, gemini: { apiKey: 'api-key' } };
+  const config = { limits: { rateLimitPerHour: 50 }, gemini: { apiKey: 'api-key' }, escalation: {} };
   registerMentions(app, () => config as any, () => []);
   expect(app.event).toHaveBeenCalledWith('app_mention', expect.any(Function));
   return handler;
@@ -100,6 +127,10 @@ describe('registerMentions app_mention seam', () => {
     mockGetRefinementTarget.mockResolvedValue(null);
     mockRouteFollowUp.mockResolvedValue(undefined);
     mockConsumeRefinementTarget.mockResolvedValue(undefined);
+    mockCheckOverdueEscalations.mockResolvedValue(undefined);
+    // No clarification is pending, and the bot is new to every thread.
+    mockGetClarificationState.mockResolvedValue(null);
+    mockBotHasRepliedInThread.mockResolvedValue(false);
   });
 
   it('on an immediate response, does not post the status message and does not run the pipeline', async () => {
