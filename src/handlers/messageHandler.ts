@@ -145,8 +145,9 @@ export async function handleMessageEvent({
       await markSlackEventVisible(eventId).catch(() => {});
       lockHeld = await lockClarificationResume(clarificationReply, ownerToken);
       const statusMsgTs = await startClarificationResume(clarificationReply, client);
-      // Resume pipeline with clarified question. When the lock was taken, the
-      // pipeline owns it from here and releases it when it finishes.
+      // Resume pipeline with clarified question. Up to this point `lockHeld`
+      // has the `finally` below release the lock if anything throws. From here
+      // the pipeline owns the lock, when it was taken, and releases it itself.
       const resumeLock = lockHeld ? { ownerToken } : {};
       lockHeld = false;
       await runPipeline({

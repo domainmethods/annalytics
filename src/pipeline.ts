@@ -197,13 +197,14 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
   const logger = createLogger(traceId);
   const startTime = Date.now();
 
-  // Status updates are cosmetic. A transient Slack failure (rate limit,
-  // network blip) must never abort the real query — log and move on.
+  // Status updates are cosmetic. A failed write (network blip, Slack error)
+  // must never abort the real query — log and move on. A rate-limited write is
+  // not a failure: the Slack client waits for Retry-After and retries it.
   const status = createStatusReporter({
     write: (text) => client.chat.update({ channel, ts: statusMsgTs, text }),
     onError: (err, text) => logger.warn({ err, text }, 'pipeline.status_update_failed'),
   });
-  const updateStatus = status.set;
+  const updateStatus = (text: string) => status.set(text);
 
   try {
     // Stage 1: Clarification
