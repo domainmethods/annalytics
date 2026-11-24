@@ -86,7 +86,11 @@ const IDENTIFIER_START_RE = /[A-Za-z_]/;
 const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
 
 export interface PipelineInput {
-  /** Lease token from preflight; resume paths omit it and never release the thread lock. */
+  /**
+   * Lease token from the caller that took the thread lock: preflight, or a
+   * clarification resume that got it. Other resume paths omit it, and the
+   * pipeline then leaves the lock alone.
+   */
   ownerToken?: string;
   question: string;
   channel: string;
