@@ -25,7 +25,7 @@ import {
   markSlackEventVisible,
   releaseSlackEventClaim,
 } from '../state/slackEventDedupe.js';
-import { preflightChecks } from './preflightChecks.js';
+import { preflightChecks, THREAD_BUSY_TEXT } from './preflightChecks.js';
 import { markThreadParticipation } from './threadParticipationMark.js';
 import { runPipeline, toPipelineConfig } from '../pipeline.js';
 import { classifyFollowUp, type FollowUpIntent } from '../agents/followUpClassifier.js';
@@ -202,39 +202,45 @@ export async function handleSlackRequest({
     // A reply to a pending clarification is the user's answer. Checked FIRST.
     if (await hasPendingClarification(msg)) {
       const lock = await lockThreadForResume(msg.channel, threadTs, ownerToken);
-      // `busy`: the answer stays pending and this reply goes on as an ordinary
-      // message, which preflight tells to wait for the run that has the thread.
-      if (lock !== 'busy') {
-        lockHeld = lock === 'held';
-        const clarificationReply = await checkClarificationReply(msg);
-        if (clarificationReply) {
-          visibleResponse = true;
-          await markSlackEventVisible(eventId).catch(() => {});
-          const statusMsgTs = await startClarificationResume(clarificationReply, client);
-          // Resume pipeline with clarified question. Up to this point `lockHeld`
-          // has the `catch` below release the lock if anything throws. From here
-          // the pipeline owns the lock, when it was taken, and releases it itself.
-          const resumeLock = lockHeld ? { ownerToken } : {};
-          lockHeld = false;
-          await runPipeline({
-            ...resumeLock,
-            question: clarificationReply.clarifiedQuestion,
-            originalQuestion: clarificationReply.originalQuestion,
-            channel: clarificationReply.channel,
-            threadTs: clarificationReply.threadTs,
-            statusMsgTs,
-            client,
-            tables: getTables(),
-            config: toPipelineConfig(config),
-          });
-          return;
-        }
-        // Another reply took the clarification between the lookup and the claim.
-        // Give the lock back: this one is an ordinary thread message.
-        if (lockHeld) {
-          await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
-          lockHeld = false;
-        }
+      if (lock === 'busy') {
+        // Another run has the thread. The answer stays pending and the user is
+        // told to wait, here. Sent on as an ordinary message, it would count
+        // against the rate limit, and preflight would ask for the answer again
+        // if the other run let go of the thread in between.
+        await client.chat.postMessage({ channel: msg.channel, thread_ts: threadTs, text: THREAD_BUSY_TEXT });
+        visibleResponse = true;
+        await markSlackEventVisible(eventId).catch(() => {});
+        return;
+      }
+      lockHeld = lock === 'held';
+      const clarificationReply = await checkClarificationReply(msg);
+      if (clarificationReply) {
+        visibleResponse = true;
+        await markSlackEventVisible(eventId).catch(() => {});
+        const statusMsgTs = await startClarificationResume(clarificationReply, client);
+        // Resume pipeline with clarified question. Up to this point `lockHeld`
+        // has the `catch` below release the lock if anything throws. From here
+        // the pipeline owns the lock, when it was taken, and releases it itself.
+        const resumeLock = lockHeld ? { ownerToken } : {};
+        lockHeld = false;
+        await runPipeline({
+          ...resumeLock,
+          question: clarificationReply.clarifiedQuestion,
+          originalQuestion: clarificationReply.originalQuestion,
+          channel: clarificationReply.channel,
+          threadTs: clarificationReply.threadTs,
+          statusMsgTs,
+          client,
+          tables: getTables(),
+          config: toPipelineConfig(config),
+        });
+        return;
+      }
+      // Another reply took the clarification between the lookup and the claim.
+      // Give the lock back: this one is an ordinary thread message.
+      if (lockHeld) {
+        await releaseThreadLock(msg.channel, threadTs, ownerToken).catch(() => {});
+        lockHeld = false;
       }
     }
 

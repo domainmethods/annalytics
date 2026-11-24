@@ -9,6 +9,9 @@ import {
   PENDING_CLARIFICATION_TEXT,
 } from '../slack/clarificationBlocks.js';
 
+/** What a user is told when another run has their thread. */
+export const THREAD_BUSY_TEXT = "I'm still working on your previous question...";
+
 /**
  * Shared preflight guard: runs lock + clarification + escalation checks in order.
  * Returns true if the pipeline should proceed, false if blocked.
@@ -26,7 +29,7 @@ export async function preflightChecks(
     await client.chat.postMessage({
       channel,
       thread_ts: threadTs,
-      text: "I'm still working on your previous question...",
+      text: THREAD_BUSY_TEXT,
     });
     return false;
   }

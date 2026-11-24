@@ -204,6 +204,19 @@ function statusPosts(): string[] {
   return mockClient.chat.postMessage.mock.calls.map((c: any[]) => c[0].text);
 }
 
+// The fake store keeps plain Dates where Firestore returns Timestamps, so a doc
+// one delivery wrote is re-wrapped before the next delivery reads it.
+function asTimestamps() {
+  for (const [prefix, field] of [['processing_threads/', 'expiresAt'], ['rate_limits/', 'windowStart']]) {
+    for (const [key, doc] of firestoreStore) {
+      if (key.startsWith(prefix) && doc[field] instanceof Date) {
+        const date = doc[field];
+        firestoreStore.set(key, { ...doc, [field]: { toDate: () => date } });
+      }
+    }
+  }
+}
+
 describe('handleMessageEvent — orchestration seam (integration)', () => {
   beforeAll(() => {
     // generateContent's default: route to the analytics pipeline. Individual
@@ -528,20 +541,97 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         .toEqual(['processing_threads', 'clarification_state']);
     });
 
+    // Another run has the thread, and keeps it however far the clock moves.
+    const heldByAnotherRun = () => firestoreStore.set(LOCK_PATH, {
+      ownerToken: 'another-run',
+      expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
+    });
+
     it('leaves the answer untaken and asks the user to wait when another run holds the thread', async () => {
       pendingClarification();
-      firestoreStore.set(LOCK_PATH, {
-        ownerToken: 'another-run',
-        expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
-      });
+      heldByAnotherRun();
 
       await answer();
 
       expect(mockRunPipeline).not.toHaveBeenCalled();
-      expect(statusPosts()).toContain(STILL_WORKING_TEXT);
+      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'D123',
+        thread_ts: THREAD_TS,
+        text: STILL_WORKING_TEXT,
+      });
       // Still pending, so the same answer works once the other run is done.
       expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
       expect(firestoreStore.get(LOCK_PATH).ownerToken).toBe('another-run');
+    });
+
+    it('does not count an answer it could not take against the rate limit', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+
+      await answer();
+
+      expect(firestoreStore.has('rate_limits/U1')).toBe(false);
+    });
+
+    it('tells a user at the rate limit to wait, not that they are out of queries', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      firestoreStore.set('rate_limits/U1', {
+        queryCount: config.limits.rateLimitPerHour,
+        windowStart: { toDate: () => new Date() },
+      });
+
+      await answer();
+
+      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+    });
+
+    it('still asks the user to wait when the other run lets go of the thread a moment later', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      const realTransaction = mockDb.runTransaction.getMockImplementation()!;
+      // The other run finishes right after this reply found the thread taken.
+      mockDb.runTransaction.mockImplementation(async (callback: (tx: any) => Promise<any>) => {
+        let readLock = false;
+        const result = await realTransaction((tx: any) => callback({
+          ...tx,
+          get: (ref: any) => {
+            if (ref.path === LOCK_PATH) readLock = true;
+            return tx.get(ref);
+          },
+        }));
+        if (readLock) firestoreStore.delete(LOCK_PATH);
+        return result;
+      });
+
+      try {
+        await answer();
+      } finally {
+        mockDb.runTransaction.mockImplementation(realTransaction);
+      }
+
+      // Not "I'm still waiting on your answer": they just gave it.
+      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
+    });
+
+    it('asks the user to wait once when Slack sends the same answer again a minute later', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      vi.useFakeTimers({ toFake: ['Date'] });
+
+      try {
+        await answer();
+        asTimestamps();
+        vi.setSystemTime(Date.now() + 60_000);
+        await answer();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(statusPosts()).toEqual([STILL_WORKING_TEXT]);
     });
 
     it('gives the thread lock back when another reply already took the clarification', async () => {
@@ -1096,18 +1186,6 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     const botIsInThread = () => firestoreStore.set(`thread_participation/C-CHAN:${ROOT_TS}`, {
       channel: 'C-CHAN', threadTs: ROOT_TS, expiresAt: new Date(Date.now() + 60_000),
     });
-    // The fake store keeps plain Dates where Firestore returns Timestamps, so a
-    // doc one handler wrote is re-wrapped before the other handler reads it.
-    const asTimestamps = () => {
-      for (const [prefix, field] of [['processing_threads/', 'expiresAt'], ['rate_limits/', 'windowStart']]) {
-        for (const [key, doc] of firestoreStore) {
-          if (key.startsWith(prefix) && doc[field] instanceof Date) {
-            const date = doc[field];
-            firestoreStore.set(key, { ...doc, [field]: { toDate: () => date } });
-          }
-        }
-      }
-    };
     // What Slack returns by the time the thread is read: the earlier messages,
     // then the reply being answered and the status message just posted for it.
     const threadWith = (earlier: Array<Record<string, unknown>>, replyText = reply.text) => ({
