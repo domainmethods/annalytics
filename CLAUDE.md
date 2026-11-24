@@ -121,6 +121,8 @@ Thread replies are classified by `followUpClassifier.ts` before entering the pip
 
 If a `meta_question`/`refinement`/`discrepancy` handler fails, the user gets an error with a trace ID; it never falls back to a fresh SQL run. Only a failed *classification* falls back to the standard pipeline.
 
+A reply is classified once, by the `message` path before the pipeline; the pipeline does not classify again. The result is logged as `followup.classified` (intent, reasoning, channel, thread), and a failed classification as `followup.classify_failed`. Requests that reach the pipeline another way (an @mention reply, a clarification or escalation resume) are not classified and write neither line.
+
 ### Escalation (Human-in-the-Loop)
 
 When the supervisor loop returns `exhausted`, `decideEscalation()` chooses a behavior:

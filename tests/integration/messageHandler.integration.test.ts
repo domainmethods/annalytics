@@ -11,6 +11,7 @@ const {
   firestoreStore,
   firestoreQueryResults,
   loggerWarn,
+  loggerInfo,
   mockDb,
 } = vi.hoisted(() => {
   const mockGenerateContent = vi.fn();
@@ -20,6 +21,7 @@ const {
   const firestoreStore = new Map<string, any>();
   const firestoreQueryResults = new Map<string, any>();
   const loggerWarn = vi.fn();
+  const loggerInfo = vi.fn();
 
   function createDocRef(collectionName: string, docId: string) {
     const path = `${collectionName}/${docId}`;
@@ -85,6 +87,7 @@ const {
     firestoreStore,
     firestoreQueryResults,
     loggerWarn,
+    loggerInfo,
     mockDb,
   };
 });
@@ -109,7 +112,7 @@ vi.mock('../../src/logging.js', () => ({
   createTraceId: () => 'trace-msg',
   createLogger: () => ({ info: vi.fn(), warn: loggerWarn, error: vi.fn(), child: vi.fn() }),
   logStage: vi.fn(),
-  rootLogger: { info: vi.fn(), warn: loggerWarn, error: vi.fn() },
+  rootLogger: { info: loggerInfo, warn: loggerWarn, error: vi.fn() },
 }));
 
 // Keep toPipelineConfig real (it's pure config conversion); spy only the
@@ -212,6 +215,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     firestoreStore.clear();
     firestoreQueryResults.clear();
     loggerWarn.mockReset();
+    loggerInfo.mockReset();
 
     mockClient.conversations.replies.mockReset().mockResolvedValue({ messages: [] });
     mockClient.chat.postMessage.mockReset().mockResolvedValue({ ts: '1700000000.000200' });
@@ -771,6 +775,49 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         { role: 'user', content: 'show revenue last month' },
         { role: 'assistant', content: 'Revenue last month was 42.' },
       ]);
+    });
+
+    it('logs the intent the reply was routed on', async () => {
+      mockClassifyFollowUp.mockResolvedValue({
+        intent: 'meta_question',
+        reasoning: 'Asks how the number was computed',
+      });
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvClassifyLog'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(loggerInfo).toHaveBeenCalledWith(
+        {
+          intent: 'meta_question',
+          reasoning: 'Asks how the number was computed',
+          channel: 'D123',
+          threadTs: '1700000000.000100',
+        },
+        'followup.classified',
+      );
+    });
+
+    it('logs a classification that failed, so the fallback to the pipeline is visible', async () => {
+      mockClassifyFollowUp.mockRejectedValue(new Error('Gemini unavailable'));
+
+      await handleMessageEvent({
+        event: threadReply(),
+        body: bodyWithEventId('EvClassifyFailLog'),
+        client: mockClient,
+        config,
+        getTables,
+      });
+
+      expect(loggerWarn).toHaveBeenCalledWith(
+        { err: 'Gemini unavailable', channel: 'D123', threadTs: '1700000000.000100' },
+        'followup.classify_failed',
+      );
+      expect(loggerInfo).not.toHaveBeenCalledWith(expect.anything(), 'followup.classified');
     });
   });
 

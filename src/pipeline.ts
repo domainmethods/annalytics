@@ -9,7 +9,6 @@ import { classifyAmbiguity } from './agents/ambiguityClassifier.js';
 import { qualityLoop, MAX_ATTEMPTS } from './qualityLoop.js';
 import { runRoutineFastPath } from './routineFastPath.js';
 import { reconcileConfidence } from './agents/confidence.js';
-import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { executeQuery } from './execution/runner.js';
 import { chooseFormat } from './execution/formatter.js';
 import { buildThreadContext } from './slack/threadContext.js';
@@ -235,19 +234,6 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       maxTokens: 1000,
       excludeTs: statusMsgTs,
     });
-
-    // Follow-up intent classification for thread messages. Nothing downstream
-    // reads the result (it is logged for observability only), so it runs in the
-    // background instead of holding up the answer.
-    if (threadContext.length > 0) {
-      void classifyFollowUp(question, threadContext, config.geminiApiKey)
-        .then((followUp) => {
-          logger.info({ intent: followUp.intent, reasoning: followUp.reasoning }, 'followup.classified');
-        })
-        .catch(() => {
-          // Non-critical — the pipeline does not depend on this classification
-        });
-    }
 
     const clarification = await classifyQuestion(
       question, threadContext, teachingSummaries, config.geminiApiKey,
