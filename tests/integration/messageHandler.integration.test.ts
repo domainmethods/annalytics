@@ -131,9 +131,14 @@ vi.mock('../../src/agents/followUpClassifier.js', () => ({
 vi.mock('../../src/handlers/followUpRouter.js', () => ({
   routeFollowUp: mockRouteFollowUp,
 }));
+// Harvesting a teaching candidate after an escalation resolves is a model call
+// nobody waits for; hold it open so it can't write into a later test.
+vi.mock('../../src/teachings/candidateGenerator.js', () => ({
+  generateTeachingCandidate: vi.fn(() => new Promise(() => {})),
+}));
 
 // ─── Real imports (system under test + real collaborators) ───────
-import { handleMessageEvent } from '../../src/handlers/messageHandler.js';
+import { handleMessageEvent, registerMessageHandler } from '../../src/handlers/messageHandler.js';
 import { checkClarificationReply } from '../../src/handlers/messages.js';
 import { registerMentions } from '../../src/handlers/mentions.js';
 import { registerCommands } from '../../src/handlers/commands.js';
@@ -197,6 +202,19 @@ const mockClient = {
 
 function statusPosts(): string[] {
   return mockClient.chat.postMessage.mock.calls.map((c: any[]) => c[0].text);
+}
+
+// The fake store keeps plain Dates where Firestore returns Timestamps, so a doc
+// one delivery wrote is re-wrapped before the next delivery reads it.
+function asTimestamps() {
+  for (const [prefix, field] of [['processing_threads/', 'expiresAt'], ['rate_limits/', 'windowStart']]) {
+    for (const [key, doc] of firestoreStore) {
+      if (key.startsWith(prefix) && doc[field] instanceof Date) {
+        const date = doc[field];
+        firestoreStore.set(key, { ...doc, [field]: { toDate: () => date } });
+      }
+    }
+  }
 }
 
 describe('handleMessageEvent — orchestration seam (integration)', () => {
@@ -460,6 +478,9 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
     // ── The resumed run holds the thread lock like every other run ──
     const LOCK_PATH = `processing_threads/D123:${THREAD_TS}`;
     const STILL_WORKING_TEXT = "I'm still working on your previous question...";
+    // What a refused answer is told: it was not taken, so it has to be sent again.
+    const SEND_AGAIN_TEXT =
+      "I'm still finishing something in this thread, so I haven't picked up your answer yet. Please send it again in a moment.";
 
     it('takes the thread lock for the resumed run and hands it to the pipeline to release', async () => {
       pendingClarification();
@@ -498,20 +519,136 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
     });
 
-    it('still resumes, without a lock of its own, when the thread lock is already held', async () => {
-      // The answer is already consumed by now, so it must not be dropped.
+    // ── The lock is taken before the answer is, so an answer is never consumed
+    //    by a run that can't have the thread ──
+    it('takes the thread lock before it takes the clarification', async () => {
       pendingClarification();
-      firestoreStore.set(LOCK_PATH, {
-        ownerToken: 'another-run',
-        expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
+      const realTransaction = mockDb.runTransaction.getMockImplementation()!;
+      const read: string[] = [];
+      mockDb.runTransaction.mockImplementation((callback: (tx: any) => Promise<any>) =>
+        realTransaction((tx: any) => callback({
+          ...tx,
+          get: (ref: any) => {
+            read.push(ref.path.split('/')[0]);
+            return tx.get(ref);
+          },
+        })));
+
+      try {
+        await answer();
+      } finally {
+        mockDb.runTransaction.mockImplementation(realTransaction);
+      }
+
+      expect(read.filter(c => c === 'processing_threads' || c === 'clarification_state'))
+        .toEqual(['processing_threads', 'clarification_state']);
+    });
+
+    // Another run has the thread, and keeps it however far the clock moves.
+    const heldByAnotherRun = () => firestoreStore.set(LOCK_PATH, {
+      ownerToken: 'another-run',
+      expiresAt: { toDate: () => new Date(Date.now() + 60_000) },
+    });
+
+    it('leaves the answer untaken and asks for it again when another run holds the thread', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+
+      await answer();
+
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // Not "I'm still working on your previous question...": nothing that is
+      // running will use this answer, so the user must not be left waiting on it.
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
+      expect(mockClient.chat.postMessage).toHaveBeenCalledWith({
+        channel: 'D123',
+        thread_ts: THREAD_TS,
+        text: SEND_AGAIN_TEXT,
+      });
+      // Still pending, so the same answer works once the other run is done.
+      expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
+      expect(firestoreStore.get(LOCK_PATH).ownerToken).toBe('another-run');
+    });
+
+    it('does not count an answer it could not take against the rate limit', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+
+      await answer();
+
+      expect(firestoreStore.has('rate_limits/U1')).toBe(false);
+    });
+
+    it('asks a user at the rate limit for the answer again, and does not say they are out of queries', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      firestoreStore.set('rate_limits/U1', {
+        queryCount: config.limits.rateLimitPerHour,
+        windowStart: { toDate: () => new Date() },
       });
 
       await answer();
 
-      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-      expect(mockRunPipeline.mock.calls[0][0].ownerToken).toBeUndefined();
-      expect(firestoreStore.get(LOCK_PATH).ownerToken).toBe('another-run');
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
+    });
+
+    it('still asks for the answer again when the other run lets go of the thread a moment later', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      const realTransaction = mockDb.runTransaction.getMockImplementation()!;
+      // The other run finishes right after this reply found the thread taken.
+      mockDb.runTransaction.mockImplementation(async (callback: (tx: any) => Promise<any>) => {
+        let readLock = false;
+        const result = await realTransaction((tx: any) => callback({
+          ...tx,
+          get: (ref: any) => {
+            if (ref.path === LOCK_PATH) readLock = true;
+            return tx.get(ref);
+          },
+        }));
+        if (readLock) firestoreStore.delete(LOCK_PATH);
+        return result;
+      });
+
+      try {
+        await answer();
+      } finally {
+        mockDb.runTransaction.mockImplementation(realTransaction);
+      }
+
+      // Not "I'm still waiting on your answer": they just gave it.
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      expect(firestoreStore.has('clarification_state/clar-9')).toBe(true);
+    });
+
+    it('asks for the answer again once when Slack sends the same answer a minute later', async () => {
+      pendingClarification();
+      heldByAnotherRun();
+      vi.useFakeTimers({ toFake: ['Date'] });
+
+      try {
+        await answer();
+        asTimestamps();
+        vi.setSystemTime(Date.now() + 60_000);
+        await answer();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(statusPosts()).toEqual([SEND_AGAIN_TEXT]);
+    });
+
+    it('gives the thread lock back when another reply already took the clarification', async () => {
+      // The lookup still shows the clarification, but its document is gone.
+      pendingClarification();
+      firestoreStore.delete('clarification_state/clar-9');
+
+      await answer();
+
+      expect(mockRunPipeline).not.toHaveBeenCalled();
       expect(statusPosts()).not.toContain(STILL_WORKING_TEXT);
+      expect([...firestoreStore.keys()].some(k => k.startsWith('processing_threads/'))).toBe(false);
     });
 
     it('still resumes when the thread lock cannot be taken at all', async () => {
@@ -569,7 +706,8 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       await resumed;
 
       expect(mockRunPipeline).toHaveBeenCalledTimes(1);
-      expect(statusPosts()).toContain(STILL_WORKING_TEXT);
+      // The first reply was the answer. This one was not picked up, and is told so.
+      expect(statusPosts()).toContain(SEND_AGAIN_TEXT);
     });
   });
 
@@ -831,6 +969,7 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
         event: { type: 'app_mention', text: '<@UBOT> hi', user: 'U1', channel: 'C-CHAN', ts: '1700000000.000100' },
         body: bodyWithEventId('EvMentionHi'),
         client: mockClient,
+        context: { botUserId: 'UBOT' },
       });
       expect(mockClient.chat.postMessage).toHaveBeenCalledTimes(1);
       expect(mockRunPipeline).not.toHaveBeenCalled();
@@ -1023,6 +1162,249 @@ describe('handleMessageEvent — orchestration seam (integration)', () => {
       await handleMessageEvent({ event: reply('U2', '1700000000.000150'), body: bodyWithEventId('EvRefineOther'), client: mockClient, config, getTables });
       expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
       expect(mockRouteFollowUp).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── One listener owns a reply that @mentions the bot ──
+  // In a channel thread the bot has replied in, a message that @mentions the bot
+  // reaches the app twice: as a `message` event and as an `app_mention` event.
+  // Each has its own event id, so event dedupe does not join them. The
+  // `app_mention` listener owns such a reply; the `message` listener leaves it.
+  describe('a reply that @mentions the bot', () => {
+    const BOT = 'UBOT';
+    const ROOT_TS = '1700000000.000100';
+    const reply = {
+      text: `<@${BOT}> show leads last month by channel`,
+      user: 'U1', channel: 'C-CHAN', ts: '1700000000.000300', thread_ts: ROOT_TS,
+    };
+    const messageEvent = (overrides: Record<string, unknown> = {}) =>
+      ({ type: 'message', channel_type: 'channel', ...reply, ...overrides }) as any;
+    const deliverAsMessage = (eventId: string, overrides: Record<string, unknown> = {}) => handleMessageEvent({
+      event: messageEvent(overrides),
+      body: bodyWithEventId(eventId), client: mockClient, config, getTables, botUserId: BOT,
+    });
+    const registerMentionHandler = (cfg: AppConfig = config) => {
+      let handler: any;
+      registerMentions({ event: vi.fn((_name: string, h: any) => { handler = h; }) } as any, () => cfg, getTables);
+      return (eventId: string, overrides: Record<string, unknown> = {}) => handler({
+        event: { type: 'app_mention', ...reply, ...overrides }, body: bodyWithEventId(eventId), client: mockClient,
+        context: { botUserId: BOT },
+      });
+    };
+    const botIsInThread = () => firestoreStore.set(`thread_participation/C-CHAN:${ROOT_TS}`, {
+      channel: 'C-CHAN', threadTs: ROOT_TS, expiresAt: new Date(Date.now() + 60_000),
+    });
+    // What Slack returns by the time the thread is read: the earlier messages,
+    // then the reply being answered and the status message just posted for it.
+    const threadWith = (earlier: Array<Record<string, unknown>>, replyText = reply.text) => ({
+      messages: [
+        ...earlier,
+        { user: 'U1', text: replyText, ts: reply.ts },
+        { bot_id: 'B1', text: STATUS_TEXT, ts: '1700000000.000200' },
+      ],
+    });
+
+    beforeEach(() => {
+      mockGenerateContent.mockResolvedValue(intakeResponse('analytics_pipeline', null));
+    });
+
+    it.each(['message', 'app_mention'])(
+      'answers it once, with one rate-limit count and no "still working" notice (%s event first)',
+      async (first) => {
+        const deliverAsMention = registerMentionHandler();
+        botIsInThread();
+        const deliveries = [
+          () => deliverAsMessage('EvReplyAsMessage'),
+          () => deliverAsMention('EvReplyAsMention'),
+        ];
+        if (first === 'app_mention') deliveries.reverse();
+
+        await deliveries[0]();
+        // The first run still holds the thread when the second event arrives.
+        asTimestamps();
+        await deliveries[1]();
+
+        expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+        expect(statusPosts().filter(t => /still working on your previous question/.test(t))).toEqual([]);
+        expect(firestoreStore.get('rate_limits/U1').queryCount).toBe(1);
+      },
+    );
+
+    it('takes a mentioned clarification answer once, without the mention and with no "waiting on your answer" notice', async () => {
+      const deliverAsMention = registerMentionHandler();
+      const pending = {
+        clarificationId: 'clar-chan', threadTs: ROOT_TS, channel: 'C-CHAN', originalQuestion: 'revenue?',
+        clarifyingQuestions: ['Which period?'], clarifyingMessageTs: '1700000000.000200',
+        state: 'awaiting_reply', expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      };
+      firestoreQueryResults.set('clarification_state', {
+        empty: false, docs: [{ data: () => pending, ref: { delete: vi.fn(async () => {}) } }],
+      });
+      firestoreStore.set('clarification_state/clar-chan', pending);
+
+      await deliverAsMention('EvAnswerAsMention', { text: `<@${BOT}> last quarter` });
+      asTimestamps();
+      await deliverAsMessage('EvAnswerAsMessage', { text: `<@${BOT}> last quarter` });
+
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
+        question: 'revenue? (Clarification: last quarter)',
+        channel: 'C-CHAN',
+        threadTs: ROOT_TS,
+      });
+      expect(statusPosts().filter(t => /still waiting on your answer/.test(t))).toEqual([]);
+    });
+
+    it('routes a mentioned follow-up in a thread the bot has answered', async () => {
+      const deliverAsMention = registerMentionHandler();
+      botIsInThread();
+      mockClient.conversations.replies.mockResolvedValue(threadWith([
+        { user: 'U1', text: 'show revenue last month', ts: ROOT_TS },
+        { bot_id: 'B1', text: 'Revenue last month was 42.', ts: '1700000000.000120' },
+      ], `<@${BOT}> how was that calculated?`));
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+
+      await deliverAsMention('EvMentionFollowUp', { text: `<@${BOT}> how was that calculated?` });
+
+      expect(mockClassifyFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockClassifyFollowUp.mock.calls[0][0]).toBe('how was that calculated?');
+      expect(mockRouteFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockRouteFollowUp.mock.calls[0].slice(0, 4)).toEqual([
+        'meta_question', 'how was that calculated?', ROOT_TS, 'C-CHAN',
+      ]);
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+    });
+
+    it('sends a first mention in a thread the bot was not in straight to the pipeline', async () => {
+      // Nothing of the bot's is in the thread yet, so no follow-up route has an
+      // answer to work from, however the reply is worded.
+      const deliverAsMention = registerMentionHandler();
+      mockClient.conversations.replies.mockResolvedValue(threadWith([
+        { user: 'U2', text: 'does anyone have the lead numbers?', ts: ROOT_TS },
+      ]));
+      mockClassifyFollowUp.mockResolvedValue({ intent: 'meta_question', reasoning: 'test' });
+
+      await deliverAsMention('EvFirstMention');
+
+      expect(mockClassifyFollowUp).not.toHaveBeenCalled();
+      expect(mockRouteFollowUp).not.toHaveBeenCalled();
+      expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunPipeline.mock.calls[0][0]).toMatchObject({
+        question: 'show leads last month by channel',
+        channel: 'C-CHAN',
+        threadTs: ROOT_TS,
+      });
+      // The thread is marked from here on, so the next reply needs no mention.
+      expect(firestoreStore.has(`thread_participation/C-CHAN:${ROOT_TS}`)).toBe(true);
+    });
+
+    const ESCALATION_TS = '1700000000.000900';
+    // An escalation is open, and the analyst replies in its thread with a mention.
+    const analystReplies = (text: string) => {
+      const escalation = {
+        escalationId: 'esc-open',
+        originalThreadTs: '1700000000.000100',
+        originalChannel: 'D123',
+        pipelineState: 'awaiting_human',
+        trigger: 'supervisor_exhausted',
+        behavior: 'best_effort_verify',
+        stageToResume: 'sql_generation',
+        context: { clarifiedQuestion: 'Show revenue', userQuestion: 'Show revenue', groundingCitations: [] },
+        escalationChannel: 'C-ESCALATION',
+        escalationTs: ESCALATION_TS,
+        statusMsgTs: '1700000000.000200',
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        traceId: 'trace-open',
+      };
+      firestoreStore.set('escalation_state/esc-open', escalation);
+      firestoreQueryResults.set('escalation_state', {
+        empty: false, docs: [{ data: () => escalation, ref: { update: vi.fn(async () => {}) } }],
+      });
+      return {
+        text,
+        user: 'U-ANALYST', channel: 'C-ESCALATION', ts: '1700000000.000950', thread_ts: ESCALATION_TS,
+      };
+    };
+
+    it("passes on an analyst's mentioned reply in an escalation thread once, and starts no run there", async () => {
+      const guidance = analystReplies(`<@${BOT}> use net revenue`);
+      const deliverAsMention = registerMentionHandler(escalationConfig);
+
+      await handleMessageEvent({
+        event: messageEvent(guidance), body: bodyWithEventId('EvGuidanceAsMessage'),
+        client: mockClient, config: escalationConfig, getTables, botUserId: BOT,
+      });
+      await deliverAsMention('EvGuidanceAsMention', guidance);
+
+      expect(mockRunPipeline).not.toHaveBeenCalled();
+      // One post in all: the guidance, in the thread of the person who asked.
+      expect(statusPosts()).toEqual(['use net revenue']);
+      expect(mockClient.chat.postMessage.mock.calls[0][0]).toMatchObject({
+        channel: 'D123',
+        thread_ts: '1700000000.000100',
+      });
+    });
+
+    it('keeps the people an analyst names in the guidance it passes on', async () => {
+      const guidance = analystReplies(`<@${BOT}> use net revenue, and ask <@UCFO> if unsure`);
+      const deliverAsMention = registerMentionHandler(escalationConfig);
+
+      await deliverAsMention('EvGuidanceNamesSomeone', guidance);
+
+      expect(statusPosts()).toEqual(['use net revenue, and ask <@UCFO> if unsure']);
+    });
+
+    describe('on the message listener', () => {
+      it.each(['channel', 'group'])('is left to the app_mention listener in a %s thread', async (channelType) => {
+        botIsInThread();
+
+        await deliverAsMessage('EvLeft', { channel_type: channelType });
+
+        expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+        expect(mockRunPipeline).not.toHaveBeenCalled();
+        // The event is not claimed either: nothing here handled it.
+        expect([...firestoreStore.keys()].some(k => k.startsWith('slack_event_dedupe/'))).toBe(false);
+      });
+
+      it('is left to the app_mention listener using the bot user id Bolt provides', async () => {
+        let messageHandler: any;
+        registerMessageHandler(
+          { event: vi.fn((_name: string, h: any) => { messageHandler = h; }) } as any, () => config, getTables,
+        );
+        botIsInThread();
+
+        await messageHandler({
+          event: messageEvent(), body: bodyWithEventId('EvBoltContext'), client: mockClient, context: { botUserId: BOT },
+        });
+
+        expect(mockClient.chat.postMessage).not.toHaveBeenCalled();
+        expect(mockRunPipeline).not.toHaveBeenCalled();
+      });
+
+      it('is still handled when the bot user id is not known', async () => {
+        botIsInThread();
+
+        await handleMessageEvent({
+          event: messageEvent(), body: bodyWithEventId('EvNoBotId'), client: mockClient, config, getTables,
+        });
+
+        expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      });
+
+      it('is still handled when the reply mentions someone else', async () => {
+        botIsInThread();
+
+        await deliverAsMessage('EvOtherMention', { text: '<@UOTHER> show leads last month by channel' });
+
+        expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(['im', 'mpim'])('is still handled in a direct conversation (%s)', async (channelType) => {
+        await deliverAsMessage('EvDirect', { channel_type: channelType, channel: 'D123', thread_ts: undefined });
+
+        expect(mockRunPipeline).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

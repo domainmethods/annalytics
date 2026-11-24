@@ -6,18 +6,23 @@ vi.mock('../../src/state/responseContext.js', () => ({
 }));
 vi.mock('../../src/state/clarificationState.js', () => ({
   claimClarificationState: vi.fn(),
+  getClarificationState: vi.fn(),
 }));
 
 import { botHasRepliedInThread } from '../../src/state/responseContext.js';
-import { claimClarificationState } from '../../src/state/clarificationState.js';
+import { claimClarificationState, getClarificationState } from '../../src/state/clarificationState.js';
 import {
   canMessageEventReachPipeline,
   shouldRespond,
   checkClarificationReply,
+  hasPendingClarification,
+  isOwnedByMentionListener,
+  stripBotMention,
 } from '../../src/handlers/messages.js';
 
 const mockBotHasReplied = vi.mocked(botHasRepliedInThread);
 const mockClaimClarification = vi.mocked(claimClarificationState);
+const mockGetClarification = vi.mocked(getClarificationState);
 
 describe('canMessageEventReachPipeline', () => {
   it('allows direct messages and group direct messages without a thread', () => {
@@ -36,6 +41,95 @@ describe('canMessageEventReachPipeline', () => {
     expect(canMessageEventReachPipeline({
       channel_type: 'channel',
     } as any)).toBe(false);
+  });
+});
+
+describe('stripBotMention', () => {
+  it("removes the bot's own mention", () => {
+    expect(stripBotMention('<@UBOT> show leads', 'UBOT')).toBe('show leads');
+  });
+
+  it('removes it wherever it is, however often', () => {
+    expect(stripBotMention('thanks <@UBOT>, by region? <@UBOT>', 'UBOT')).toBe('thanks , by region?');
+  });
+
+  it('keeps the other people named in the text', () => {
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', 'UBOT')).toBe('ask <@UCFO> if unsure');
+  });
+
+  it('does not take a longer id for its own', () => {
+    expect(stripBotMention('<@UBOT2> show leads', 'UBOT')).toBe('<@UBOT2> show leads');
+  });
+
+  it('removes every user mention when the bot user id is not known', () => {
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', undefined)).toBe('ask  if unsure');
+    expect(stripBotMention('<@UBOT> ask <@UCFO> if unsure', '')).toBe('ask  if unsure');
+  });
+});
+
+describe('isOwnedByMentionListener', () => {
+  const mention = (channel_type: string, text = '<@UBOT> show leads') => ({ channel_type, text }) as any;
+
+  it('hands over a message that mentions the bot in a public or private channel', () => {
+    expect(isOwnedByMentionListener(mention('channel'), 'UBOT')).toBe(true);
+    expect(isOwnedByMentionListener(mention('group'), 'UBOT')).toBe(true);
+  });
+
+  it('finds the mention anywhere in the text', () => {
+    expect(isOwnedByMentionListener(mention('channel', 'thanks <@UBOT>, and by region?'), 'UBOT')).toBe(true);
+  });
+
+  it('keeps a message in a direct conversation, which gets no app_mention event', () => {
+    expect(isOwnedByMentionListener(mention('im'), 'UBOT')).toBe(false);
+    expect(isOwnedByMentionListener(mention('mpim'), 'UBOT')).toBe(false);
+  });
+
+  it('keeps a message that mentions nobody, or somebody else', () => {
+    expect(isOwnedByMentionListener(mention('channel', 'show leads'), 'UBOT')).toBe(false);
+    expect(isOwnedByMentionListener(mention('channel', '<@UOTHER> show leads'), 'UBOT')).toBe(false);
+    // A longer id that starts with the bot's is somebody else.
+    expect(isOwnedByMentionListener(mention('channel', '<@UBOT2> show leads'), 'UBOT')).toBe(false);
+  });
+
+  it('keeps every message when the bot user id is not known', () => {
+    expect(isOwnedByMentionListener(mention('channel'), undefined)).toBe(false);
+    expect(isOwnedByMentionListener(mention('channel'), '')).toBe(false);
+  });
+
+  it('keeps a message with no text', () => {
+    expect(isOwnedByMentionListener({ channel_type: 'channel' } as any, 'UBOT')).toBe(false);
+  });
+});
+
+describe('hasPendingClarification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('is false outside a thread, without a lookup', async () => {
+    expect(await hasPendingClarification({ channel: 'C1' } as any)).toBe(false);
+    expect(mockGetClarification).not.toHaveBeenCalled();
+  });
+
+  it('is true when the thread has a clarification waiting', async () => {
+    mockGetClarification.mockResolvedValue({ clarificationId: 'clarify_thread-1' } as any);
+
+    expect(await hasPendingClarification({ channel: 'C1', thread_ts: 'thread-1' } as any)).toBe(true);
+    expect(mockGetClarification).toHaveBeenCalledWith('C1', 'thread-1');
+  });
+
+  it('is false when the thread has none', async () => {
+    mockGetClarification.mockResolvedValue(null);
+
+    expect(await hasPendingClarification({ channel: 'C1', thread_ts: 'thread-1' } as any)).toBe(false);
+  });
+
+  it('does not take the clarification', async () => {
+    mockGetClarification.mockResolvedValue({ clarificationId: 'clarify_thread-1' } as any);
+
+    await hasPendingClarification({ channel: 'C1', thread_ts: 'thread-1' } as any);
+
+    expect(mockClaimClarification).not.toHaveBeenCalled();
   });
 });
 
