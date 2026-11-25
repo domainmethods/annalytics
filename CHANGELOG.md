@@ -25,6 +25,8 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ### Fixed
 
+- BigQuery decimals retain their exact digits in Slack tables, CSV exports and WhatsApp answers (#93). WhatsApp also formats SDK date and timestamp wrappers as text and preserves multi-field records (#150).
+
 - After the bot answers an @mention or `/anna` greeting or help request in a channel, an unmentioned follow-up question in that thread now gets an answer instead of being ignored (#53). Greeting replies, mention replies and `/anna` status messages now mark the thread in a new `thread_participation` collection, so this also holds when a run ends in an error without a saved answer. **Action required:** apply the new TTL policy (`thread_participation.expiresAt`) from `infra/firestore.ttls.json`; see README "Firestore TTL Policy".
 - A thread follow-up that was classified as a question about an existing answer (explain, refine or investigate) no longer starts a fresh SQL run when its handler fails (#48). The user gets an error with a trace ID instead; only a failed classification still falls back to the standard pipeline.
 - Switching a best-effort answer to Table or Summary (including the summary's raw-data fallback and its progress message) keeps the "data team is verifying it" warning, so an unverified result never looks like an ordinary one (#47). This also applies to answers saved before upgrading.

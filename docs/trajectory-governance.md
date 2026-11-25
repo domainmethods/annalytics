@@ -11,6 +11,8 @@ Update this document whenever a major product direction, feature deferral, bench
 
 ## Current State (as of 2026-11-23)
 
+The Slack and WhatsApp renderers and Slack CSV exports preserve exact BigQuery decimal text. WhatsApp displays existing SDK date and timestamp wrappers as their scalar values.
+
 The codebase is healthy: typecheck clean, the test suite passing, module boundaries respected, no dead exports. **The measurement this document gated everything on has now passed**: after the first acceptance run and repair re-run (both 2026-06-11, `NEEDS_REVISION`) and a 2026-06-12 confirmation slice that established the residual failure as deterministic, the narrowed repair landed (schema-context completeness in the dbt parser — bounded manifest∪catalog column union) and the post-repair re-run recorded **`ACCEPTED`** 2026-06-12 with zero scorecard failures (Evidence Log). The Tranche A branch rule re-arms: the next product tranche may add exactly one additional high-confusion ReferenceCard domain. The dominant risk shifts accordingly: from scope drift during repair to expansion outpacing evidence cadence — every new domain and every runtime-behavior promotion still requires its own benchmark slice before it ships. The 2026-07-02 reconciliation (Evidence Log) records the first realized instance of that risk, in channel form: the WhatsApp prototype grew an interactive control surface (commit `b7a6158`) without the same-change-set governance update the Maintenance Protocol requires; the prototype is now capped until its manual acceptance evidence is recorded (Current Decision #5). A 2026-11-18 full-codebase audit filed its findings as issues and the resulting defect-fix tranche (PRs #126–#149: transactional thread leases and rate limits, conversation-scoped thread state, the escalation resolution claim, bounded response persistence, final-SQL revalidation, expired-context handling, export quoting) is trust maintenance under guardrail #1; it changes no tranche, gate, or deferral (Evidence Log 2026-11-19). A 2026-11-23 review of the Slack status messages is the same kind of maintenance (elapsed time on long steps, staged discrepancy updates, a separate status message for a clarification answer). It fixed one defect it found (two replies could both take a clarification answer) and left five in the Code Debt Register. Two of the five were closed the same day: a mentioned thread reply handled by two listeners, and a narrow window the clarification fix left open. Three stay open: a Cancel button that a failed redraw leaves live, the heartbeat's share of Slack's rate budget, and the intake reply prompt, which is a trust risk. The listener fix added one narrower row: the cases where both listeners can still run (Evidence Log 2026-11-23).
 
 | Area | Status |
@@ -41,6 +43,7 @@ The codebase is healthy: typecheck clean, the test suite passing, module boundar
 6. **Template CI/deploy signal maintenance is approved as trust maintenance.** The active product queue is unchanged: second-domain selection still waits on real production feedback, and WhatsApp remains a gated prototype. The deploy workflow is allowed to change so the reusable template's `main` signal is not red merely because implementation-specific dbt artifacts are absent. Requested deploys still validate those artifacts strictly.
 7. **Shared BigQuery statement validation is trust maintenance.** The SELECT-only fix for issue #91 applies to the existing query and format follow-up paths.
 8. **Verified shares and totals (2026-11-22) are a gated output element, not an active tranche.** The Share column, Total row and leader share ship behind `ANSWER_SHARES_ENABLED=false` (Guardrail #1). The default flips only after the §7.2 manual acceptance slice passes, caveat (c) included (see the 2026-11-22 Evidence Log entry). Until then they don't count as product surface, and the second-domain queue above is unchanged.
+9. **BigQuery cell formatting is trust maintenance.** The fixes for #93 and #150 apply to the existing query answers and Slack CSV export under guardrail #1.
 
 ## Tranche Horizon
 
@@ -185,6 +188,8 @@ Every deferred item now carries its blocking condition. Reviving any item requir
 | Wide production-corpus ingestion | No privacy-safe feedback events yet | Privacy-safe event design accepted |
 
 The [approved model-refresh design](superpowers/specs/2026-11-18-model-refresh-validation-design.md) adds a separate public-data validation set for template defaults. Its TheLook setup and synthetic knowledge are fixtures for that set. The executed-result SQL comparator supports scoring in that set. The T3 queue still governs implementation-specific evaluation work.
+
+The WhatsApp formatting repairs in #93 and #150 apply to the capped prototype. Manual acceptance evidence still gates WhatsApp promotion and parity work.
 
 ## Product Guardrails
 
@@ -564,6 +569,12 @@ The full-path quality loop passed the clarified question to the supervisor twice
 - The first live refresh is pending. Follow the [model refresh runbook](model-refresh.md).
 - Stale-line repair: Current Decision #3 no longer calls the completed ReferenceCard repair branch the sole active tranche. It now points to second-domain selection (Current Decision #1), which the 2026-06-12 acceptance already recorded. No tranche order changes beyond T3 #1.
 - The template set measures SQL generation and supervisor review on schema-only questions and queries. Production knowledge for these nodes comes through File Search and the generator's citations.
+
+### 2026-11-19 - Exact BigQuery cell formatting (#93, #150)
+
+- Offline fixtures decoded by the BigQuery SDK showed quotes around decimals in both channels and CSV, plus JSON wrappers around date and timestamp values in WhatsApp.
+- The renderers now use the SDK decimal's fixed-point text. WhatsApp also uses the existing scalar unwrapping helper. Regression tests confirm that the renderer and CSV retain every significant digit and keep the fields of ordinary records.
+- Production WhatsApp, Slack-parity additions, and the next ReferenceCard domain remain deferred under their existing gates.
 
 ### 2026-11-19 - Classifier default (tv-v1 pilot)
 
