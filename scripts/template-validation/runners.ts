@@ -218,50 +218,88 @@ const templateScorers: Scorers = {
   },
 };
 
+export interface TemplateRunnerOptions {
+  /**
+   * Backoff before each retry of an item whose run hit a transient provider failure;
+   * its length is the retry count (`[]` aborts on the first failure).
+   */
+  retryDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
+  log?: (message: string) => void;
+}
+
+const DEFAULT_RETRY_DELAYS_MS = [10_000, 30_000] as const;
+
 export function createTemplateRunner<N extends NodeId>(
-  node: N, items: unknown[], env: TemplateEnv,
+  node: N, items: unknown[], env: TemplateEnv, options: TemplateRunnerOptions = {},
 ): () => Promise<CorpusRunResult> {
   const parsed = items.map(item => ITEM_SCHEMAS[node].parse(item)) as Item<N>[];
+  const delays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const retries = delays.length;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const log = options.log ?? ((message: string) => console.warn(message));
   return async () => {
     const perEntry: PerEntry[] = [];
     const nodeUsage: CorpusRunResult['nodeUsage'] = new Map();
-    const recordUsage = (record: UsageRecord) => {
-      const usage = nodeUsage.get(record.nodeId) ?? { latencies: [], inputTokens: 0, outputTokens: 0 };
-      usage.latencies.push(record.latencyMs);
-      usage.inputTokens += record.promptTokens;
-      usage.outputTokens += record.candidatesTokens + record.thoughtsTokens;
-      nodeUsage.set(record.nodeId, usage);
+    const commitUsage = (records: UsageRecord[]) => {
+      for (const record of records) {
+        const usage = nodeUsage.get(record.nodeId) ?? { latencies: [], inputTokens: 0, outputTokens: 0 };
+        usage.latencies.push(record.latencyMs);
+        usage.inputTokens += record.promptTokens;
+        usage.outputTokens += record.candidatesTokens + record.thoughtsTokens;
+        nodeUsage.set(record.nodeId, usage);
+      }
     };
     for (const item of parsed) {
-      const evidence: ItemEvidence = {};
-      const itemEnv: TemplateEnv = { ...env, async judge(text, fact) {
-        if (evidence.providerAbort) return false;
-        try {
-          return await env.judge(text, fact);
-        } catch (error) {
-          evidence.providerAbort ??= transientProviderFailure(error);
-          evidence.failure ??= { category: 'provider', code: 'judge-request' };
-          return false;
+      // A transient provider failure (timeout, 429, 5xx) re-runs the whole item from
+      // scratch; usage from a failed attempt is discarded so latency and cost reflect
+      // only the attempt that is scored. Retries exhausted → abort, never zero-fill.
+      for (let attempt = 0; ; attempt++) {
+        const outcome = await scoreItem(item);
+        if (!outcome.evidence.providerAbort) {
+          commitUsage(outcome.usage);
+          perEntry.push(outcome.entry);
+          break;
         }
-      } };
-      let score = 0;
-      try {
-        score = await withUsageSink(recordUsage, () => templateScorers[node](item, itemEnv, evidence), error => {
-          evidence.providerAbort ??= transientProviderFailure(error);
-          evidence.failure ??= { category: 'provider', code: 'model-request' };
-        });
-      } catch {
-        evidence.failure ??= { category: 'candidate', code: 'agent-output' };
+        if (attempt >= retries) throw outcome.evidence.providerAbort;
+        const delay = delays[attempt];
+        log(`  [retry] ${node}/${item.id}: transient provider failure (${outcome.evidence.providerAbort.status}); `
+          + `attempt ${attempt + 2} of ${retries + 1} in ${Math.round(delay / 1000)}s`);
+        await sleep(delay);
       }
-      if (evidence.providerAbort) throw evidence.providerAbort;
-      if (evidence.failure) score = 0;
-      perEntry.push({
-        id: item.id, clarificationPassed: node === 'clarification' && score === 1,
-        sqlGenMetric: score, overallScore: score, ...evidence,
-      });
     }
     return { perEntry, nodeUsage };
   };
+
+  async function scoreItem(item: Item<N>): Promise<{ evidence: ItemEvidence; usage: UsageRecord[]; entry: PerEntry }> {
+    const usage: UsageRecord[] = [];
+    const evidence: ItemEvidence = {};
+    const itemEnv: TemplateEnv = { ...env, async judge(text, fact) {
+      if (evidence.providerAbort) return false;
+      try {
+        return await env.judge(text, fact);
+      } catch (error) {
+        evidence.providerAbort ??= transientProviderFailure(error);
+        evidence.failure ??= { category: 'provider', code: 'judge-request' };
+        return false;
+      }
+    } };
+    let score = 0;
+    try {
+      score = await withUsageSink(record => { usage.push(record); }, () => templateScorers[node](item, itemEnv, evidence), error => {
+        evidence.providerAbort ??= transientProviderFailure(error);
+        evidence.failure ??= { category: 'provider', code: 'model-request' };
+      });
+    } catch {
+      evidence.failure ??= { category: 'candidate', code: 'agent-output' };
+    }
+    if (evidence.failure) score = 0;
+    const entry: PerEntry = {
+      id: item.id, clarificationPassed: node === 'clarification' && score === 1,
+      sqlGenMetric: score, overallScore: score, ...evidence,
+    };
+    return { evidence, usage, entry };
+  }
 }
 
 export async function verifyCrossPass(

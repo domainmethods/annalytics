@@ -27,6 +27,8 @@ import {
   formatValue,
 } from '../../src/handlers/responseOverrides.js';
 import { rootLogger } from '../../src/logging.js';
+import { buildTableBlocks } from '../../src/slack/blocks.js';
+import { verifyComposition } from '../../src/execution/composition.js';
 
 const mockGetCtx = vi.mocked(getSlackResponseContext);
 const mockValidate = vi.mocked(validateSql);
@@ -69,6 +71,7 @@ const baseCtx = {
 const queryResult = {
   rows: [{ region: 'US', revenue: 1000 }, { region: 'EU', revenue: 500 }],
   columnNames: ['region', 'revenue'],
+  columnTypes: ['STRING', 'INT64'],
   totalRows: 2,
   bytesProcessed: 2048,
   truncated: false,
@@ -154,6 +157,9 @@ describe('override handlers preserve assumptions', () => {
     const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
     expect(updated).toContain('order_status = completed');
     expect(updated).toContain('refine_assumptions');
+    // Same order as the original answer: the table leads, assumptions follow it.
+    expect(updated.indexOf('anna_view_table')).toBeGreaterThan(-1);
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_table'));
   });
 
   it('preserves assumptions + refine button when re-rendering as a summary', async () => {
@@ -162,6 +168,19 @@ describe('override handlers preserve assumptions', () => {
     const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
     expect(updated).toContain('order_status = completed');
     expect(updated).toContain('refine_assumptions');
+    // The summary leads, assumptions follow it (same order as the Table override).
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_summary'));
+    expect(updated.indexOf('anna_view_summary')).toBeGreaterThan(-1);
+  });
+
+  it('Summary fallback: the notice and table lead, assumptions follow them', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    mockGetCtx.mockResolvedValue({ ...baseCtx, assumptions: ['order_status = completed'] });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+    expect(updated.indexOf("Couldn't generate a summary")).toBeGreaterThan(-1);
+    expect(updated.indexOf('order_status = completed')).toBeGreaterThan(updated.indexOf('anna_view_table'));
+    expect(updated.indexOf('anna_view_table')).toBeGreaterThan(updated.indexOf("Couldn't generate a summary"));
   });
 });
 
@@ -251,6 +270,21 @@ describe('handleCsvOverride', () => {
     expect(csv).toContain('region,revenue');
     expect(csv).toContain('US,1000');
     expect(csv).toContain('EU,500');
+  });
+
+  it('after a CSV click on a Summary message, keeps Summary hidden and Table offered', async () => {
+    const summaryBlocks = [
+      { type: 'section', block_id: 'anna_view_summary', text: { type: 'mrkdwn', text: 'summary text' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_table_trace-abc' }, { type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', summaryBlocks, mockClient, overrideConfig);
+
+    const blocks = mockClient.chat.update.mock.calls[0][0].blocks as any[];
+    const ids = blocks.filter((b) => b.type === 'actions').flatMap((b) => b.elements.map((e: any) => e.action_id ?? ''));
+    expect(ids.some((id: string) => id.startsWith('override_table'))).toBe(true);
+    expect(ids.some((id: string) => id.startsWith('override_summary'))).toBe(false);
+    expect(ids.some((id: string) => id.startsWith('override_csv'))).toBe(false);
+    expect(blocks[0].block_id).toBe('anna_view_summary');
   });
 
   it('exports unsafe INT64 strings verbatim in scalar and nested cells', async () => {
@@ -440,7 +474,7 @@ describe('handleCsvOverride idempotency', () => {
   it('preserves a refine-assumptions actions block while dropping only the CSV/override actions', async () => {
     const currentBlocks = [
       { type: 'context', elements: [{ type: 'mrkdwn', text: '🔍 *Assumptions:* x' }] },
-      { type: 'actions', elements: [{ type: 'button', action_id: 'refine_assumptions', text: { type: 'plain_text', text: 'Wrong assumptions? Click to refine' } }] },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'refine_assumptions', text: { type: 'plain_text', text: 'Change assumptions' } }] },
       { type: 'section', text: { type: 'mrkdwn', text: 'table here' } },
       { type: 'actions', elements: [
         { type: 'button', action_id: 'thumbs_up_trace-abc' },
@@ -561,5 +595,190 @@ describe('missing response context', () => {
     await handleTableOverride('thread-1_msg-1', 'C1', 'msg-1', mockClient, overrideConfig);
     expect(mockClient.chat.update).not.toHaveBeenCalled();
     expect(mockClient.chat.postEphemeral).not.toHaveBeenCalled();
+  });
+});
+
+describe('override re-renders hide the button for the view on screen', () => {
+  const lastBlocksJson = () => JSON.stringify(mockClient.chat.update.mock.calls.at(-1)[0].blocks);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(baseCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(queryResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('Table override: no Table button, keeps Summary, and leads with the computed caption', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+    expect(updated).toContain('*US* has the highest revenue (1000), followed by EU (500).');
+  });
+
+  it('Table override: shows no caption when the lead-in is ineligible, even with a legacy persisted headline', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, headline: 'Revenue by region' });
+    mockExecute.mockResolvedValue({ ...queryResult, truncated: true });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).not.toContain('Revenue by region');
+    expect(updated).not.toContain('has the highest');
+  });
+
+  it('Summary override: no Summary button, keeps Table, and tags the summary view', async () => {
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).not.toContain('override_summary_');
+    expect(updated).toContain('override_table_');
+    expect(updated).toContain('anna_view_summary');
+  });
+
+  it('Summary fallback renders a table, so it hides Table and keeps Summary', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const updated = lastBlocksJson();
+    expect(updated).toContain("Couldn't generate a summary");
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+  });
+
+  it('CSV export keeps the current view: no Table button under a tagged table', async () => {
+    const currentBlocks = [
+      { type: 'table', block_id: 'anna_view_table', rows: [] },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).not.toContain('override_table_');
+    expect(updated).toContain('override_summary_');
+    expect(updated).not.toContain('override_csv_');
+  });
+
+  it('CSV export keeps the current view: no Summary button under a tagged summary', async () => {
+    const currentBlocks = [
+      { type: 'section', block_id: 'anna_view_summary', text: { type: 'mrkdwn', text: 'Direct leads.' } },
+      { type: 'actions', elements: [{ type: 'button', action_id: 'override_csv_trace-abc' }] },
+    ];
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', currentBlocks as any, mockClient, overrideConfig);
+    const updated = JSON.stringify(mockClient.chat.update.mock.calls[0][0].blocks);
+    expect(updated).not.toContain('override_summary_');
+    expect(updated).toContain('override_table_');
+    expect(updated).not.toContain('override_csv_');
+  });
+});
+
+describe('override re-renders with verified shares (ANSWER_SHARES_ENABLED)', () => {
+  const DISTINCT_SQL = 'SELECT ch, COUNT(DISTINCT session_key) AS n FROM `proj.ds.sessions` GROUP BY ch';
+  const COUNT_SQL = 'SELECT ch, COUNT(*) AS n FROM `proj.ds.sessions` GROUP BY ch';
+  const sharesResult = {
+    rows: [{ ch: 'Direct', n: 198 }, { ch: 'Organic', n: 120 }, { ch: 'Unassigned', n: 42 }],
+    columnNames: ['ch', 'n'],
+    columnTypes: ['STRING', 'INT64'],
+    totalRows: 3,
+    bytesProcessed: 2048,
+    truncated: false,
+  };
+  const sharesOn = { ...overrideConfig, answerSharesEnabled: true, currentUniqueKeys: () => ['proj.ds.sessions.session_key'] };
+  const keyedCtx = { ...baseCtx, generatedSql: DISTINCT_SQL, compositionUniqueKeys: ['proj.ds.sessions.session_key'] };
+  const lastBlocks = () => mockClient.chat.update.mock.calls.at(-1)[0].blocks as any[];
+  const tableCells = () => lastBlocks().find((b) => b.type === 'table').rows.map((r: any[]) => r.map((c) => c.text));
+  const compositionLogs = () => vi.mocked(rootLogger.info).mock.calls.filter(([, msg]) => msg === 'answer.composition');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(keyedCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(sharesResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockClient.filesUploadV2.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+  });
+
+  it('Table override renders the same Share column and Total row as the original answer', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    const original = buildTableBlocks(
+      sharesResult.rows, sharesResult.columnNames,
+      verifyComposition({ sql: DISTINCT_SQL, result: sharesResult, maxDisplayRows: 20, uniqueKeys: ['proj.ds.sessions.session_key'] }) as any,
+    );
+    expect(lastBlocks().find((b) => b.type === 'table')).toEqual(original[0]);
+    expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
+    expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
+    expect(lastBlocks()[0].text.text).toContain('55%');
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', eligible: true, measureKind: 'count', usedUniqueKeyCount: 1, surface: 'override_table', traceId: 'trace-abc' });
+  });
+
+  it('Table override on a legacy context without compositionUniqueKeys renders rank-only for COUNT(DISTINCT)', async () => {
+    const { compositionUniqueKeys: _omit, ...legacy } = keyedCtx;
+    mockGetCtx.mockResolvedValue(legacy);
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+    expect(lastBlocks()[0].text.text).toContain('has the highest');
+  });
+
+  it('Table override drops a stored key the loaded dbt metadata no longer declares', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, { ...sharesOn, currentUniqueKeys: () => ['proj.ds.other.id'] });
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, surface: 'override_table' });
+  });
+
+  it('Table override with no current metadata trusts no stored key', async () => {
+    const { currentUniqueKeys: _omit, ...noMetadata } = sharesOn;
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, noMetadata);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+  });
+
+  it('Table override with the flag off renders the Phase 1 table even with stored keys', async () => {
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    expect(tableCells()[0]).toEqual(['ch', 'n']);
+    expect(compositionLogs()).toHaveLength(0);
+  });
+
+  it('Table override: a 21-row result gets no Share column and no lead-in share', async () => {
+    mockGetCtx.mockResolvedValue({ ...baseCtx, generatedSql: COUNT_SQL });
+    const rows = Array.from({ length: 21 }, (_, i) => ({ ch: `c${i}`, n: 100 - i }));
+    mockExecute.mockResolvedValue({ ...sharesResult, rows, totalRows: 21 });
+    await handleTableOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(compositionLogs()[0][0]).toMatchObject({ eligible: false, reason: 'row_count' });
+    expect(JSON.stringify(lastBlocks())).not.toContain('"Share"');
+    expect(JSON.stringify(lastBlocks())).not.toContain('%');
+  });
+
+  it('Summary fallback table carries Share and Total', async () => {
+    mockGenerateContent.mockResolvedValue({ text: '' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(JSON.stringify(lastBlocks())).toContain("Couldn't generate a summary");
+    expect(tableCells()[0]).toEqual(['ch', 'n', 'Share']);
+    expect(tableCells().at(-1)).toEqual(['Total', '360', '100%']);
+    expect(compositionLogs()[0][0]).toMatchObject({ event: 'answer.composition', surface: 'override_summary_fallback', traceId: 'trace-abc' });
+  });
+
+  it('Summary LLM path is unchanged by the flag (same prompt, same blocks, no Share)', async () => {
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, overrideConfig);
+    const offPrompt = mockGenerateContent.mock.calls[0][0];
+    const offBlocks = lastBlocks();
+    vi.clearAllMocks();
+    mockGetCtx.mockResolvedValue(keyedCtx);
+    mockValidate.mockResolvedValue({ valid: true, layer: 'all', bytesProcessed: 2048 });
+    mockExecute.mockResolvedValue(sharesResult);
+    mockClient.chat.update.mockResolvedValue({});
+    mockGenerateContent.mockResolvedValue({ text: 'a summary' });
+    await handleSummaryOverride('thread-1_status-1', 'C-CHAN', 'msg-ts', mockClient, sharesOn);
+    expect(mockGenerateContent.mock.calls[0][0]).toEqual(offPrompt);
+    expect(lastBlocks()).toEqual(offBlocks);
+    expect(JSON.stringify(lastBlocks())).not.toContain('Share');
+    expect(compositionLogs()).toHaveLength(0);
+  });
+
+  it('CSV export never contains a Share column', async () => {
+    await handleCsvOverride('thread-1_status-1', 'C-CHAN', 'thread-1', 'msg-ts', 'U-CLICK', [], mockClient, sharesOn);
+    const csv = mockClient.filesUploadV2.mock.calls[0][0].file.toString('utf-8');
+    expect(csv.split('\n')[0]).toBe('ch,n');
+    expect(csv).not.toContain('Share');
+    expect(csv).not.toContain('%');
   });
 });

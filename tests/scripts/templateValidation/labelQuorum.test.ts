@@ -1,15 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { availableLabelers, checkTemplateRelations, executeTemplateSql } from '../../../scripts/template-validation/label-quorum.js';
 import * as runner from '../../../src/execution/runner.js';
 import { NODE_IDS, type NodeId } from '../../../src/agents/nodeProfiles.js';
 import { initBigQuery } from '../../../src/validation/dryRun.js';
-import { fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps } from '../../../scripts/template-validation/labelQuorum.js';
-import { hashItemInput, loadFixture, loadItems } from '../../../scripts/template-validation/items.js';
+import { draftExamples, fixtureMentionsDefect, labelNode, runLabelQuorum, type LabelRunDeps, type Provenance } from '../../../scripts/template-validation/labelQuorum.js';
+import { hashItemInput, loadFixture, loadItems, templateTargetCount } from '../../../scripts/template-validation/items.js';
 import { resultsEquivalent } from '../../../scripts/template-validation/resultEquivalence.js';
 import { buildRefreshRows, writeRefreshReport } from '../../../scripts/template-validation/refreshReport.js';
 import { loadLabelers, runLabeler, type SpawnFn } from '../../../scripts/template-validation/labelers.js';
@@ -733,8 +733,8 @@ it('reports a 1-of-40 chart corpus as underfilled even when its candidate scores
   });
   const provenance = await run({ nodes: ['chart'], targetCounts: {} });
   const baseline = { label: 'DEFAULT', metric: 1, e2e: 1, p95LatencyMs: 1, cost: 1 };
-  const chosen = { ...baseline, label: 'flash-lite/3.1@minimal', cost: 0.5 };
-  const chosenRung = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' } as const;
+  const chosen = { ...baseline, label: 'flash-lite/3.5@minimal', cost: 0.5 };
+  const chosenRung = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'minimal' } as const;
   const rows = buildRefreshRows([{
     nodeId: 'chart', baseline, chosen, chosenRung, stage1Winner: chosenRung,
     stage1: [chosen], stage2: [chosen], e2eCritical: false,
@@ -748,4 +748,201 @@ it('reports a 1-of-40 chart corpus as underfilled even when its candidate scores
   expect(markdown).toContain('| Accepted | Drop rate |');
   expect(markdown.split('\n').find(line => line.startsWith('| chart |')))
     .toContain('| 1 | 97.5% | false | underfilled corpus |');
+});
+
+describe('promotion runs', () => {
+  const promoted = { category: 'simple', text: 'Which warehouse ships the most returns?' };
+  const baseVersion = 'tv-v1';
+  const promote = (overrides: Partial<Parameters<typeof runLabelQuorum>[0]> = {}) => run({
+    promote: true, targetCounts: { slackIntake: loadItems('slackIntake', root).length + 1 }, ...overrides,
+  });
+
+  beforeEach(() => {
+    for (const dir of ['items', 'fixtures', 'quarantine']) {
+      cpSync(join('benchmarks/template-validation', dir), join(root, dir), { recursive: true });
+    }
+    // Strip promotion fields so the live set reads as an unpromoted base, whatever version is committed.
+    const { promotedFrom: _promotedFrom, ...frozen } = JSON.parse(readFileSync('benchmarks/template-validation/provenance.json', 'utf8')) as Provenance;
+    const perNode = Object.fromEntries(Object.entries(frozen.perNode).map(([node, { labeledIn: _labeledIn, ...entry }]) => [node, entry]));
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify({
+      ...frozen, perNode, version: baseVersion, drafter: 'claude',
+      members: labelers.map(cfg => ({ id: cfg.id, family: cfg.family, requestedModel: cfg.model, cliVersion: 'test', reportedModels: [] })),
+    }));
+    writeFileSync(join(root, 'VERSION'), 'tv-v2\n');
+    deps.runLabeler = vi.fn(async (_cfg, { prompt }) => ({
+      value: prompt.startsWith('Draft') ? { items: [promoted] } : { labels: [route] },
+      cached: false,
+    }));
+  });
+
+  const baseProvenance = () => JSON.parse(readFileSync(join(root, 'provenance.json'), 'utf8')) as Provenance;
+
+  it('grows the selected node and carries every other node forward with its digest', async () => {
+    const base = baseProvenance();
+    const before = Object.fromEntries(NODE_IDS.map(node => [node, readFileSync(join(root, 'items', `${node}.jsonl`), 'utf8')]));
+    const priorQuarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
+
+    const result = await promote();
+
+    expect(result).toMatchObject({ version: 'tv-v2', promotedFrom: baseVersion });
+    expect(baseProvenance()).toEqual(result);
+    const grown = result.perNode.slackIntake;
+    expect(grown).toMatchObject({
+      labeledIn: 'tv-v2', accepted: base.perNode.slackIntake.accepted + 1,
+      drafted: base.perNode.slackIntake.drafted + 1, quarantined: base.perNode.slackIntake.quarantined,
+    });
+    const items = loadItems('slackIntake', root, grown.itemsSha256);
+    expect(items.slice(0, -1).map(item => JSON.stringify(item) + '\n').join('')).toBe(before.slackIntake);
+    expect(items.at(-1)).toMatchObject({ text: promoted.text });
+    expect(readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8')).toBe(priorQuarantine);
+    for (const node of NODE_IDS.filter(node => node !== 'slackIntake')) {
+      expect(result.perNode[node]).toEqual({ labeledIn: baseVersion, ...base.perNode[node] });
+      expect(readFileSync(join(root, 'items', `${node}.jsonl`), 'utf8')).toBe(before[node]);
+      expect(loadItems(node, root, result.perNode[node].itemsSha256)).toHaveLength(result.perNode[node].accepted);
+    }
+  });
+
+  it('drafts supervisor items the frozen set does not already hold', async () => {
+    const base = baseProvenance();
+    const mutant = '/* mutant */';
+    deps.execute = vi.fn(async (sql: string) => ({ columnNames: ['n'], rows: [{ n: sql.includes(mutant) ? 2 : 1 }] }));
+    deps.runLabeler = vi.fn(async (_cfg, { prompt }) => {
+      const inputs = JSON.parse(prompt.split('\n\n').at(-1)!) as { candidateSql?: string; referenceSql?: string }[];
+      const field = (value: string | undefined, name: string): string => {
+        if (value === undefined) throw new Error(`prompt payload is missing ${name}`);
+        return value;
+      };
+      return {
+        cached: false,
+        value: prompt.startsWith('Mutate')
+          ? { items: inputs.map(({ referenceSql }) => ({ mutations: [`${field(referenceSql, 'referenceSql')} ${mutant}`] })) }
+          : { labels: inputs.map(({ candidateSql }) => ({ expectedVerdict: field(candidateSql, 'candidateSql').includes(mutant) ? 'FAIL' : 'PASS' })) },
+      };
+    });
+    const result = await promote({ nodes: ['supervisor'], targetCounts: { supervisor: base.perNode.supervisor.accepted + 2 } });
+    // Re-drafting a frozen PASS item would quarantine it as a duplicate and leave the target unmet.
+    expect(result.perNode.supervisor).toMatchObject({
+      accepted: base.perNode.supervisor.accepted + 2, quarantined: base.perNode.supervisor.quarantined,
+    });
+    // The frozen PASS items use the first two reference batches, so the new PASS item must come from a later one.
+    const added = loadItems('supervisor', root, result.perNode.supervisor.itemsSha256).slice(base.perNode.supervisor.accepted);
+    expect(added.map(item => item.expectedVerdict).sort()).toEqual(['FAIL', 'PASS']);
+  });
+
+  it('shows the frozen items to the drafter without their labels', async () => {
+    const seeds = loadItems('slackIntake', root);
+    await promote();
+    const draft = vi.mocked(deps.runLabeler).mock.calls.map(([, { prompt }]) => prompt).find(prompt => prompt.startsWith('Draft'));
+    expect(draft).toContain('Match the structure, style and difficulty of these existing items');
+    expect(draft).toContain(JSON.stringify(seeds[0].text));
+    expect(draft).not.toContain('expectedRoute');
+    expect(draft).not.toContain(seeds[0].id);
+  });
+
+  it('refuses to promote into the version it builds on', async () => {
+    writeFileSync(join(root, 'VERSION'), baseVersion + '\n');
+    await expect(promote()).rejects.toThrow('Bump VERSION before promoting');
+  });
+
+  it('refuses when a carried-forward item file drifted from its frozen digest', async () => {
+    const path = join(root, 'items', 'chart.jsonl');
+    writeFileSync(path, readFileSync(path, 'utf8').split('\n').slice(1).join('\n'));
+    await expect(promote()).rejects.toThrow('items/chart.jsonl does not match frozen set tv-v1');
+    expect(baseProvenance().version).toBe(baseVersion);
+  });
+
+  it('refuses a quorum or drafter that differs from the frozen set', async () => {
+    const base = baseProvenance();
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify({ ...base, drafter: 'codex' }));
+    await expect(promote()).rejects.toThrow('Promotion needs the quorum and drafter that labeled tv-v1');
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify({
+      ...base, members: base.members.map(member => ({ ...member, requestedModel: 'retired-model' })),
+    }));
+    await expect(promote()).rejects.toThrow('Promotion needs the quorum and drafter that labeled tv-v1');
+  });
+
+  it('keeps an earlier labeledIn on a node carried forward twice', async () => {
+    const base = baseProvenance();
+    base.perNode.chart = { ...base.perNode.chart, labeledIn: 'tv-v0' };
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify(base));
+    expect((await promote()).perNode.chart.labeledIn).toBe('tv-v0');
+  });
+
+  it('refuses a full run, no nodes, and a missing frozen set', async () => {
+    await expect(promote({ nodes: [...NODE_IDS] })).rejects.toThrow('a full run relabels every node');
+    await expect(promote({ nodes: [] })).rejects.toThrow('Promotion needs at least one node');
+    rmSync(join(root, 'provenance.json'));
+    await expect(promote()).rejects.toThrow('Promotion needs a frozen template set');
+  });
+
+  it('appends newly quarantined items after the frozen quarantine and totals the counts', async () => {
+    const priorQuarantine = JSON.stringify({ item: { category: 'simple', text: 'An older split item' }, labels: {} }) + '\n';
+    writeFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), priorQuarantine);
+    // Keep the fixture consistent: the frozen set reports the one prior quarantined item.
+    const base = baseProvenance();
+    base.perNode.slackIntake = { ...base.perNode.slackIntake, quarantined: 1 };
+    writeFileSync(join(root, 'provenance.json'), JSON.stringify(base));
+    const split = { category: 'edge_case', text: 'Is the returns number right or not?' };
+    deps.runLabeler = vi.fn(async (cfg, { prompt }) => ({
+      cached: false,
+      value: prompt.startsWith('Draft') ? { items: [promoted, split] }
+        : { labels: [route, cfg.id === 'claude' ? { expectedRoute: 'immediate_response' } : route] },
+    }));
+    const result = await promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length + 2 } });
+    const quarantine = readFileSync(join(root, 'quarantine', 'slackIntake.jsonl'), 'utf8');
+    expect(quarantine.startsWith(priorQuarantine)).toBe(true);
+    expect(JSON.parse(quarantine.slice(priorQuarantine.length))).toMatchObject({ item: { text: split.text } });
+    expect(result.perNode.slackIntake.quarantined).toBe(2);
+  });
+
+  it('refuses to publish when a carried-forward file drifts during the paid run', async () => {
+    const chart = join(root, 'items', 'chart.jsonl');
+    const label = deps.runLabeler;
+    deps.runLabeler = vi.fn(async (...args: Parameters<typeof label>) => {
+      writeFileSync(chart, readFileSync(chart, 'utf8').split('\n').slice(1).join('\n'));
+      return label(...args);
+    });
+    await expect(promote()).rejects.toThrow('items/chart.jsonl does not match frozen set tv-v1');
+    expect(baseProvenance().version).toBe(baseVersion);
+  });
+
+  it('refuses to publish when the frozen provenance changes during the paid run', async () => {
+    const path = join(root, 'provenance.json');
+    const label = deps.runLabeler;
+    let edited = false;
+    deps.runLabeler = vi.fn(async (...args: Parameters<typeof label>) => {
+      // Digests still match, so only the publish-time comparison can catch this edit.
+      if (!edited) {
+        edited = true;
+        const base = baseProvenance();
+        writeFileSync(path, JSON.stringify({ ...base, perNode: { ...base.perNode, chart: { ...base.perNode.chart, labeledIn: 'tv-v0' } } }));
+      }
+      return label(...args);
+    });
+    await expect(promote()).rejects.toThrow('Frozen template set changed during labeling');
+    expect(baseProvenance().version).toBe(baseVersion);
+  });
+
+  it('refuses a promotion whose target the frozen node already meets', async () => {
+    await expect(promote({ targetCounts: { slackIntake: loadItems('slackIntake', root).length } }))
+      .rejects.toThrow('raise templateTargetCount for slackIntake before promoting');
+    expect(deps.runLabeler).not.toHaveBeenCalled();
+  });
+
+  it('sizes ambiguityClassifier at 80 items so up to four flips stay within ε', () => {
+    expect(templateTargetCount('ambiguityClassifier')).toBe(80);
+    expect(templateTargetCount('slackIntake')).toBe(40);
+  });
+});
+
+describe('draftExamples over the frozen set', () => {
+  // Nodes whose stored items are not in their draft shape get no examples; pin which ones so a schema
+  // drift that silently empties a node's examples fails here.
+  const withoutExamples = new Set<NodeId>(['chart', 'summaryOverride', 'teachingCandidate']);
+
+  it.each(NODE_IDS)('%s', (node) => {
+    const items = loadItems(node);
+    expect(items.length).toBeGreaterThan(0);
+    expect(draftExamples(node, items)).toHaveLength(withoutExamples.has(node) ? 0 : items.length);
+  });
 });

@@ -1,5 +1,4 @@
 import type { WebClient } from '@slack/web-api';
-import type { KnownBlock } from '@slack/types';
 import { acquireThreadLock, releaseThreadLock } from '../state/threadLock.js';
 import { getClarificationState } from '../state/clarificationState.js';
 import { getEscalationByThread } from '../state/escalationState.js';
@@ -57,7 +56,7 @@ export async function preflightChecks(
           clarificationId: pendingClarification.clarificationId,
           // Echo the user's own wording, not a refinement's rewritten question (#44).
           originalQuestion: pendingClarification.supervisorQuestion ?? pendingClarification.originalQuestion,
-        }) as unknown as KnownBlock[],
+        }),
       });
       await releaseThreadLock(channel, threadTs, ownerToken);
       return false;

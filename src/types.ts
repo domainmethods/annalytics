@@ -19,8 +19,8 @@ export interface ValidationResult {
   bytesProcessed?: number;    // from dry run
   /**
    * Set by dryRunValidation for errors beyond invalidQuery and billingTierLimitExceeded,
-   * including accessDenied, notFound, and quotaExceeded. Lets a caller tell infrastructure
-   * failures apart from model errors.
+   * including accessDenied, notFound, and quotaExceeded, and when a dry run reports no usable
+   * byte count. Lets a caller tell infrastructure failures apart from model errors.
    */
   warehouseFailure?: true;
 }
@@ -28,6 +28,8 @@ export interface ValidationResult {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   columnNames: string[];
+  /** BigQuery type per column, aligned with columnNames; REPEATED adds a `[]` suffix. Absent when the schema is unavailable or misaligned. */
+  columnTypes?: string[];
   totalRows: number;          // full result count from the results response (at least rows.length)
   bytesProcessed: number;
   truncated: boolean;         // true if the result holds more rows than were returned
@@ -51,6 +53,14 @@ export interface ResponseContext {
   reasoningChain: string;
   generatedSql: string;
   explanation: string;
+  /**
+   * dbt unique keys (`project.dataset.table.column`; column lower-cased, table case kept) a verified
+   * composition proof relied on (COUNT(DISTINCT) on a key, or a many-to-one
+   * LEFT JOIN onto a keyed table), so the Table override re-verifies the same
+   * shares. Omitted when no key was used and absent on legacy
+   * records (Firestore rejects undefined).
+   */
+  compositionUniqueKeys?: string[];
   tablesUsed: string[];
   confidence: 'high' | 'medium' | 'low';
   // R9.3: Store all three confidence values for observability

@@ -7,6 +7,9 @@ export const TABLE_COLUMN_LIMIT = 20;
 export const TABLE_ROW_LIMIT = 100;
 export const TABLE_TEXT_LIMIT = 10000;
 
+/** Rows shown in a Slack table/summary answer; the rest are in the CSV export. */
+export const MAX_DISPLAY_ROWS = 20;
+
 // Slack rejects messages over 50 blocks. Cap SQL so the answer, SQL, and
 // controls always fit together (10 sections ≈ 29,000 characters of SQL).
 export const MAX_SQL_SECTIONS = 10;
@@ -16,13 +19,18 @@ export function boundedPreview(text: string): string {
   return text.length <= SECTION_TEXT_LIMIT ? text : text.slice(0, SECTION_TEXT_LIMIT - note.length - 4) + '\n```' + note;
 }
 
-/** Bound free text to one section, cutting at a word boundary when possible. */
+/**
+ * Bound free text to one section, cutting at a word boundary when possible.
+ * Escaped text must be bounded after escaping (escaping can grow it), so a cut never
+ * leaves half an entity: a trailing partial `&amp;` / `&lt;` / `&gt;` is dropped.
+ * Unescaped callers lose a literal trailing `&` at the cut, which is harmless.
+ */
 export function boundedText(text: string, limit = SECTION_TEXT_LIMIT): string {
   if (text.length <= limit) return text;
   const marker = '…';
   const head = text.slice(0, limit - marker.length);
   const space = head.lastIndexOf(' ');
-  return (space > limit / 2 ? head.slice(0, space) : head) + marker;
+  return (space > limit / 2 ? head.slice(0, space) : head).replace(/&(?:a(?:m(?:p)?)?|l(?:t)?|g(?:t)?)?$/, '').trimEnd() + marker;
 }
 
 // Show SQL verbatim across up to MAX_SQL_SECTIONS sections; each section
@@ -59,4 +67,13 @@ export function sqlSections(sql: string, prefix = '', blockId?: string): Section
     });
   }
   return blocks;
+}
+
+/**
+ * Slack mrkdwn entity escapes, for text Slack would otherwise parse as control
+ * syntax: a "<!here>" or "<url|label>" from a model or a stored question would
+ * ping or link instead of rendering as written.
+ */
+export function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

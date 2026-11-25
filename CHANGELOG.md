@@ -15,6 +15,14 @@ tag that main commit `vX.Y.Z` and create a GitHub release from its changelog sec
 
 ## Unreleased
 
+### Changed
+
+- Answer cards are easier to read (#244). A table answer now leads with a caption that names the top row and runner-up, computed from the table itself and silent whenever the ranking can't be proven (a cut, tied or time-series result). When it is silent the table has no caption: the model-written headline, written before the query runs, is never shown above a table. The button for the view already on screen is hidden, the assumptions line reads as one clause list, and the refine button now reads "Change assumptions". In model-written headlines, including on single-value answers, Slack link or mention syntax now renders literally. 👍/👎, refine, Show SQL and the "Showing X of Y rows" note are unchanged.
+
+### Added
+
+- Behind `ANSWER_SHARES_ENABLED` (default off), a table answer can show a `Share` column, a `Total` row and the leader's share, only when the result is proven to be an additive split of a whole (#244). Anything unproven renders as before; CSV, the Summary text and WhatsApp never get shares.
+
 ### Fixed
 
 - BigQuery decimals retain their exact digits in Slack tables, CSV exports and WhatsApp answers (#93). WhatsApp also formats SDK date and timestamp wrappers as text and preserves multi-field records (#150).

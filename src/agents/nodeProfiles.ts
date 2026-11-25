@@ -24,25 +24,40 @@ export interface NodeProfile {
 // Shared constants — safe because getNodeProfile NEVER hands out a DEFAULTS
 // reference directly; every return is a fresh spread (see below).
 //
-// MEASURED vs PROVISIONAL. Two install-invariant classifier nodes (slackIntake,
-// followUpClassifier) are MEASURED: the judge-free floor-up sweep
-// (scripts/universal-sweep.ts, benchmarks/results/universal-sweep-2026-06-08.md)
-// scored exact-match route/intent accuracy across the full ladder and found BOTH
-// perfect (1.000) at every rung — including the cheapest model, flash-lite/3.1.
-// Flat-at-ceiling means the task sits below the model-difficulty floor, so floor-up
-// takes the cheapest rung (CLASSIFIER_LITE) rather than paying for unused capability.
+// Classifiers, sized on the frozen tv-v1 set (2026-11-22, ε 0.01):
+//  - slackIntake: flash-lite/3.5@low. The sweep picked flash-lite/3.1@minimal (1.000);
+//    flash-lite/3.5 also scored 1.000 (at high, p95 2.5s). The owner kept 3.5 because
+//    Google lists it as the replacement for gemini-3.1-flash-lite, which has an earliest
+//    shutdown of 2027-05-07. @low is from the 2026-11-19 pilot (0.975) and was not
+//    re-walked on the frozen set. Gemini 4 Pro models lose on the 8s intake budget.
+//  - followUpClassifier: flash/4-hydrogen@low. Stage 1 put Hydrogen at 1.000 at high
+//    (p95 3.6s; the old default scored 0.889 at high). The sweep's cost pick was
+//    flash/3@medium (1.000, p95 6.5s); the owner chose Hydrogen because Google lists
+//    gemini-3-flash-preview as superseded by gemini-3.6-flash. A Hydrogen thinking walk
+//    (same day, ε 0.01) scored low, medium, high and default all 1.000; low was fastest
+//    (p95 3.0s vs 4.3-4.8s at high) and cheapest (~30% below high).
+//  - ambiguityClassifier: flash/4-hydrogen@high, the sweep's pick on tv-v2 (79 items,
+//    2026-11-22, ε 0.025). Stage 1 put Hydrogen first at high (0.861; the old
+//    flash-lite/3.5@low default scored ~0.65). Hydrogen's thinking walk: high 0.861
+//    (p95 11.5s), medium and default 0.823 (~7.8s), low 0.810 (4.7s); only high is
+//    within ε. Its latency is off the user's path: the pipeline posts the clarification
+//    first and labels it in the background. pro/4-carbon was not measured (provider
+//    timeouts on two attempts).
 //
 // The remaining levels are PROVISIONAL role-based HEURISTICS, not measured (tiers
 // are NOT provisional — they encode real domain knowledge: flash for classify/format,
 // pro for generate/review). Thinking scales with the openness of the reasoning —
 //   minimal → closed-set classification / structured extraction / reformatting
+//             (the classifiers above are excepted; see their notes)
 //   low     → light judgment over provided context
 //   default → hard open generation & critique (let the model manage its own budget)
 // dbtStatus/chart/summaryOverride stay at flash/3 (un-measured: the universal corpus
 // only labels intake + follow-up routing). The three pro reasoning nodes are corpus-
 // limited on the SQL path (ε too large on the 12-question corpus to size safely) and
 // stay model-managed — see docs/superpowers/plans/2026-06-07-node-sizing-eval-goal.md.
-const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' };
+const CLASSIFIER_LITE: NodeProfile = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'low' };
+const HYDROGEN_LOW: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'low' };
+const HYDROGEN_HIGH: NodeProfile = { tier: 'flash', version: '4-hydrogen', thinkingLevel: 'high' };
 const FLASH_MINIMAL: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'minimal' };
 const FLASH_LOW: NodeProfile = { tier: 'flash', version: '3', thinkingLevel: 'low' };
 const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: 'default' };
@@ -51,10 +66,13 @@ const PRO_DEFAULT: NodeProfile = { tier: 'pro', version: '3.1', thinkingLevel: '
 // Template-set results use MEASURED for install-invariant nodes and TEMPLATE-MEASURED
 // for install-coupled starting points. PROVISIONAL denotes a heuristic pick.
 const DEFAULTS: Record<NodeId, NodeProfile> = {
-  // MEASURED — perfect at flash-lite/3.1 across the whole ladder (judge-free floor-up)
-  slackIntake: CLASSIFIER_LITE, followUpClassifier: CLASSIFIER_LITE,
-  // PROVISIONAL — closed-set ambiguity typing, not yet sized.
-  ambiguityClassifier: CLASSIFIER_LITE,
+  // MEASURED — tv-v1, 2026-11-22. slackIntake's @low is from the pilot (its thinking
+  // axis was not walked on the frozen set); followUpClassifier's @low is from a Hydrogen
+  // thinking walk. Both models are owner overrides of the sweep's cost tie-break for
+  // model-sunset risk; see the classifier notes above.
+  slackIntake: CLASSIFIER_LITE, followUpClassifier: HYDROGEN_LOW,
+  // MEASURED — tv-v2, 2026-11-22 (the sweep's model and thinking pick).
+  ambiguityClassifier: HYDROGEN_HIGH,
   // minimal — closed-set routing / structured selection / reformatting (un-measured)
   dbtStatus: FLASH_MINIMAL, chart: FLASH_MINIMAL, summaryOverride: FLASH_MINIMAL,
   // low — light open judgment over provided context

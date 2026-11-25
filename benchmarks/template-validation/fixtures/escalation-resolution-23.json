@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-23",
+  "originalQuestion": "Why are so many shipping times showing as zero hours?",
+  "clarifiedQuestion": "For orders shipped March 1–7, 2025 UTC and delivered before April 1 UTC, what was the mean transit time in hours by UTC ship date? Exclude deliveries recorded before shipment.",
+  "humanResponse": "The draft rounded each trip down to whole days, so a 23-hour trip contributed zero hours. Measure each trip in seconds, average those values, then convert the mean to hours.\n\n```sql\nSELECT DATE(shipped_at, 'UTC') AS ship_date,\n       ROUND(AVG(TIMESTAMP_DIFF(delivered_at, shipped_at, SECOND)) / 3600, 2) AS mean_hours\nFROM `tv_thelook.orders`\nWHERE shipped_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND shipped_at < TIMESTAMP '2025-03-08 00:00:00 UTC'\n  AND delivered_at >= shipped_at\n  AND delivered_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\nGROUP BY ship_date\nORDER BY ship_date ASC\nLIMIT 7\n```",
+  "failedSql": "SELECT DATE(shipped_at, 'UTC') AS ship_date,\n       ROUND(AVG(TIMESTAMP_DIFF(delivered_at, shipped_at, DAY)) * 24, 2) AS mean_hours\nFROM `tv_thelook.orders`\nWHERE shipped_at >= TIMESTAMP '2025-03-01 00:00:00 UTC'\n  AND shipped_at < TIMESTAMP '2025-03-08 00:00:00 UTC'\n  AND delivered_at >= shipped_at\n  AND delivered_at < TIMESTAMP '2025-04-01 00:00:00 UTC'\nGROUP BY ship_date\nORDER BY ship_date ASC\nLIMIT 7",
+  "supervisorNotes": null
+}

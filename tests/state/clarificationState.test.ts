@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   saveClarificationState,
   getClarificationState,
+  claimClarificationState,
   deleteClarificationState,
+  recordAmbiguityLabel,
 } from '../../src/state/clarificationState.js';
 
 const mockSet = vi.fn();
@@ -12,10 +14,16 @@ const mockDoc = vi.fn(() => ({ set: mockSet, delete: mockDelete }));
 const mockWhere = vi.fn();
 const mockLimit = vi.fn();
 const mockCollection = vi.fn(() => ({ doc: mockDoc, where: mockWhere }));
+const mockTxGet = vi.fn();
+const mockTxUpdate = vi.fn();
+const mockTxDelete = vi.fn();
+const mockRunTransaction = vi.fn((fn: (tx: unknown) => Promise<unknown>) =>
+  fn({ get: mockTxGet, update: mockTxUpdate, delete: mockTxDelete }));
 
 vi.mock('../../src/state/firestore.js', () => ({
   getDb: vi.fn(() => ({
     collection: mockCollection,
+    runTransaction: mockRunTransaction,
   })),
 }));
 
@@ -156,6 +164,64 @@ describe('conversation scoping', () => {
   });
 });
 
+describe('claimClarificationState', () => {
+  const pending = (overrides: Record<string, unknown> = {}) => ({
+    clarificationId: 'clarify-123',
+    threadTs: '1234.5678',
+    channel: 'C123',
+    originalQuestion: 'Show me revenue',
+    clarifyingMessageTs: 'msg-1',
+    state: 'awaiting_reply',
+    expiresAt: { toDate: () => new Date(Date.now() + 60 * 60 * 1000) },
+    ...overrides,
+  });
+  // What the lookup by thread returns: it can still show a clarification that
+  // another reply is taking at the same moment.
+  const lookupFinds = (docs: unknown[]) => {
+    mockLimit.mockReturnValue({ get: vi.fn().mockResolvedValue({ empty: docs.length === 0, docs }) });
+  };
+  const lookupFindsPending = () => lookupFinds([{ data: () => pending(), ref: { delete: vi.fn() } }]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhere.mockReturnValue({ where: vi.fn().mockReturnValue({ limit: mockLimit }) });
+  });
+
+  it('hands over a pending clarification and deletes it in the same transaction', async () => {
+    lookupFindsPending();
+    mockTxGet.mockResolvedValue({ exists: true, data: () => pending() });
+
+    const claimed = await claimClarificationState('C123', '1234.5678');
+
+    expect(claimed).toMatchObject({ clarificationId: 'clarify-123', originalQuestion: 'Show me revenue' });
+    expect(mockDoc).toHaveBeenCalledWith('clarify-123');
+    expect(mockTxDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives nothing to a reply that found the clarification after another reply took it', async () => {
+    lookupFindsPending();
+    mockTxGet.mockResolvedValue({ exists: false, data: () => undefined });
+
+    await expect(claimClarificationState('C123', '1234.5678')).resolves.toBeNull();
+    expect(mockTxDelete).not.toHaveBeenCalled();
+  });
+
+  it('leaves a later clarification that reused the id', async () => {
+    lookupFindsPending();
+    mockTxGet.mockResolvedValue({ exists: true, data: () => pending({ clarifyingMessageTs: 'msg-2' }) });
+
+    await expect(claimClarificationState('C123', '1234.5678')).resolves.toBeNull();
+    expect(mockTxDelete).not.toHaveBeenCalled();
+  });
+
+  it('starts no transaction when no clarification is pending', async () => {
+    lookupFinds([]);
+
+    await expect(claimClarificationState('C123', '1234.5678')).resolves.toBeNull();
+    expect(mockRunTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('deleteClarificationState', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -168,5 +234,33 @@ describe('deleteClarificationState', () => {
     expect(mockCollection).toHaveBeenCalledWith('clarification_state');
     expect(mockDoc).toHaveBeenCalledWith('clarify-123');
     expect(mockDelete).toHaveBeenCalled();
+  });
+});
+
+describe('recordAmbiguityLabel', () => {
+  const label = { ambiguityType: 'org_knowledge' as const, ambiguityDomain: 'revenue', ambiguityQuestion: 'Which revenue table?' };
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('writes the label onto the same pending clarification', async () => {
+    mockTxGet.mockResolvedValue({ exists: true, data: () => ({ state: 'awaiting_reply', clarifyingMessageTs: 'msg-1' }) });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(true);
+    expect(mockDoc).toHaveBeenCalledWith('clarify-123');
+    expect(mockTxUpdate).toHaveBeenCalledWith(expect.anything(), label);
+  });
+
+  it('skips a clarification the user already answered', async () => {
+    mockTxGet.mockResolvedValue({ exists: false, data: () => undefined });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(false);
+    expect(mockTxUpdate).not.toHaveBeenCalled();
+  });
+
+  it('skips a later clarification that reused the id', async () => {
+    mockTxGet.mockResolvedValue({ exists: true, data: () => ({ state: 'awaiting_reply', clarifyingMessageTs: 'msg-2' }) });
+
+    await expect(recordAmbiguityLabel('clarify-123', 'msg-1', label)).resolves.toBe(false);
+    expect(mockTxUpdate).not.toHaveBeenCalled();
   });
 });

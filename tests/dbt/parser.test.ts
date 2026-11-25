@@ -395,3 +395,110 @@ describe('dbt artifact schema-version warnings', () => {
     ]);
   });
 });
+
+describe('parseDbtArtifacts uniqueColumns', () => {
+  const MODEL = 'model.pkg.sessions';
+  const OTHER = 'model.pkg.visits';
+
+  function modelNode(id: string, name: string) {
+    return {
+      resource_type: 'model',
+      name,
+      schema: 'ds',
+      database: 'proj',
+      alias: name,
+      relation_name: `\`proj\`.\`ds\`.\`${name}\``,
+      description: '',
+      columns: {},
+      config: { materialized: 'table' },
+      depends_on: { nodes: [] },
+      tags: [],
+    };
+  }
+
+  function uniqueTest(over: Record<string, unknown> = {}, col = 'session_key') {
+    return {
+      resource_type: 'test',
+      test_metadata: { name: 'unique', kwargs: { column_name: col } },
+      attached_node: MODEL,
+      config: {},
+      depends_on: { nodes: [MODEL] },
+      ...over,
+    };
+  }
+
+  function parse(tests: Record<string, unknown>) {
+    const m = {
+      metadata: { dbt_schema_version: 'https://schemas.getdbt.com/dbt/manifest/v12.json' },
+      nodes: {
+        [MODEL]: modelNode(MODEL, 'sessions'),
+        [OTHER]: modelNode(OTHER, 'visits'),
+        ...tests,
+      },
+    };
+    const out = parseDbtArtifacts(m, { nodes: {} });
+    return out.find(t => t.name === 'proj.ds.sessions')!;
+  }
+
+  it('reads a unique test via attached_node', () => {
+    expect(parse({ 't1': uniqueTest() }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('falls back to a single-model depends_on when attached_node is absent', () => {
+    const t = uniqueTest();
+    delete (t as Record<string, unknown>).attached_node;
+    expect(parse({ t1: t }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('prefers column_name on the node and lower-cases/dedupes/sorts', () => {
+    const result = parse({
+      a: uniqueTest({ column_name: 'Session_Key' }),
+      b: uniqueTest(),
+      c: uniqueTest({}, 'Alpha'),
+    });
+    expect(result.uniqueColumns).toEqual(['alpha', 'session_key']);
+  });
+
+  it.each([
+    ['not_null', uniqueTest({ test_metadata: { name: 'not_null', kwargs: { column_name: 'session_key' } } })],
+    ['dbt_utils namespace', uniqueTest({ test_metadata: { name: 'unique_combination_of_columns', namespace: 'dbt_utils', kwargs: { column_name: 'session_key' } } })],
+    ['namespaced unique', uniqueTest({ test_metadata: { name: 'unique', namespace: 'pkg', kwargs: { column_name: 'session_key' } } })],
+    ['conditional where', uniqueTest({ config: { where: 'x > 1' } })],
+    ['disabled', uniqueTest({ config: { enabled: false } })],
+    ['two models', (() => { const t = uniqueTest({ depends_on: { nodes: [MODEL, OTHER] } }); delete (t as Record<string, unknown>).attached_node; return t; })()],
+    ['unknown attached_node', uniqueTest({ attached_node: 'model.pkg.nope', depends_on: { nodes: [MODEL] } })],
+    ['severity warn', uniqueTest({ config: { severity: 'warn' } })],
+    ['error_if tolerance', uniqueTest({ config: { error_if: '>10' } })],
+    ['warn_if tolerance', uniqueTest({ config: { warn_if: '>5' } })],
+    ['custom fail_calc', uniqueTest({ config: { fail_calc: 'case when count(*) > 5 then count(*) else 0 end' } })],
+    ['non-string fail_calc', uniqueTest({ config: { fail_calc: 0 } })],
+    ['expression column', uniqueTest({}, 'lower(x)')],
+    ['backticked column', uniqueTest({}, '`session_key`')],
+    ['column_name vs kwargs mismatch', uniqueTest({ column_name: 'email', test_metadata: { name: 'unique', kwargs: { column_name: 'lower(email)' } } })],
+    ['no column', uniqueTest({ test_metadata: { name: 'unique', kwargs: {} } })],
+  ])('ignores %s', (_label, test) => {
+    const result = parse({ t1: test });
+    expect(result.uniqueColumns).toBeUndefined();
+    expect('uniqueColumns' in result).toBe(false);
+  });
+
+  it('keeps ERROR severity and default-equivalent thresholds', () => {
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { error_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { fail_calc: 'COUNT( * )' } }) }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('keeps dbt default manifest config (severity ERROR, error_if/warn_if !=0)', () => {
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR', error_if: '!=0', warn_if: '!=0' } }) }).uniqueColumns).toEqual(['session_key']);
+    expect(parse({ a: uniqueTest({ config: { severity: 'ERROR', error_if: '!= 0', warn_if: '!= 0' } }) }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('keeps matching column_name and kwargs.column_name case-insensitively', () => {
+    expect(parse({ a: uniqueTest({ column_name: ' Session_Key ' }) }).uniqueColumns).toEqual(['session_key']);
+  });
+
+  it('accepts null or empty namespace and empty where', () => {
+    expect(parse({ t1: uniqueTest({ test_metadata: { name: 'unique', namespace: null, kwargs: { column_name: 'session_key' } }, config: { where: '' } }) }).uniqueColumns)
+      .toEqual(['session_key']);
+  });
+});

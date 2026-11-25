@@ -1,4 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// Pass-through spy: behavior is the real decision rule; tests can inspect the call args.
+vi.mock('../../scripts/node-sweep-decision.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../scripts/node-sweep-decision.js')>();
+  return { ...actual, pickWithinEpsilon: vi.fn(actual.pickWithinEpsilon) };
+});
 import {
   parseArgs,
   nodeCost,
@@ -9,6 +15,7 @@ import {
   type NodeOutcome,
 } from '../../scripts/node-sweep.js';
 import type { PointScore, SweepProfile } from '../../scripts/node-sweep-types.js';
+import { pickWithinEpsilon } from '../../scripts/node-sweep-decision.js';
 import { defaultProfileForNode, NODE_IDS, type NodeId, type ThinkingLevel } from '../../src/agents/nodeProfiles.js';
 import type { ModelTier } from '../../src/agents/modelConfig.js';
 
@@ -32,13 +39,20 @@ describe('template sweep arguments', () => {
 // Each swept node derives its baseline from the REAL default (defaultProfileForNode)
 // so "landed back on the default" is meaningful. Only sqlGenerator is TIER-SENSITIVE:
 // its metric collapses far below its ε gate off the `pro` tier (and so does e2e),
-// which is what keeps a reasoning node pinned to pro while flat nodes downsize. All
-// other nodes are FLAT — quality is independent of model/thinking — so Stage 1 takes
-// the cheapest model (flash-lite) and Stage 2 trims thinking to `minimal`.
+// which is what keeps a reasoning node pinned to pro while flat nodes downsize.
+// slackIntake is DEFAULT-SEEKING (below). All other nodes are FLAT — quality is
+// independent of model/thinking — so Stage 1 takes the cheapest model (flash-lite)
+// and Stage 2 trims thinking to `minimal`.
 
 const TIER_SENSITIVE = new Set<NodeId>(['sqlGenerator']);
+// DEFAULT-SEEKING nodes lose quality off their default's model version or below its
+// thinking level. The penalty is built in, so the search can only land back on the
+// default: it exercises the sameAsDefault → no-override guard for a default that is not
+// the cheapest point. It says nothing about real model rankings.
+const DEFAULT_SEEKING = new Set<NodeId>(['slackIntake']);
 const OFF_PRO_METRIC = 0.40; // sqlGenMetric drop off pro — dwarfs ε(metric)≈0.02
 const OFF_PRO_E2E = 0.40;    // e2e drop off pro for tier-sensitive nodes
+const OFF_DEFAULT_E2E = 0.40; // e2e drop off the default for default-seeking nodes
 const BASE_OVERALL = 4.30;
 const BASE_SQLMETRIC = 0.95;
 
@@ -82,6 +96,13 @@ function makeRunCorpusOnce(nodes: NodeId[], corpusSize = 12): () => Promise<Corp
     let e2eDelta = 0;
     for (const node of nodes) {
       if (TIER_SENSITIVE.has(node) && eff[node].tier !== 'pro') e2eDelta -= OFF_PRO_E2E;
+      if (DEFAULT_SEEKING.has(node)) {
+        const def = defaultProfileForNode(node);
+        // Compared by mock token cost, so `default` (300) counts as at least `low`.
+        if (eff[node].tier !== def.tier || eff[node].version !== def.version || THINK_TOKENS[eff[node].level] < THINK_TOKENS[def.thinkingLevel]) {
+          e2eDelta -= OFF_DEFAULT_E2E;
+        }
+      }
     }
     const sqlTier = eff['sqlGenerator'].tier;
     const sqlMetricDelta = sqlTier === 'pro' ? 0 : -OFF_PRO_METRIC;
@@ -170,20 +191,35 @@ describe('runSweep — two-stage coordinate isolation', () => {
     expect(result.outcomes[0].baseline.cost).toBe(9.00);
   });
 
+  it('gates Stage 2 against the best Stage 1 saw, not just the Stage 2 points', async () => {
+    const spy = vi.mocked(pickWithinEpsilon);
+    spy.mockClear();
+    const r = await sweep(['clarification']);
+    const o = r.outcomes[0];
+    const stage2Call = spy.mock.calls.find((args) => args[3] === 'latency');
+    expect(stage2Call?.[4]).toEqual({
+      metric: Math.max(...o.stage1.map((p) => p.metric)),
+      e2e: Math.max(...o.stage1.map((p) => p.e2e)),
+    });
+  });
+
   it('reports the Stage-1 thinking anchor it held fixed', async () => {
     const r = await sweep(['clarification']);
     expect(r.stage1Anchor).toBe('high');
   });
 
-  it('Stage 1 evaluates EVERY non-retired Gemini 3.x model, every one at the fixed anchor (axis isolation)', async () => {
+  it('Stage 1 evaluates EVERY non-retired model, every one at the fixed anchor (axis isolation)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    expect(o.stage1).toHaveLength(6);
+    expect(o.stage1).toHaveLength(10);
     // Every Stage-1 point holds thinking at the anchor — only the model varies.
     for (const p of o.stage1) expect(parseLabel(p.label).level).toBe('high');
     // Every registered model appears.
     const models = o.stage1.map(p => { const x = parseLabel(p.label); return `${x.tier}/${x.version}`; });
-    expect(new Set(models)).toEqual(new Set(['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'pro/3.1']));
+    expect(new Set(models)).toEqual(new Set([
+      'flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
+      'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon',
+    ]));
   });
 
   it('Stage 2 holds the winning model fixed and walks every thinking level incl. `default` (axis isolation)', async () => {
@@ -232,13 +268,24 @@ describe('runSweep — two-stage coordinate isolation', () => {
   it('downsizes a tier-insensitive node to the cheapest model and trims thinking (clarification → flash-lite/minimal)', async () => {
     const r = await sweep(['clarification']);
     const o = r.outcomes[0];
-    // Stage 1: every model is quality-equal → cheapest tier wins.
+    // Stage 1: every model is quality-equal → cheapest tier wins, skipping
+    // flash-lite/3.1 (cheaper, but it has a dated shutdown in the registry).
     expect(o.stage1Winner.tier).toBe('flash-lite');
     // Stage 2: thinking is quality-equal → fastest (minimal) wins.
     expect(o.chosenRung).toBeDefined();
     expect(o.chosenRung!.tier).toBe('flash-lite');
-    expect(o.chosenRung!.version).toBe('3.1');
+    expect(o.chosenRung!.version).toBe('3.5');
     expect(o.chosenRung!.thinkingLevel).toBe('minimal');
+  });
+
+  it('ignores a registry sunset when MODEL_ID_OVERRIDES points the coordinate at another model', async () => {
+    vi.stubEnv('MODEL_ID_OVERRIDES', JSON.stringify({ 'flash-lite/3.1': 'gemini-3.5-flash-lite' }));
+    try {
+      const o = (await sweep(['clarification'])).outcomes[0];
+      expect(`${o.stage1Winner.tier}/${o.stage1Winner.version}`).toBe('flash-lite/3.1');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('keeps a tier-sensitive node on pro (the quality gate excludes cheap tiers)', async () => {
@@ -250,8 +297,8 @@ describe('runSweep — two-stage coordinate isolation', () => {
   });
 
   it('keeps the DEFAULT (no change) when the search lands back on the node\'s existing default', async () => {
-    // slackIntake's default is the cheapest, fastest point (flash-lite/3.1@minimal),
-    // so the flat search reproduces it exactly → sameAsDefault → no override emitted.
+    // slackIntake is DEFAULT-SEEKING in the mock: its best point is its default
+    // (flash-lite/3.5@low), so the search reproduces it → sameAsDefault → no override.
     const r = await sweep(['slackIntake']);
     const o = r.outcomes[0];
     const def = defaultProfileForNode('slackIntake');

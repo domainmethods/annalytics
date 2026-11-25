@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildAnsweredClarificationBlocks,
   buildClarificationBlocks,
   buildCancelFailedBlocks,
   buildPendingClarificationBlocks,
@@ -66,6 +67,33 @@ describe('buildClarificationBlocks', () => {
     expect(actions).toBeDefined();
     expect((actions as any).elements[0].action_id).toBe('clarification_cancel');
     expect((actions as any).elements[0].value).toBe('clar_1');
+  });
+});
+
+describe('buildAnsweredClarificationBlocks', () => {
+  const questions = [
+    'Are you looking at gross or net revenue?',
+    'What time period — this month or all time?',
+  ];
+
+  it('keeps the introduction and the questions exactly as they were asked', () => {
+    const asked = buildClarificationBlocks({
+      clarificationId: 'clar_1',
+      clarifyingQuestions: questions,
+      originalQuestion: 'Show me revenue',
+    });
+
+    const answered = buildAnsweredClarificationBlocks(questions);
+
+    expect(answered).toHaveLength(3);
+    expect(answered).toEqual(asked.filter((b: any) => b.type === 'section'));
+  });
+
+  it('drops the cancel button and the reply hint', () => {
+    const json = JSON.stringify(buildAnsweredClarificationBlocks(questions));
+
+    expect(json).not.toContain('clarification_cancel');
+    expect(json).not.toContain('Reply with your choices');
   });
 });
 

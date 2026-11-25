@@ -26,6 +26,23 @@ describe('pickWithinEpsilon', () => {
       expect(pickWithinEpsilon(cands, 0.02, 0.3, 'cost').label).toBe('pro');
     });
 
+    it('ranks a model with a scheduled shutdown after viable models without one', () => {
+      const cands = [
+        pt({ label: 'dated-lite', metric: 0.90, cost: 10, scheduledShutdown: true }),
+        pt({ label: 'lite', metric: 0.90, cost: 15 }),
+        pt({ label: 'flash', metric: 0.90, cost: 30 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.1, 'cost').label).toBe('lite');
+    });
+
+    it('still picks a dated model when it is the only viable one, and lets it set the bar', () => {
+      const cands = [
+        pt({ label: 'dated-lite', metric: 0.95, cost: 10, scheduledShutdown: true }),
+        pt({ label: 'lite', metric: 0.90, cost: 15 }), // 0.05 under the dated best > ε
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.1, 'cost').label).toBe('dated-lite');
+    });
+
     it('breaks a cost tie by higher quality, then lower latency', () => {
       const cands = [
         pt({ label: 'a', metric: 0.90, e2e: 8.0, cost: 50, p95LatencyMs: 900 }),
@@ -69,6 +86,53 @@ describe('pickWithinEpsilon', () => {
         pt({ label: 'minimal', metric: 0.70, e2e: 8.0, p95LatencyMs: 400 }), // 0.22 metric drop > ε
       ];
       expect(pickWithinEpsilon(cands, 0.02, 0.1, 'latency').label).toBe('high');
+    });
+  });
+
+  describe('reference (Stage 2 inherits the best Stage 1 saw)', () => {
+    // The 2026-11-22 dbtStatus shape: Stage 1's best was 1.000, its winner 0.955,
+    // ε = 0.057. Against Stage 2's own best (0.963) the 0.931 point was viable;
+    // against the shared bar it is not, so the pick stays within ε of 1.000.
+    const stage2 = [
+      pt({ label: 'minimal', metric: 0.958, e2e: 0.958, p95LatencyMs: 1106 }),
+      pt({ label: 'low', metric: 0.963, e2e: 0.963, p95LatencyMs: 1395 }),
+      pt({ label: 'high', metric: 0.955, e2e: 0.955, p95LatencyMs: 3692 }),
+      pt({ label: 'default', metric: 0.931, e2e: 0.931, p95LatencyMs: 977 }),
+    ];
+
+    it('stacks the two allowances without a reference', () => {
+      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency').label).toBe('default');
+    });
+
+    it('gates against the earlier stage best so the losses cannot stack', () => {
+      const pick = pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 1, e2e: 1 });
+      expect(pick.label).toBe('minimal');
+      expect(1 - pick.metric).toBeLessThanOrEqual(0.0573);
+    });
+
+    it('applies the reference to the e2e gate independently', () => {
+      const cands = [
+        pt({ label: 'slow', metric: 0.9, e2e: 8.0, p95LatencyMs: 2000 }),
+        pt({ label: 'fast', metric: 0.9, e2e: 7.85, p95LatencyMs: 400 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency').label).toBe('fast');
+      expect(pickWithinEpsilon(cands, 0.02, 0.2, 'latency', { metric: 0.9, e2e: 8.1 }).label).toBe('slow');
+    });
+
+    it('falls back to the stage own bar, not the fastest point, when the reference excludes everything', () => {
+      // Stage 1 fell back, so its best (1.0) is out of reach for every Stage 2 point.
+      const cands = [
+        pt({ label: 'high', metric: 0.90, e2e: 0.90, p95LatencyMs: 3000 }),
+        pt({ label: 'low', metric: 0.89, e2e: 0.89, p95LatencyMs: 1500 }),
+        pt({ label: 'default', metric: 0.70, e2e: 0.70, p95LatencyMs: 900 }),
+      ];
+      expect(pickWithinEpsilon(cands, 0.05, 0.05, 'latency', { metric: 1, e2e: 1 }).label).toBe('low');
+    });
+
+    it('is a no-op when the reference is below the stage best', () => {
+      // Same pick as the no-reference case above: the stage's own best sets the bar.
+      expect(pickWithinEpsilon(stage2, 0.0573, 0.0573, 'latency', { metric: 0.5, e2e: 0.5 }).label)
+        .toBe('default');
     });
   });
 

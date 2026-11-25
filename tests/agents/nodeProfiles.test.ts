@@ -2,10 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // flash/3 nodes — the un-measured minimal/low roles still pinned to flash-preview.
 const FLASH_NODES = ['clarification','dbtStatus','metaQuestion','chart','teachingCandidate','summaryOverride'] as const;
-// MEASURED classifier nodes — the judge-free floor-up sweep found them perfect at
-// every rung, so the cheapest model (flash-lite/3.1) is the right-sized default.
-const CLASSIFIER_LITE_NODES = ['slackIntake','followUpClassifier'] as const;
-const PROVISIONAL_CLASSIFIER_LITE_NODES = ['ambiguityClassifier'] as const;
+// Classifier nodes on flash-lite/3.5@low (slackIntake measured on tv-v1 2026-11-22).
+// The Hydrogen classifiers are tested separately.
+const CLASSIFIER_LITE_NODES = ['slackIntake'] as const;
 const PRO_NODES = ['sqlGenerator','supervisor','discrepancy'] as const;
 
 describe('nodeProfiles', () => {
@@ -16,17 +15,24 @@ describe('nodeProfiles', () => {
     for (const n of FLASH_NODES) expect(resolveNodeModel(n)).toBe('gemini-3-flash-preview');
   });
 
-  it('defaults the measured classifier nodes to gemini-3.1-flash-lite (floor-up pick)', async () => {
-    const { resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    for (const n of CLASSIFIER_LITE_NODES) expect(resolveNodeModel(n)).toBe('gemini-3.1-flash-lite');
+  it('defaults slackIntake to gemini-3.5-flash-lite at low thinking', async () => {
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    for (const n of CLASSIFIER_LITE_NODES) {
+      expect(resolveNodeModel(n)).toBe('gemini-3.5-flash-lite');
+      expect(getNodeProfile(n).thinkingLevel).toBe('low');
+    }
   });
 
-  it('defaults the un-sized ambiguity classifier to gemini-3.1-flash-lite provisionally', async () => {
+  it('defaults followUpClassifier to gemini-4-hydrogen at low thinking', async () => {
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    for (const n of PROVISIONAL_CLASSIFIER_LITE_NODES) {
-      expect(resolveNodeModel(n)).toBe('gemini-3.1-flash-lite');
-      expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
-    }
+    expect(resolveNodeModel('followUpClassifier')).toBe('gemini-4-hydrogen');
+    expect(getNodeProfile('followUpClassifier').thinkingLevel).toBe('low');
+  });
+
+  it('defaults ambiguityClassifier to gemini-4-hydrogen at high thinking', async () => {
+    const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
+    expect(resolveNodeModel('ambiguityClassifier')).toBe('gemini-4-hydrogen');
+    expect(getNodeProfile('ambiguityClassifier').thinkingLevel).toBe('high');
   });
 
   it('defaults every Pro node to gemini-3.1-pro-preview', async () => {
@@ -37,11 +43,12 @@ describe('nodeProfiles', () => {
   it('assigns provisional role-based thinking levels (minimal/low for flash, default for pro)', async () => {
     const { getNodeProfile } = await import('../../src/agents/nodeProfiles.js');
     // minimal — closed-set routing / structured selection / reformatting
-    for (const n of ['slackIntake', 'followUpClassifier', 'ambiguityClassifier', 'dbtStatus', 'chart', 'summaryOverride'] as const) {
+    for (const n of ['dbtStatus', 'chart', 'summaryOverride'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('minimal');
     }
-    // low — light open judgment over provided context
-    for (const n of ['clarification', 'metaQuestion', 'teachingCandidate'] as const) {
+    // low — light open judgment over provided context, plus slackIntake
+    // (the Hydrogen classifiers are tested on their own)
+    for (const n of ['slackIntake', 'clarification', 'metaQuestion', 'teachingCandidate'] as const) {
       expect(getNodeProfile(n).thinkingLevel).toBe('low');
     }
     // default — hard reasoning nodes stay model-managed
@@ -91,7 +98,7 @@ describe('nodeProfiles', () => {
   });
 
   it('coerces an unsupported thinking level to `default` but KEEPS the explicitly-overridden model', async () => {
-    // slackIntake's default is flash-lite/3.1@minimal. Override the model to pro/3.1,
+    // slackIntake's default is flash-lite/3.5@low. Override the model to pro/3.1,
     // which RESOLVES fine but rejects `minimal` (only the Flash family supports it).
     // isValidPartial passes the override (valid strings) and the resolvability guard
     // passes too (pro/3.1 is real) — only the NEW capability guard catches it. The fix
@@ -107,14 +114,14 @@ describe('nodeProfiles', () => {
 
   it('coerces an INHERITED unsupported level when a tier-only override lands on an incompatible model', async () => {
     // The incompatible level is usually an accident of the merge: {tier:'pro',version:'3.1'}
-    // with no thinkingLevel inherits slackIntake's default 'minimal' → pro/3.1@minimal.
+    // with no thinkingLevel inherits dbtStatus's default 'minimal' → pro/3.1@minimal.
     // The guard coerces to `default` so the bare model override still works end-to-end.
     vi.stubEnv('NODE_PROFILE_OVERRIDES', JSON.stringify({
-      slackIntake: { tier: 'pro', version: '3.1' },
+      dbtStatus: { tier: 'pro', version: '3.1' },
     }));
     const { getNodeProfile, resolveNodeModel } = await import('../../src/agents/nodeProfiles.js');
-    expect(resolveNodeModel('slackIntake')).toBe('gemini-3.1-pro-preview');
-    expect(getNodeProfile('slackIntake').thinkingLevel).toBe('default');
+    expect(resolveNodeModel('dbtStatus')).toBe('gemini-3.1-pro-preview');
+    expect(getNodeProfile('dbtStatus').thinkingLevel).toBe('default');
   });
 
   it('keeps an override whose thinking level IS supported by the resolved model', async () => {

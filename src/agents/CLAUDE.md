@@ -31,7 +31,8 @@ reviewing and applying the template results.
 ## Reading a sweep result — two traps
 
 - **Flat-at-ceiling ≠ flat-at-floor.** Both look "flat across rungs," opposite meaning.
-  Classifiers flat at **1.000** = cheapest model already wins → downsize is safe.
+  Classifiers flat at **1.000** on the 2026-06-08 corpus = cheapest model already wins
+  *on that corpus* → downsize was safe there; a harder set can separate them (below).
   `clarification` flat at **0.083** = every model (incl. pro/3.1/high) scores the same
   *low* value → no evidence the cheap model is *adequate*, only that it's no worse on a
   corpus that barely tests it. A flat-at-floor result blocks a default change.
@@ -41,7 +42,9 @@ reviewing and applying the template results.
   back the cheapest point as a fake downsize. An earlier run printed "ACCEPTED — downsize
   all three"; only `clarification` (ε=0.01) was real. **For template results,
   ε > 0.05 on the 0–1 metric blocks a change.** For install-corpus sizing, grow
-  the corpus if ε exceeds a meaningful quality delta.
+  the corpus if ε exceeds a meaningful quality delta. The ε figures above (`sqlGenerator` 0.33, `supervisor` 2.85, `clarification` 0.01) used the old max-per-case band;
+  since 2026-11-21 `computeEpsilon` measures noise on the mean (`2·√Σd²/n` over paired diffs, centered on 0),
+  because one flipped case under the old band tied every candidate (governance Evidence Log).
 
 ## Two-stage coordinate isolation (the sweep search shape)
 
@@ -78,6 +81,23 @@ requires enough cases to bound ε.
 `slackIntake`/`followUpClassifier` have objectively-checkable labels (route/intent), so
 `scripts/universal-sweep.ts` sizes them with **exact-match accuracy and no LLM judge** —
 immune to the ε(e2e) judge noise that sinks the SQL-path reasoning nodes. Both scored
-1.000 at every rung → `flash-lite/3.1`/minimal template default (`CLASSIFIER_LITE`).
+1.000 at every rung on the 2026-06-08 corpus, which was too easy to separate models.
+The frozen tv-v1 sweep (2026-11-22, ε 0.01) measured both, plus `ambiguityClassifier`.
+`slackIntake` stays at `flash-lite/3.5`@low and `followUpClassifier` moved to
+`flash/4-hydrogen`@low. Both are owner overrides of the sweep's cost tie-break,
+made for model-sunset risk rather than for score. `ambiguityClassifier` was
+re-measured on tv-v2 (79 items, ε 0.025) and moved to `flash/4-hydrogen`@high, the
+sweep's pick (0.861). Its latency doesn't reach users: the pipeline posts the
+clarification first and records the label in the background (governance Evidence
+Log, 2026-11-22).
+**Sunsets live in the registry.** A `RegisteredModel` can carry `sunset`
+(`shutdownDate`, `replacement`), copied by hand from
+https://aistudio.google.com/docs/deprecations. Stage 1's cost tie-break ranks a model
+with a `shutdownDate` after every other viable model, though it still sets the quality
+bar. The refresh report withholds a dated pick and notes a dateless one, and
+`model:discover` lists both and fails when a template default is within 90 days of its
+shutdown. The page is still the source: re-read it during every refresh.
+For intake, latency matters as much as accuracy: models that blow the 8s
+`INTAKE_TIMEOUT_MS` lose to smaller ones, so higher thinking is not free here.
 Keep corpora template-safe (generic metrics, no client names/IDs); `benchmarks/results/`
 is gitignored on purpose.

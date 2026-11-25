@@ -41,7 +41,7 @@ Slack Event → ack() → preflightChecks (lock + clarification + escalation) �
   1. Clarification (classifyQuestion → LOW suspends pipeline with follow-up questions)
   1a. dbt_status Route (route=dbt_status → bypass SQL gen, query dbt_run_history, Flash formats answer)
   1b. INFORMATION_SCHEMA Fallback (non-dbt tables → query I_S COLUMN_FIELD_PATHS → build minimal TableContext with ⚠️ warning)
-  2. Thread Context (conversations.replies → last 4 msgs, 4K char limit)
+  2. Thread Context (conversations.replies → last 4 msgs, 4K char limit; the request's own status message is left out via `excludeTs`)
   3. SQL Generation + Supervisor Loop (generateSql → supervisor review → retry)
   3b. Escalation Decision (if exhausted: park_wait or best_effort_verify → save state, post to escalation channel, return)
   4. Validation (L1 static → L2 AST → L3 BigQuery dry run → L4 cost gate, short-circuit on failure; the final SQL is always re-validated right before execution, even when the quality loop already validated it)
@@ -64,7 +64,18 @@ These boundaries are enforced by convention and must not be violated:
 
 The pipeline receives two Slack timestamps that serve different purposes:
 - **`threadTs`**: Thread identity. Used for state (locks, ResponseContext), thread context retrieval, reply threading. Slack timestamps are only unique within a conversation, so thread state is always keyed by `channel` + `threadTs` (`conversationThreadKey()` / `findOwnedDoc()` in `src/state/threadScope.ts`); never key or look up thread state by `threadTs` alone.
-- **`statusMsgTs`**: The bot's status message. Used exclusively for `chat.update()` calls. Never conflated with thread identity.
+- **`statusMsgTs`**: The bot's status message. Used exclusively for `chat.update()` calls. Never conflated with thread identity. A clarification answer gets a new status message (`startClarificationResume()` in `handlers/messageHandler.ts`); the clarifying questions stay in the thread, redrawn without their Cancel button. It reuses the clarifying message only when the new one can't be posted or the saved state has no questions.
+
+### Status Messages
+
+Status text is written to the status message in place, and the answer later overwrites the same message. Pipeline and discrepancy status goes through `createStatusReporter()` (`src/slack/statusReporter.ts`):
+
+- `set(text)` writes are sequential and never reject; a failed write is logged, not fatal.
+- `withHeartbeat(work)` wraps a long step (the fast path, the quality loop, query execution). It rewrites the current status with the time since the request started (`Researching the best approach... (20s)`), every 10s in the first minute and every 30s after that (`(1m)`, `(1m 30s)`), and it does not return until every write it started has settled. A clarification resume is a new request, so its time counts from the user's answer, not from their first question.
+- Set a step's status **inside** its region, so it starts with the time already elapsed instead of dropping the suffix until the next tick.
+- Write the answer or a failure message **after** the region: text written through the reporter inside a region gets the elapsed suffix, and outside one `set()` writes it as given. The answer and the pipeline's catch-all error use a direct `chat.update`; a text-only failure message may use `set()`.
+- A rate-limited status write is not a failed one. The Slack client is on its defaults, so it waits for `Retry-After` and retries, and a region waits for that write before it returns (Code Debt Register, `docs/trajectory-governance.md`).
+- When the thread is read after the status message is posted, pass `excludeTs` to `buildThreadContext()`, or the status message is taken for the message being answered.
 
 ### Singleton Initialization
 
@@ -91,22 +102,26 @@ These are called at startup in `src/app.ts` and must also be called in integrati
 
 ### Preflight Guards
 
-All entry points (commands, mentions, message handler) call `preflightChecks(channel, threadTs, client)` before launching the pipeline. This shared guard checks in order:
+All entry points (commands, and the flow that mentions and messages share, `handleSlackRequest()`) call `preflightChecks(channel, threadTs, client)` before launching the pipeline. This shared guard checks in order:
 
 1. **Thread lock** — prevents concurrent pipeline runs in the same thread
 2. **Pending clarification** — thread is waiting for user's clarifying answer
 3. **Pending escalation** — thread is waiting for data team response
 
+A reply that answers a pending clarification is consumed before preflight, whether or not it @mentions the bot. The order is lock, then claim. A thread reply that finds a pending clarification (`hasPendingClarification()`, a read) takes the thread lock first, then takes the clarification with a transactional claim (`claimClarificationState()`), so only one reply resumes and the resumed run has the thread. When another run holds the lock, the answer is not taken: it stays pending and the reply is asked, at that point, to send the answer again (`CLARIFICATION_ANSWER_NOT_TAKEN_TEXT`), with no rate-limit count and no second try at the lock. It does not get preflight's "still working on your previous question" notice: no run that is going will use that answer, so the user would wait for a reply that never comes. When the claim finds nothing (another reply took it), the lock is released and the reply is handled as an ordinary thread message. Only when the lock can't be tried at all (logged as `clarification.resume.lock_failed`) does the resume run without one.
+
 ### Follow-Up Intent Routing
 
-Thread replies are classified by `followUpClassifier.ts` before entering the pipeline, except a reply from a user with a pending `refinement_targets` doc (left by a refine prompt, `handlers/refinePrompt.ts`): that reply skips intake and classification and goes straight to `refinement` against the answer they clicked. Both the `message` path and @mention thread replies (`app_mention`) consume targets. If the target can't be saved, the prompt isn't posted and the user is asked to retry; if it can't be read, the user is told and nothing runs, and the target stays for their retry. The `followUpRouter.ts` handler dispatches:
+Thread replies are classified by `followUpClassifier.ts` before entering the pipeline, except a reply from a user with a pending `refinement_targets` doc (left by a refine prompt, `handlers/refinePrompt.ts`): that reply skips intake and classification and goes straight to `refinement` against the answer they clicked. Mentioned and unmentioned thread replies consume targets through the same code (`handleSlackRequest()`). If the target can't be saved, the prompt isn't posted and the user is asked to retry; if it can't be read, the user is told and nothing runs, and the target stays for their retry. The `followUpRouter.ts` handler dispatches:
 
 - **`meta_question`** → Flash LLM call with persisted ResponseContext (no SQL, no supervisor)
 - **`refinement`** → Full pipeline re-run with composite question + previous SQL as hint
-- **`discrepancy`** → Diagnostic SQL via Pro + validation + lightweight supervisor review + execution
+- **`discrepancy`** → Diagnostic SQL via Pro + validation + lightweight supervisor review + execution, with a status update per stage
 - **`new_query`** → Standard pipeline
 
 If a `meta_question`/`refinement`/`discrepancy` handler fails, the user gets an error with a trace ID; it never falls back to a fresh SQL run. Only a failed *classification* falls back to the standard pipeline.
+
+A reply is classified once, in `handleSlackRequest()` before the pipeline; the pipeline does not classify again. The result is logged as `followup.classified` (intent, reasoning, channel, thread), and a failed classification as `followup.classify_failed`. An @mention reply is classified only when the bot had already replied in that thread; a first mention in a thread the bot was not in goes straight to the pipeline. A clarification or escalation resume is not classified and writes neither line.
 
 ### Escalation (Human-in-the-Loop)
 
@@ -121,7 +136,7 @@ Human replies in the escalation thread are matched via `checkEscalationResponse(
 
 ### Response Buttons
 
-Every response includes: feedback (thumbs up/down), reasoning toggle, and override buttons (Table, Summary, CSV). Reasoning toggle loads from persisted ResponseContext — no LLM call. Override buttons re-execute the original SQL (BigQuery 24h cache) through the validation pipeline. If the answer's ResponseContext is missing or logically expired (`isExpiredResponseContext()`: `expiresAt`, or `createdAt` + retention for legacy records), controls reply privately (`chat.postEphemeral`) instead of overwriting the answer. Every request-time reader of `response_context` applies that same expiry rule, because TTL deletion lags by up to ~72h.
+Every response includes: feedback (thumbs up/down), reasoning toggle, and override buttons (Table, Summary, CSV). The button for the view already on screen is hidden (no Table under a table, no Summary under a summary): result blocks carry `block_id` `anna_view_table` / `anna_view_summary`, and every re-render reads the current view back from the message via `currentViewFromBlocks()` (a legacy table answer is still recognised by its native `table` block; other untagged legacy messages keep all three). Table answers lead with a caption from `src/slack/answerLeadIn.ts`: a rank-only sentence computed from the rows (never an LLM), silent unless provable (no truncation, ties, OFFSET, QUALIFY or a window, a LIMIT that isn't a final measure-DESC top-N, a non-numeric measure type, an ascending sort on the measure, a period-like label such as a date or `Q1 2026`, a grand-total label such as `Total`, a named label Slack would render as formatting such as `*Acme*`, or a named row past the 20 displayed); when it is silent there is no caption (the generator `headline` is never shown above a table, only on single-value answers). Behind `ANSWER_SHARES_ENABLED` (default off), a table answer, the Table override and the Summary fallback table gain a `Share` column, a `Total` row and a leader share in the caption only when `verifyComposition()` (`src/execution/composition.ts`) proves the full result is an additive partition of a whole; anything unproven renders exactly as before, and CSV and the Summary LLM text never get shares. Reasoning toggle loads from persisted ResponseContext — no LLM call. Override buttons re-execute the original SQL (BigQuery 24h cache) through the validation pipeline. If the answer's ResponseContext is missing or logically expired (`isExpiredResponseContext()`: `expiresAt`, or `createdAt` + retention for legacy records), controls reply privately (`chat.postEphemeral`) instead of overwriting the answer. Every request-time reader of `response_context` applies that same expiry rule, because TTL deletion lags by up to ~72h.
 
 ### Firestore Collections
 
@@ -131,15 +146,15 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 | `rate_limits` | `userId` | Per-user rate limiting (fixed 1-hour window that starts at the first admitted request and resets once it expires; admit-and-count in one transaction) |
 | `slack_event_dedupe` | Slack event id | Slack retry dedupe, claimed via `create()`; `expiresAt` TTL (30s while pending, 24h once visible) |
 | `sample_rows` | physical table name | Cached sample rows for SQL-generator prompts; 7-day staleness, refreshed in the background at startup. Overwritten in place, so it has no TTL |
-| `response_context` | `channel:threadTs_statusMsgTs` (Slack; pre-#30 answers: `threadTs_statusMsgTs`), `conversationId_statusMsgTs` (WhatsApp) | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d) |
-| `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume) |
+| `response_context` | `channel:threadTs_statusMsgTs` (Slack; pre-#30 answers: `threadTs_statusMsgTs`), `conversationId_statusMsgTs` (WhatsApp) | Pipeline result persistence + thread participation detection (`expiresAt` TTL, `RESPONSE_CONTEXT_RETENTION_DAYS`, default 90d). `compositionUniqueKeys` (only when a share proof used dbt unique keys; omitted otherwise) lets the Table override re-verify the same shares; keys the loaded dbt manifest no longer declares are dropped on re-render |
+| `clarification_state` | `clarificationId` | Pending clarification state (suspend/resume); a Slack reply takes it with a transactional claim (read and delete in one transaction); stores the clarifying questions so the answered message can be redrawn without its Cancel button |
 | `escalation_state` | `escalationId` | Escalation state for async human-in-the-loop (suspend/resume); `pipelineState` `awaiting_human` → `resolving` (atomic claim by a reply or ✅), or `awaiting_human` → `timed_out` (sweep timeout, also transactional); `retainUntil` TTL (90d) — its `expiresAt` is the escalation timeout, not retention |
 | `config` | `metadata_state` | `/health/doctor` Firestore connectivity probe target (cheap read; the doc need not exist). The dbt-metadata-freshness writer was never wired; its dead module was removed 2026-06-19. |
 | `information_schema_cache` | `dataset.table` | INFORMATION_SCHEMA results cache (24h TTL) |
 | `dbt_run_history` | `runId_model` | dbt build results from run_results.json (90d TTL) |
 | `teaching_candidates` | `candidateId` | Teaching candidates from escalation resolutions |
 | `feedback_notes` | `traceId_userId` or `channel:threadTs_userId` | 👎 → "Other" free-text corrections; `status: pending\|reviewed`, drained by `scripts/promote-teachings.ts` |
-| `refinement_targets` | `channel:threadTs_userId` | The answer a user picked to refine ("Wrong assumptions?" / "Not what I asked"); consumed by their next thread reply; `expiresAt` TTL (30m) |
+| `refinement_targets` | `channel:threadTs_userId` | The answer a user picked to refine ("Change assumptions" / "Not what I asked"); consumed by their next thread reply; `expiresAt` TTL (30m) |
 | `pending_notifications` | `notif_<candidateId>` | User-facing notifications enqueued by `scripts/promote-teachings.ts`, delivered by the lifecycle sweep; `expiresAt` TTL (30d) |
 | `thread_participation` | `channel:threadTs` | Marks channel threads the bot replied in, written by mention replies and `/anna` status messages even when no answer is saved (greetings/help, errors), so unmentioned follow-ups there still reach the bot; checked before `response_context` (`expiresAt` TTL, same window as `response_context`) |
 | `whatsapp_event_dedupe` | event doc id | WhatsApp webhook delivery dedupe (gated prototype); `expiresAt` TTL |
@@ -182,7 +197,8 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
 
 ### Bolt.js
 
-- `app_mention` events go to a separate Bolt listener (`registerMentions`), not the `message` handler
+- `app_mention` events go to a separate Bolt listener (`registerMentions`), not the `message` handler. It is a thin adapter: it removes the bot's own mention from the text (`stripBotMention()`; the other people named in it stay, because the text can be a clarification answer or an analyst's guidance) and calls `handleSlackRequest()` (`handlers/messageHandler.ts`), the one flow both listeners run. New request handling goes in that flow, not in a listener.
+- A channel message that @mentions the bot arrives as both an `app_mention` event and a `message` event, with different event ids, so event dedupe does not join them. The `app_mention` listener owns it and the `message` listener returns early (`isOwnedByMentionListener()`: `channel_type` is `channel` or `group`, and the text contains `<@botUserId>`, from Bolt's `context.botUserId`). Direct conversations get no `app_mention`, so they stay with the `message` listener, and with no bot user id nothing is handed over.
 - `message` events never have `type: 'app_mention'` — don't check for it in `shouldRespond`
 - After filtering `bot_id`/`subtype`, narrow message events to `GenericMessageEvent` from `@slack/types`
 
@@ -196,7 +212,7 @@ Every response includes: feedback (thumbs up/down), reasoning toggle, and overri
   ```
 - `vi.clearAllMocks()` resets mock return values — re-setup in `beforeEach`
 - BigQuery job metadata is at `job.metadata.statistics` (not `job.statistics`)
-- Firestore `create()` throws error code 6 (ALREADY_EXISTS) for contention on event dedupe (`slack_event_dedupe`, `whatsapp_event_dedupe`) — test with `{ code: 6 }`. Thread leases, rate limits and escalation claims use `db.runTransaction()` instead, so mock `runTransaction` with a fake `transaction.get/set/update/delete`.
+- Firestore `create()` throws error code 6 (ALREADY_EXISTS) for contention on event dedupe (`slack_event_dedupe`, `whatsapp_event_dedupe`) — test with `{ code: 6 }`. Thread leases, rate limits, escalation claims and clarification claims use `db.runTransaction()` instead, so mock `runTransaction` with a fake `transaction.get/set/update/delete`.
 
 ## Testing
 

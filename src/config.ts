@@ -55,6 +55,10 @@ export interface AppConfig {
     maxBytesProcessed: number;
     requireSupervisor: boolean;
   };
+  /** Verified Share column / Total row on table answers; default-off until the acceptance slice is recorded. */
+  answerShares: {
+    enabled: boolean;
+  };
   whatsapp: WhatsAppConfig;
   port: number;
   lifecycleSweepSecret?: string;
@@ -170,6 +174,9 @@ export function loadConfig(): AppConfig {
       enabled: parseEnvBool('FAST_PATH_ENABLED', false),
       maxBytesProcessed: parseEnvInt('FAST_PATH_MAX_BYTES', 1_073_741_824),
       requireSupervisor: parseEnvBool('FAST_PATH_REQUIRE_SUPERVISOR', true),
+    },
+    answerShares: {
+      enabled: parseEnvBool('ANSWER_SHARES_ENABLED', false),
     },
     whatsapp: loadWhatsAppConfig(),
     port: parseEnvInt('PORT', 3000, 65535),

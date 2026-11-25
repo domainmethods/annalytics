@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-1",
+  "originalQuestion": "Why does the January order count go up when a customer buys a second item?",
+  "clarifiedQuestion": "Count orders created in January 2025 UTC by overall order status. A three-item order should count once.",
+  "humanResponse": "Each row in `tv_thelook.orders` represents one order. Summing `num_of_item` gives a three-item order a weight of three. Count the rows within each status group.\n\n```sql\nSELECT status, COUNT(*) AS order_count\nFROM `tv_thelook.orders`\nWHERE created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-02-01 00:00:00 UTC'\nGROUP BY status\nORDER BY order_count DESC, status\nLIMIT 100\n```",
+  "failedSql": "SELECT status, SUM(num_of_item) AS order_count\nFROM `tv_thelook.orders`\nWHERE created_at >= TIMESTAMP '2025-01-01 00:00:00 UTC'\n  AND created_at < TIMESTAMP '2025-02-01 00:00:00 UTC'\nGROUP BY status\nORDER BY order_count DESC, status\nLIMIT 100",
+  "supervisorNotes": "The scorecard includes orders in every status."
+}

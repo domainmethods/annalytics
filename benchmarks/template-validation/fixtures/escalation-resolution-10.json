@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-10",
+  "originalQuestion": "Which week should I read out at the October rehearsal?",
+  "clarifiedQuestion": "Which of the four October 2025 practice cards did the facilitator select?",
+  "humanResponse": "Use the card covering October 6 through October 12. It is the one marked for the rehearsal.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

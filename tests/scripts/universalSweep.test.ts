@@ -75,14 +75,17 @@ describe('pickFloorUp', () => {
 });
 
 describe('buildModelLadder', () => {
-  it('enumerates EVERY non-retired Gemini 3.x model — coverage is registry-derived, not a hand subset', () => {
+  it('enumerates EVERY non-retired model — coverage is registry-derived, not a hand subset', () => {
     const ladder = buildModelLadder();
-    expect(ladder).toHaveLength(6);
+    expect(ladder).toHaveLength(10);
     const models = ladder.map((r) => `${r.tier}/${r.version}`);
     expect(new Set(models)).toEqual(
-      new Set(['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'pro/3.1']),
+      new Set([
+        'flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
+        'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon',
+      ]),
     );
-    // Every candidate must resolve to a real Gemini 3.x model id.
+    // Every candidate must resolve to a real Gemini model id.
     for (const r of ladder) expect(() => resolveModelId(r.tier, r.version)).not.toThrow();
   });
 
@@ -90,7 +93,8 @@ describe('buildModelLadder', () => {
     const levels = Object.fromEntries(buildModelLadder().map((r) => [r.rung, r.thinkingLevel]));
     expect(levels).toEqual({
       'flash-lite/3.1': UNIVERSAL_ANCHOR, 'flash-lite/3.5': UNIVERSAL_ANCHOR, 'flash/3': UNIVERSAL_ANCHOR,
-      'flash/3.6': UNIVERSAL_ANCHOR, 'flash/3.8': 'default', 'pro/3.1': 'default',
+      'flash/3.6': UNIVERSAL_ANCHOR, 'flash/3.8': 'default', 'flash/4-hydrogen': 'default', 'pro/3.1': 'default',
+      'pro/4-neon': 'default', 'pro/4-argon': 'default', 'pro/4-carbon': 'default',
     });
   });
 

@@ -291,12 +291,54 @@ it('reverts the supervisor when the paired SQL metric drops more than epsilon an
   expect(process.env.NODE_PROFILE_OVERRIDES).toBe(original);
 });
 
-it('aborts on a terminal judge error without making requests for the next item', async () => {
+it('aborts on a transient judge error when retries are disabled, without making requests for the next item', async () => {
   generateContent.mockResolvedValueOnce({ text: 'There was 1 order.' })
     .mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 504 }));
   const env = await loadTemplateEnv('test');
   const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
-  await expect(createTemplateRunner('summaryOverride', [item, { ...item, id: 'next' }], env)())
+  await expect(createTemplateRunner('summaryOverride', [item, { ...item, id: 'next' }], env, { retryDelaysMs: [] })())
     .rejects.toMatchObject({ status: 504 });
   expect(generateContent).toHaveBeenCalledTimes(2);
+});
+
+it('retries an item after a transient provider failure and keeps only the successful attempt', async () => {
+  generateContent.mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 503 }))
+    .mockResolvedValue({ text: 'There was 1 order.' });
+  const env = { ...await loadTemplateEnv('test'), judge: vi.fn().mockResolvedValue(true) };
+  const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
+  const sleeps: number[] = [];
+  const logs: string[] = [];
+  const run = await createTemplateRunner('summaryOverride', [item], env, {
+    sleep: async ms => { sleeps.push(ms); }, log: message => { logs.push(message); },
+  })();
+  expect(sleeps).toEqual([10_000]);
+  expect(logs).toEqual([expect.stringContaining('[retry] summaryOverride/')]);
+  expect(run.perEntry).toHaveLength(1);
+  expect(run.perEntry[0].failure).toBeUndefined();
+  // The failed attempt's generation is discarded: one usage record for one successful attempt.
+  expect(run.nodeUsage.get('summaryOverride')?.latencies).toHaveLength(1);
+});
+
+it('discards the generation usage of an attempt whose judge call failed transiently', async () => {
+  generateContent.mockResolvedValue({ text: 'There was 1 order.' });
+  const judge = vi.fn().mockRejectedValueOnce(Object.assign(new Error('provider response'), { status: 503 }))
+    .mockResolvedValue(true);
+  const env = { ...await loadTemplateEnv('test'), judge };
+  const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
+  const run = await createTemplateRunner('summaryOverride', [item], env, { sleep: async () => {}, log: () => {} })();
+  expect(generateContent).toHaveBeenCalledTimes(2);
+  expect(run.perEntry[0].failure).toBeUndefined();
+  expect(run.nodeUsage.get('summaryOverride')?.latencies).toHaveLength(1);
+});
+
+it('gives up after the configured retries', async () => {
+  generateContent.mockRejectedValue(Object.assign(new Error('provider response'), { status: 429 }));
+  const env = await loadTemplateEnv('test');
+  const item = { ...base, question, sql: referenceSql, rows: result.rows, totalRows: 1 };
+  const sleeps: number[] = [];
+  await expect(createTemplateRunner('summaryOverride', [item], env, {
+    retryDelaysMs: [1, 2], sleep: async ms => { sleeps.push(ms); }, log: () => {},
+  })()).rejects.toMatchObject({ status: 429 });
+  expect(sleeps).toEqual([1, 2]);
+  expect(generateContent).toHaveBeenCalledTimes(3);
 });

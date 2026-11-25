@@ -6,13 +6,14 @@ import type { AppConfig } from './config.js';
 import type { SqlGenerationResult, QueryResult } from './types.js';
 import { classifyQuestion } from './agents/clarificationAgent.js';
 import { classifyAmbiguity } from './agents/ambiguityClassifier.js';
-import { qualityLoop } from './qualityLoop.js';
+import { qualityLoop, MAX_ATTEMPTS } from './qualityLoop.js';
 import { runRoutineFastPath } from './routineFastPath.js';
 import { reconcileConfidence } from './agents/confidence.js';
-import { classifyFollowUp } from './agents/followUpClassifier.js';
 import { executeQuery } from './execution/runner.js';
 import { chooseFormat } from './execution/formatter.js';
 import { buildThreadContext } from './slack/threadContext.js';
+import { MAX_DISPLAY_ROWS } from './slack/limits.js';
+import { createStatusReporter } from './slack/statusReporter.js';
 import { buildClarificationBlocks } from './slack/clarificationBlocks.js';
 import {
   buildSingleValueBlocks,
@@ -26,7 +27,8 @@ import {
   EMPTY_VALUE,
 } from './slack/blocks.js';
 import { saveResponseContext, getLatestNegativeFeedback } from './state/responseContext.js';
-import { saveClarificationState } from './state/clarificationState.js';
+import { buildAnswerCaptionBlocks } from './slack/answerLeadIn.js';
+import { recordAmbiguityLabel, saveClarificationState } from './state/clarificationState.js';
 import { releaseThreadLock } from './state/threadLock.js';
 import { conversationThreadKey } from './state/threadScope.js';
 import { getTeachingSummaries } from './teachings/summaryMap.js';
@@ -41,6 +43,8 @@ import { buildEscalationBlocks, buildUserWaitingBlocks, buildBestEffortCaveatBlo
 import { getSchemaFallback } from './dbt/informationSchemaFallback.js';
 import { handleDbtStatus } from './agents/dbtStatusAgent.js';
 import { getRunHistoryForModel, getLatestRun } from './state/dbtRunHistory.js';
+import { verifyAnswerComposition, declaredUniqueKeys } from './execution/answerComposition.js';
+import type { EligibleComposition } from './execution/composition.js';
 
 export interface PipelineConfig {
   geminiApiKey: string;
@@ -62,6 +66,8 @@ export interface PipelineConfig {
     timeoutHours: number;
     onNegativeFeedback?: boolean;
   };
+  /** Verified Share column / Total row on table answers (ANSWER_SHARES_ENABLED). */
+  answerSharesEnabled?: boolean;
 }
 
 interface FallbackTableRef {
@@ -79,7 +85,11 @@ const IDENTIFIER_START_RE = /[A-Za-z_]/;
 const FALSE_POSITIVE_TABLE_REFS = new Set(['e.g', 'i.e', 'vs.net', 'node.js']);
 
 export interface PipelineInput {
-  /** Lease token from preflight; resume paths omit it and never release the thread lock. */
+  /**
+   * Lease token from the caller that took the thread lock: preflight, or a
+   * clarification resume that got it. Other resume paths omit it, and the
+   * pipeline then leaves the lock alone.
+   */
   ownerToken?: string;
   question: string;
   channel: string;
@@ -114,6 +124,7 @@ export function toPipelineConfig(config: AppConfig): PipelineConfig {
       timeoutHours: config.escalation.timeoutHours,
       onNegativeFeedback: config.escalation.onNegativeFeedback,
     },
+    answerSharesEnabled: config.answerShares.enabled,
   };
 }
 
@@ -189,19 +200,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
   const logger = createLogger(traceId);
   const startTime = Date.now();
 
-  const updateStatus = async (text: string) => {
-    // Status updates are cosmetic. A transient Slack failure (rate limit,
-    // network blip) must never abort the real query — log and move on.
-    try {
-      await client.chat.update({ channel, ts: statusMsgTs, text });
-    } catch (err) {
-      logger.warn({ err, text }, 'pipeline.status_update_failed');
-    }
-  };
+  // Status updates are cosmetic. A failed write (network blip, Slack error)
+  // must never abort the real query — log and move on. A rate-limited write is
+  // not a failure: the Slack client waits for Retry-After and retries it.
+  const status = createStatusReporter({
+    write: (text) => client.chat.update({ channel, ts: statusMsgTs, text }),
+    onError: (err, text) => logger.warn({ err, text }, 'pipeline.status_update_failed'),
+  });
+  const updateStatus = (text: string) => status.set(text);
 
   try {
     // Stage 1: Clarification
-    await updateStatus('Thinking about if I need clarification...');
+    await updateStatus('Reading your question...');
     let teachingSummaries: Awaited<ReturnType<typeof getTeachingSummaries>> = [];
     try {
       teachingSummaries = await getTeachingSummaries();
@@ -213,21 +223,17 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       ts: threadTs,
       oldest: threadTs,
     });
+    // The status message was posted before this read, so it is in the thread.
+    // Leave it out, or it is taken for the message being answered and the
+    // question itself is kept as context for itself. When a clarification
+    // resume falls back to reusing the clarifying message, its text is the
+    // status written above by now, not the questions, so it is left out too.
     const threadContext = buildThreadContext(threadMessages.messages || [], 4, {
       summarizeOlder: true,
       stripQueryResults: true,
       maxTokens: 1000,
+      excludeTs: statusMsgTs,
     });
-
-    // Follow-up intent classification for thread messages (logged for observability)
-    if (threadContext.length > 0) {
-      try {
-        const followUp = await classifyFollowUp(question, threadContext, config.geminiApiKey);
-        logger.info({ intent: followUp.intent, reasoning: followUp.reasoning }, 'followup.classified');
-      } catch {
-        // Non-critical — continue pipeline if classification fails
-      }
-    }
 
     const clarification = await classifyQuestion(
       question, threadContext, teachingSummaries, config.geminiApiKey,
@@ -236,18 +242,6 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
 
     // LOW → suspend pipeline
     if (clarification.confidence === 'low') {
-      const ambiguity = await classifyAmbiguity({
-        question,
-        ambiguities: clarification.ambiguities,
-        clarifyingQuestions: clarification.clarifying_questions,
-        threadContext,
-      }, config.geminiApiKey);
-      logger.info({
-        ambiguityType: ambiguity.type,
-        ambiguityDomain: ambiguity.domain,
-        reasoning: ambiguity.reasoning,
-      }, 'ambiguity.classified');
-
       // Scoped to the conversation so same-timestamp threads in other channels
       // can't overwrite or cancel this clarification.
       const clarificationId = `clarify_${conversationThreadKey(channel, threadTs)}`;
@@ -260,7 +254,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         channel,
         ts: statusMsgTs,
         text: clarification.clarifying_questions.join('\n'),
-        blocks: blocks as unknown as KnownBlock[],
+        blocks,
       });
       await saveClarificationState({
         clarificationId,
@@ -270,10 +264,31 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         // Firestore rejects undefined: only store the wording when it differs.
         ...(supervisorQuestion !== question ? { supervisorQuestion } : {}),
         ambiguities: clarification.ambiguities,
-        ambiguityType: ambiguity.type,
-        ambiguityDomain: ambiguity.domain,
-        ambiguityQuestion: ambiguity.question,
+        // Kept so the message can be redrawn without its Cancel button once answered.
+        clarifyingQuestions: clarification.clarifying_questions,
         clarifyingMessageTs: statusMsgTs,
+      });
+      // The ambiguity label is observability-only, so it runs after the user has their
+      // questions: a waiting user never pays for it, and the thread lock is released
+      // on return, so a quick reply isn't blocked. classifyAmbiguity fails open.
+      void classifyAmbiguity({
+        question,
+        ambiguities: clarification.ambiguities,
+        clarifyingQuestions: clarification.clarifying_questions,
+        threadContext,
+      }, config.geminiApiKey).then(async (ambiguity) => {
+        logger.info({
+          ambiguityType: ambiguity.type,
+          ambiguityDomain: ambiguity.domain,
+          reasoning: ambiguity.reasoning,
+        }, 'ambiguity.classified');
+        await recordAmbiguityLabel(clarificationId, statusMsgTs, {
+          ambiguityType: ambiguity.type,
+          ambiguityDomain: ambiguity.domain,
+          ambiguityQuestion: ambiguity.question,
+        });
+      }).catch((error: unknown) => {
+        logger.warn({ error, traceId }, 'ambiguity label not recorded');
       });
       return;
     }
@@ -381,35 +396,43 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     let fastPathPreviousAttempt: { sql: string; error: string } | undefined;
 
     let qualityResult;
-    if (config.fastPath?.enabled) {
-      const fastPathStartedAt = Date.now();
-      const fastPath = await runRoutineFastPath({
-        executionDefaultProject: config.gcpProjectId,
-        enabled: config.fastPath.enabled,
-        requireSupervisor: config.fastPath.requireSupervisor,
-        question: supervisorQuestion,
-        clarifiedQuestion: resolvedQuestion,
-        clarificationConfidence: clarification.confidence,
-        route: clarification.route,
-        tables: pipelineTables,
-        threadContext,
-        apiKey: config.geminiApiKey,
-        fileSearchStoreId: config.fileSearchStoreId,
-        knowledgeSummaries: teachingSummaries,
-        maxBytesProcessed: config.maxBytesProcessed,
-        fastPathMaxBytes: config.fastPath.maxBytesProcessed,
-        sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
-        negativeExample: negativeExample ? {
-          sql: negativeExample.sql,
-          explanation: negativeExample.explanation,
-          userFeedback: threadContext[threadContext.length - 1]?.content || '',
-        } : undefined,
-        previousAttempt: input.refinementHint
-          ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
-          : undefined,
-        bqml_hint: clarification.bqml_hint,
+    const fastPathConfig = config.fastPath;
+    if (fastPathConfig?.enabled) {
+      // Timed inside the heartbeat: after the status write that opens it, and
+      // before the wait for a status write that may still be finishing when the
+      // fast path returns. Neither is fast-path time.
+      let fastPathElapsedMs = 0;
+      const fastPath = await status.withHeartbeat(async () => {
+        // Set inside the heartbeat so the status keeps the time already elapsed.
+        await updateStatus('Researching the best approach...');
+        const fastPathStartedAt = Date.now();
+        return runRoutineFastPath({
+          executionDefaultProject: config.gcpProjectId,
+          enabled: fastPathConfig.enabled,
+          requireSupervisor: fastPathConfig.requireSupervisor,
+          question: supervisorQuestion,
+          clarifiedQuestion: resolvedQuestion,
+          clarificationConfidence: clarification.confidence,
+          route: clarification.route,
+          tables: pipelineTables,
+          threadContext,
+          apiKey: config.geminiApiKey,
+          fileSearchStoreId: config.fileSearchStoreId,
+          knowledgeSummaries: teachingSummaries,
+          maxBytesProcessed: config.maxBytesProcessed,
+          fastPathMaxBytes: fastPathConfig.maxBytesProcessed,
+          sampleRows: sampleRowsMap.size > 0 ? sampleRowsMap : undefined,
+          negativeExample: negativeExample ? {
+            sql: negativeExample.sql,
+            explanation: negativeExample.explanation,
+            userFeedback: supervisorQuestion,
+          } : undefined,
+          previousAttempt: input.refinementHint
+            ? { sql: input.refinementHint.previousSql, error: '', refinement: resolvedQuestion }
+            : undefined,
+          bqml_hint: clarification.bqml_hint,
+        }).finally(() => { fastPathElapsedMs = Date.now() - fastPathStartedAt; });
       });
-      const fastPathElapsedMs = Date.now() - fastPathStartedAt;
       let fastPathValidationOutcome: { layer: string; valid: boolean; detail?: string; bytesProcessed?: number } | undefined;
       let fastPathBytesProcessed: number | undefined;
 
@@ -452,7 +475,13 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     }
 
     if (!qualityResult) {
-      qualityResult = await qualityLoop(
+      // The loop reports a retry before the steps of that attempt, so the
+      // attempt number is kept here and shown on each of those steps.
+      let attempt = 0;
+      const stepStatus = (text: string) => updateStatus(attempt === 0
+        ? text
+        : `Attempt ${attempt + 1} of ${MAX_ATTEMPTS}: ${text[0].toLowerCase()}${text.slice(1)}`);
+      qualityResult = await status.withHeartbeat(() => qualityLoop(
         {
           question: resolvedQuestion,
           tables: pipelineTables,
@@ -463,7 +492,7 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
           negativeExample: negativeExample ? {
             sql: negativeExample.sql,
             explanation: negativeExample.explanation,
-            userFeedback: threadContext[threadContext.length - 1]?.content || '',
+            userFeedback: supervisorQuestion,
           } : undefined,
           previousAttempt: fastPathPreviousAttempt
             ?? (input.refinementHint
@@ -475,13 +504,13 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
         resolvedQuestion,
         config.maxBytesProcessed,
         {
-          onGenerate: () => updateStatus('Researching the best approach...'),
-          onValidate: () => updateStatus('Verifying the approach...'),
-          onReview: () => updateStatus('Reviewing for accuracy...'),
-          onRetry: () => updateStatus('Refining the approach...'),
+          onGenerate: () => stepStatus('Researching the best approach...'),
+          onValidate: () => stepStatus('Verifying the approach...'),
+          onReview: () => stepStatus('Reviewing for accuracy...'),
+          onRetry: (retryAttempt) => { attempt = retryAttempt; },
         },
         supervisorQuestion,
-      );
+      ));
     }
     logStage(logger, { traceId, stage: 'generate', durationMs: Date.now() - startTime, confidence: qualityResult.sqlResult.confidence });
     logStage(logger, { traceId, stage: 'validate', durationMs: Date.now() - startTime, bytesProcessed: qualityResult.bytesProcessed });
@@ -580,11 +609,15 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     }
 
     // Stage 5: Execution
-    await updateStatus('Retrieving the data...');
-    const queryResult = await executeQuery(qualityResult.sqlResult.sql, {
-      maxRows: config.maxResultRows,
-      timeoutMs: config.queryTimeoutMs,
-      maxBytes: config.maxBytesProcessed,
+    const answerSql = qualityResult.sqlResult.sql;
+    const queryResult = await status.withHeartbeat(async () => {
+      // Set inside the heartbeat so the status keeps the time already elapsed.
+      await updateStatus('Retrieving the data...');
+      return executeQuery(answerSql, {
+        maxRows: config.maxResultRows,
+        timeoutMs: config.queryTimeoutMs,
+        maxBytes: config.maxBytesProcessed,
+      });
     });
     logStage(logger, { traceId, stage: 'execute', durationMs: Date.now() - startTime, bytesProcessed: queryResult.bytesProcessed });
 
@@ -598,7 +631,18 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     // the clarifier never made; the answer and its saved context show both.
     const answerAssumptions = mergeAssumptions(assumptions, qualityResult.sqlResult.assumptions);
     const format = chooseFormat(queryResult);
-    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions);
+    // Verified shares: only a composition proof over the FULL result (never the
+    // display slice) earns a Share column; anything unproven renders Phase 1.
+    // Table only on purpose: a summary-format result is never eligible (governance caveat (a)).
+    const composition = config.answerSharesEnabled && format === 'table'
+      ? verifyAnswerComposition({
+          sql: qualityResult.sqlResult.sql,
+          result: queryResult,
+          maxDisplayRows: MAX_DISPLAY_ROWS,
+          uniqueKeys: declaredUniqueKeys(pipelineTables),
+        }, logger, { surface: 'answer', traceId })
+      : undefined;
+    const blocks = buildResponseBlocks(format, qualityResult.sqlResult, queryResult, traceId, threadTs, statusMsgTs, answerAssumptions, composition);
 
     // Best-effort caveat for escalated responses
     if (shouldEscalateAsync) {
@@ -625,6 +669,8 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
       reasoningChain: qualityResult.sqlResult.reasoningChain,
       generatedSql: qualityResult.sqlResult.sql,
       explanation: qualityResult.sqlResult.explanation,
+      // Only the keys a proof relied on, so the Table override re-verifies identically.
+      ...(composition?.usedUniqueKeys.length ? { compositionUniqueKeys: composition.usedUniqueKeys } : {}),
       tablesUsed: qualityResult.sqlResult.tablesUsed,
       confidence,
       clarificationConfidence: clarification.confidence,
@@ -728,13 +774,21 @@ export async function runPipeline(input: PipelineInput): Promise<void> {
     }
   } catch (error) {
     logger.error({ error }, 'Pipeline failed');
-    await client.chat.update({
-      channel,
-      ts: statusMsgTs,
-      text: friendlyErrorMessage(error as Error, traceId),
-    });
+    // Telling the user is best effort. If Slack rejects this update too, throwing
+    // would replace the pipeline's own failure with a Slack error for every
+    // caller, and an escalation resume would never be marked resolved.
+    try {
+      await client.chat.update({
+        channel,
+        ts: statusMsgTs,
+        text: friendlyErrorMessage(error as Error, traceId),
+      });
+    } catch (updateError) {
+      logger.error({ error: updateError, traceId }, 'pipeline.error_update_failed');
+    }
   } finally {
-    // Only callers that acquired the lease in preflight pass a token; resume paths do not.
+    // Only a caller that took the lease passes a token: preflight, or a
+    // clarification resume that got the lock. Other resume paths do not.
     if (input.ownerToken) await releaseThreadLock(channel, threadTs, input.ownerToken).catch(() => {});
   }
 }
@@ -794,10 +848,9 @@ export function buildResponseBlocks(
   threadTs: string,
   statusMsgTs: string,
   assumptions?: string[],
+  composition?: EligibleComposition,
 ): KnownBlock[] {
   const assumptionBlocks = buildAssumptionBlocks(assumptions ?? [], traceId);
-
-  const MAX_DISPLAY_ROWS = 20;
 
   // Which override buttons this result shape warrants — single source of truth
   // shared with the toggle-restore handlers in app.ts. The raw SQL is no longer
@@ -821,11 +874,22 @@ export function buildResponseBlocks(
     case 'summary': {
       const displayRows = result.rows.slice(0, MAX_DISPLAY_ROWS);
       const isTruncatedDisplay = result.rows.length > MAX_DISPLAY_ROWS || result.truncated;
+      // Every format in this branch renders a table, so the Table button is
+      // hidden. The caption is computed from all returned rows, not just the
+      // displayed ones, so its ranking covers the whole result.
       return [
-        ...buildTableBlocks(displayRows, result.columnNames),
+        ...buildAnswerCaptionBlocks({
+          rows: result.rows,
+          columnNames: result.columnNames,
+          truncated: result.truncated,
+          sql: gen.sql,
+          ...(result.columnTypes ? { columnTypes: result.columnTypes } : {}),
+          ...(composition ? { composition } : {}),
+        }),
+        ...buildTableBlocks(displayRows, result.columnNames, composition),
         ...(isTruncatedDisplay ? buildTruncatedBlocks(displayRows.length, result.totalRows) : []),
         ...assumptionBlocks,
-        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrides),
+        buildFeedbackActions(traceId, threadTs, statusMsgTs, overrideButtonsForResultShape(result.totalRows, result.columnNames.length, 'table')),
       ];
     }
     case 'zero_rows':

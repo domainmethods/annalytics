@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-33",
+  "originalQuestion": "How many orders did repeat buyers place?",
+  "clarifiedQuestion": "For September 2025 UTC, show how many identified buyers placed exactly two, exactly three, or each higher observed number of orders during that month.",
+  "humanResponse": "Count orders per buyer within September first. Then count the buyers at each order frequency, starting at two.\n\n```sql\nWITH buyers AS (\n  SELECT user_id, COUNT(*) AS order_count\n  FROM `tv_thelook.orders`\n  WHERE created_at >= TIMESTAMP '2025-09-01 00:00:00 UTC'\n    AND created_at < TIMESTAMP '2025-10-01 00:00:00 UTC'\n    AND user_id IS NOT NULL\n  GROUP BY user_id\n  HAVING COUNT(*) >= 2\n)\nSELECT order_count, COUNT(*) AS buyers_at_frequency\nFROM buyers\nGROUP BY order_count\nORDER BY order_count ASC\nLIMIT 1000\n```",
+  "failedSql": null,
+  "supervisorNotes": "Two September orders from one buyer belong in the two-order bucket even if that buyer also ordered in August."
+}

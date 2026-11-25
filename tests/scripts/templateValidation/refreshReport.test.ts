@@ -7,7 +7,7 @@ import { buildRefreshRows, renderRefreshReport, writeRefreshReport } from '../..
 import type { Provenance } from '../../../scripts/template-validation/labelQuorum.js';
 import { resolveModelId } from '../../../src/agents/modelConfig.js';
 
-const chosenRung = { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' } as const;
+const chosenRung = { tier: 'flash-lite', version: '3.5', thinkingLevel: 'minimal' } as const;
 const provenance: Provenance = {
   version: 'test', createdAt: '2026-11-18', quorumKind: 'reduced', reducedQuorum: true, singleFamily: false,
   drafter: 'test',
@@ -19,7 +19,7 @@ const provenance: Provenance = {
   ],
 };
 const baseline = { label: 'DEFAULT', metric: 0.3, e2e: 0.3, p95LatencyMs: 200, cost: 0.02 };
-const chosen = { ...baseline, label: 'flash-lite/3.1@minimal', metric: 0.31, cost: 0.01 };
+const chosen = { ...baseline, label: 'flash-lite/3.5@minimal', metric: 0.31, cost: 0.01 };
 const outcome: NodeOutcome = {
   nodeId: 'supervisor', baseline, chosen, chosenRung, stage1Winner: chosenRung,
   stage1: [baseline], stage2: [chosen], e2eCritical: true,
@@ -50,6 +50,27 @@ it('keeps a real model or thinking level change applicable without an override',
     expect(row.applicable).toBe(true);
     expect(row.applicationReason).toBeUndefined();
   }
+});
+
+it('withholds a pick with a dated shutdown and notes a dateless supersession', () => {
+  vi.stubEnv('MODEL_ID_OVERRIDES', undefined);
+  const dated: NodeOutcome = {
+    ...chartOutcome, chosenRung: { tier: 'flash-lite', version: '3.1', thinkingLevel: 'minimal' },
+  };
+  const dateless: NodeOutcome = {
+    ...chartOutcome, chosenRung: { tier: 'flash', version: '3', thinkingLevel: 'low' },
+  };
+  const [datedRow, datelessRow] = buildRefreshRows([dated, dateless], chartEps, provenance);
+  expect(datedRow).toMatchObject({
+    applicable: false, applicationReason: 'recommended model has a scheduled shutdown',
+    sunsetNotice: 'gemini-3.1-flash-lite shuts down no earlier than 2027-05-07; replacement gemini-3.5-flash-lite',
+  });
+  expect(datelessRow).toMatchObject({
+    applicable: true, sunsetNotice: 'gemini-3-flash-preview superseded (no shutdown date); replacement gemini-3.6-flash',
+  });
+  expect(datelessRow.applicationReason).toBeUndefined();
+  expect(renderRefreshReport([datedRow], meta))
+    .toContain('| recommended model has a scheduled shutdown; gemini-3.1-flash-lite shuts down no earlier than 2027-05-07');
 });
 
 it.each(['flash/3', 'flash/3.6'])('withholds and sanitizes a comparison with an override on %s', async target => {

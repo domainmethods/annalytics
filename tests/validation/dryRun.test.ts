@@ -41,6 +41,22 @@ describe('dryRunValidation', () => {
     });
   });
 
+  it.each([
+    { label: 'missing', totalBytesProcessed: undefined },
+    { label: 'non-numeric', totalBytesProcessed: 'n/a' },
+  ])('fails closed as a warehouse failure when the byte count is $label', async ({ totalBytesProcessed }) => {
+    mockCreateQueryJob.mockResolvedValue([
+      { metadata: { statistics: { query: { statementType: 'SELECT' }, totalBytesProcessed } } },
+    ]);
+
+    expect(await dryRunValidation('SELECT 1')).toEqual({
+      valid: false,
+      layer: 'L3-dryrun',
+      error: 'Dry run did not report how many bytes the query would scan.',
+      warehouseFailure: true,
+    });
+  });
+
   it('returns a safe L3 error when job metadata is absent', async () => {
     mockCreateQueryJob.mockResolvedValue([{}]);
 

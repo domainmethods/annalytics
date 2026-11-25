@@ -1,5 +1,5 @@
 import { botHasRepliedInThread } from '../state/responseContext.js';
-import { getClarificationState, deleteClarificationState } from '../state/clarificationState.js';
+import { claimClarificationState, getClarificationState } from '../state/clarificationState.js';
 
 interface MessageEvent {
   channel_type?: string;
@@ -14,11 +14,25 @@ export interface ClarificationReply {
   channel: string;
   threadTs: string;
   clarifyingMessageTs: string;
+  /** The questions that were asked. Absent when the saved state did not keep them. */
+  clarifyingQuestions?: string[];
 }
 
 /**
- * Check if a message in a thread is a reply to a pending clarification.
- * Returns the clarification context if so, null otherwise.
+ * Whether a thread reply has a clarification waiting for it. A read only:
+ * taking the clarification is {@link checkClarificationReply}, which the caller
+ * does once it has the thread lock.
+ */
+export async function hasPendingClarification(event: MessageEvent & { channel: string }): Promise<boolean> {
+  if (!event.thread_ts) return false;
+  return (await getClarificationState(event.channel, event.thread_ts)) !== null;
+}
+
+/**
+ * Check if a message in a thread is a reply to a pending clarification, and
+ * take the clarification if so. Returns its context, or null when there is
+ * none to take: only one reply gets it, so a second reply that arrives at the
+ * same moment is handled as an ordinary thread message.
  */
 export async function checkClarificationReply(
   event: MessageEvent & { channel: string },
@@ -26,7 +40,7 @@ export async function checkClarificationReply(
   const threadTs = event.thread_ts;
   if (!threadTs) return null;
 
-  const state = await getClarificationState(event.channel, threadTs);
+  const state = await claimClarificationState(event.channel, threadTs);
   if (!state) return null;
 
   // Merge user reply into clarified question
@@ -35,15 +49,13 @@ export async function checkClarificationReply(
   // Legacy docs (and unrewritten questions) carry no separate user wording.
   const originalQuestion = `${state.supervisorQuestion ?? state.originalQuestion}${answer}`;
 
-  // Delete clarification state — it's been answered
-  await deleteClarificationState(state.clarificationId);
-
   return {
     clarifiedQuestion,
     originalQuestion,
     channel: event.channel,
     threadTs,
     clarifyingMessageTs: state.clarifyingMessageTs,
+    clarifyingQuestions: state.clarifyingQuestions,
   };
 }
 
@@ -53,6 +65,32 @@ function isDirectMessageSurface(event: MessageEvent): boolean {
 
 export function canMessageEventReachPipeline(event: MessageEvent): boolean {
   return isDirectMessageSurface(event) || Boolean(event.thread_ts);
+}
+
+/**
+ * Whether a `message` event belongs to the `app_mention` listener. Slack sends
+ * a channel message that @mentions the bot as both events, each with its own
+ * event id, so event dedupe does not join them. Direct conversations get no
+ * `app_mention`, so those stay with the `message` listener. Without the bot's
+ * user id nothing is handed over: a reply handled twice is better than a reply
+ * handled by nobody.
+ */
+export function isOwnedByMentionListener(event: MessageEvent, botUserId: string | undefined): boolean {
+  if (!botUserId) return false;
+  if (event.channel_type !== 'channel' && event.channel_type !== 'group') return false;
+  return (event.text || '').includes(`<@${botUserId}>`);
+}
+
+/**
+ * The text of an @mention without the mention of the bot itself. The other
+ * people named in it stay: the text can be a clarification answer or an
+ * analyst's guidance, passed on as written. It removes the form
+ * {@link isOwnedByMentionListener} looks for. Without the bot's user id every
+ * user mention goes, since the bot's own can't be told from the others.
+ */
+export function stripBotMention(text: string, botUserId: string | undefined): string {
+  const stripped = botUserId ? text.replaceAll(`<@${botUserId}>`, '') : text.replace(/<@[A-Z0-9]+>/g, '');
+  return stripped.trim();
 }
 
 export async function shouldRespond(event: MessageEvent & { channel: string }): Promise<boolean> {

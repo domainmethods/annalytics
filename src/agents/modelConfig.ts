@@ -15,7 +15,7 @@ export function getJudgeModel(): string {
 
 export type ModelTier = 'flash-lite' | 'flash' | 'pro';
 
-// The Gemini 3.x `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
+// The Gemini `thinkingConfig.thinkingLevel` axis. `'default'` is a SENTINEL,
 // not a real API value: it means "omit thinkingConfig and let the model manage its
 // own budget" (see modelGateway). Lives here — next to the model registry it pairs
 // with — so the registry below and every sweep/profile can speak one
@@ -30,6 +30,14 @@ export interface ModelCoordinate { tier: ModelTier; version: string; }
  *  `default-eligible` are labels; a sweep can recommend either as a default. */
 export type ModelStatus = 'candidate' | 'default-eligible' | 'retired';
 
+/** Google's deprecation notice for a model, copied by hand from
+ *  https://aistudio.google.com/docs/deprecations. `shutdownDate` is Google's earliest
+ *  possible shutdown (YYYY-MM-DD); omit it when Google names a replacement but no date. */
+export interface ModelSunset {
+  shutdownDate?: string;
+  replacement?: string;
+}
+
 export interface RegisteredModel {
   tier: ModelTier;
   version: string;
@@ -38,10 +46,16 @@ export interface RegisteredModel {
   inputPricePerMTok: number;
   outputPricePerMTok: number; // USD per million tokens, including thoughts
   status: ModelStatus;
+  /** Set when Google's deprecations page lists this model. Sweeps still measure it, but
+   *  Stage 1 ranks a model with a `shutdownDate` after viable undated models, the refresh
+   *  report withholds a dated pick, and `model:discover` warns about every notice. */
+  sunset?: ModelSunset;
 }
 
 // Standard USD rates for text prompts up to 200K tokens.
 // https://ai.google.dev/gemini-api/docs/pricing
+// `sunset` entries were checked against https://aistudio.google.com/docs/deprecations
+// on 2026-11-22. Re-check that page during a model refresh.
 const REGISTRY: Record<string, RegisteredModel> = {
   'flash-lite/3.1': {
     tier: 'flash-lite',
@@ -51,6 +65,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 0.25,
     outputPricePerMTok: 1.50,
     status: 'default-eligible',
+    sunset: { shutdownDate: '2027-05-07', replacement: 'gemini-3.5-flash-lite' },
   },
   'flash/3': {
     tier: 'flash',
@@ -60,6 +75,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 0.50,
     outputPricePerMTok: 3.00,
     status: 'default-eligible',
+    sunset: { replacement: 'gemini-3.6-flash' },
   },
   // No 2027 rate change is announced for this model, so this rate is also its 2027 rate.
   'flash-lite/3.5': {
@@ -69,7 +85,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     thinkingLevels: ['minimal', 'low', 'medium', 'high'],
     inputPricePerMTok: 0.30,
     outputPricePerMTok: 2.50,
-    status: 'candidate',
+    status: 'default-eligible',
   },
   // Google routes this ID to gemini-3.6-flash, so it duplicates flash/3.6 and is not
   // swept separately. Priced as flash/3.6.
@@ -82,6 +98,7 @@ const REGISTRY: Record<string, RegisteredModel> = {
     inputPricePerMTok: 1.50,
     outputPricePerMTok: 7.50,
     status: 'retired',
+    sunset: { replacement: 'gemini-3.6-flash' },
   },
   // Gemini 3.6 and 3.8 Flash are $0.75/$3.75 through 2026-12-31. These are the rates
   // from 2027-01-01, the ones a default chosen now will be billed at.
@@ -113,6 +130,48 @@ const REGISTRY: Record<string, RegisteredModel> = {
     outputPricePerMTok: 12.00,
     status: 'default-eligible',
   },
+  // Gemini 4 models have codenames, not tiers. Each is filed by price and positioning:
+  // Hydrogen (everyday speed) with flash, Neon/Argon/Carbon (frontier reasoning) with pro.
+  // Hydrogen and Neon also support `xhigh` thinking, which the sweep does not use.
+  // https://aistudio.google.com/docs/pricing
+  'flash/4-hydrogen': {
+    tier: 'flash',
+    version: '4-hydrogen',
+    id: 'gemini-4-hydrogen',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 1.50,
+    outputPricePerMTok: 7.50,
+    status: 'default-eligible',
+  },
+  'pro/4-neon': {
+    tier: 'pro',
+    version: '4-neon',
+    id: 'gemini-4-neon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 3.00,
+    outputPricePerMTok: 15.00,
+    status: 'candidate',
+  },
+  // Argon and Carbon are $2.00/$10.00 through 2026-11-30. These are the rates from
+  // 2026-12-01, the ones a default chosen now will be billed at.
+  'pro/4-argon': {
+    tier: 'pro',
+    version: '4-argon',
+    id: 'gemini-4-argon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 4.00,
+    outputPricePerMTok: 20.00,
+    status: 'candidate',
+  },
+  'pro/4-carbon': {
+    tier: 'pro',
+    version: '4-carbon',
+    id: 'gemini-4-carbon',
+    thinkingLevels: ['low', 'medium', 'high'],
+    inputPricePerMTok: 4.00,
+    outputPricePerMTok: 20.00,
+    status: 'candidate',
+  },
 };
 
 // Cheapest tier first, so a floor-up sweep that walks this list left-to-right meets
@@ -139,6 +198,15 @@ export function listRegisteredModels(): ModelCoordinate[] {
     .filter(({ status }) => status !== 'retired')
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier] || a.inputPricePerMTok - b.inputPricePerMTok)
     .map(({ tier, version }) => ({ tier, version }));
+}
+
+/** One line describing Google's deprecation notice for a model, or undefined if none. */
+export function describeSunset(model: Pick<RegisteredModel, 'id' | 'sunset'>): string | undefined {
+  const { sunset } = model;
+  if (!sunset) return undefined;
+  const when = sunset.shutdownDate ? `shuts down no earlier than ${sunset.shutdownDate}` : 'superseded (no shutdown date)';
+  const to = sunset.replacement ? `; replacement ${sunset.replacement}` : '';
+  return `${model.id} ${when}${to}`;
 }
 
 export function getRegisteredModel(tier: ModelTier, version: string): RegisteredModel | undefined {

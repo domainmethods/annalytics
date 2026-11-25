@@ -95,7 +95,10 @@ export type MetaQuestionItem = Item<'metaQuestion'>;
 export type DiscrepancyItem = Item<'discrepancy'>;
 
 export function templateTargetCount(node: NodeId): number {
-  return node === 'sqlGenerator' || node === 'supervisor' ? 100 : 40;
+  if (node === 'sqlGenerator' || node === 'supervisor') return 100;
+  // Grown after tv-v1: at 37 items one flipped answer gave ε 0.054, above the 0.05 bar.
+  if (node === 'ambiguityClassifier') return 80;
+  return 40;
 }
 
 export function hashItemFile(content: Buffer | string): string {
@@ -128,6 +131,8 @@ export function loadFixture(name: string, root = TV_ROOT): unknown {
 }
 
 const publicProject = 'bigquery-public-data';
+// BigQuery function namespaces: `SAFE.DIVIDE(a, b)` is a function call, not a table-valued function.
+const FUNCTION_NAMESPACES = new Set(['SAFE', 'NET', 'HLL_COUNT', 'KEYS', 'AEAD', 'ML', 'AI', 'OBJ']);
 const quotedPart = /bigquery-public-data(?=$|[.-])|[^.-]+|[.-]/gi;
 const endFrom = /^(?:WHERE|GROUP|HAVING|QUALIFY|WINDOW|ORDER|LIMIT|UNION|INTERSECT|EXCEPT|;)$/i;
 
@@ -135,6 +140,10 @@ type ScanToken = {
   value: string;
   kind: 'name' | 'quoted' | 'syntax';
   spaceBefore: boolean;
+  // A comment sat in the gap before this token (a comment is not a sentence break).
+  commentBefore?: true;
+  // A Markdown code fence sat in the gap before this token (a fence never splits a table path).
+  fenceBefore?: true;
   quotedHyphen?: true;
 };
 
@@ -178,6 +187,8 @@ function tokenizeReferences(
   let ambiguousApostrophe = false;
   let ambiguousTripleQuote = false;
   let spaceBefore = false;
+  let commentBefore = false;
+  let fenceBefore = false;
   // Consume each delimited span before classifying any of its contents.
   for (let start = 0; start < text.length; start = tokenPattern.lastIndex) {
     publicProjectToken.lastIndex = start;
@@ -185,6 +196,7 @@ function tokenizeReferences(
     tokenPattern.lastIndex = start + value.length;
     if (/^(?:\s|\\[nt]|`{3})/.test(value)) {
       spaceBefore = true;
+      fenceBefore ||= value.startsWith('`');
       continue;
     }
     if (/^(?:\/\*|--|#)/.test(value)) {
@@ -192,6 +204,7 @@ function tokenizeReferences(
         value.startsWith('--') ? value.slice(2) : value.slice(1);
       collectReferences(body, references, false, ordinaryQuotes);
       spaceBefore = true;
+      commentBefore = true;
       continue;
     }
     if (value === '"' || value === "'" || value === '\\"') {
@@ -224,22 +237,42 @@ function tokenizeReferences(
         const doubleBackticks = span[1] === '``';
         const nestedIdentifier = doubleBackticks ? /^`([^`]*)`$/.exec(body)?.[1] : undefined;
         // A double-backtick span may contain SQL. Dots with padding still join identifier segments.
-        if (doubleBackticks && nestedIdentifier === undefined &&
-            body.split('.').some((part) => /[\s`()]/.test(part.trim()))) {
+        // A single-backtick span with parentheses is inline code such as `COUNT(i.id)`: BigQuery
+        // table paths can't contain them, so scan it as SQL rather than as one quoted identifier.
+        // (Spaces alone don't make it SQL: a spaced single-backtick body stays an identifier.)
+        const inlineSql = !doubleBackticks && /[()]/.test(body);
+        // A dotted path right before the first parenthesis, as in `dataset.table_fn(1)`, is still a
+        // quoted identifier; only the text from the parenthesis on is scanned as SQL. A BigQuery
+        // function namespace such as `SAFE.DIVIDE(a, b)` is a call, so the whole span is SQL.
+        // Trade-off: other SQL around a two-part path (`ds.t WHERE id IN (1)`) is scanned as prose
+        // SQL, where a two-part path outside table position is not flagged.
+        const calleeMatch = inlineSql ? /^[\w-]+(?:\.[\w-]+)+(?=\()/.exec(body)?.[0] : undefined;
+        const callee = calleeMatch !== undefined &&
+          !FUNCTION_NAMESPACES.has(calleeMatch.split('.')[0].toUpperCase()) ? calleeMatch : undefined;
+        const doubleBacktickSql = doubleBackticks && nestedIdentifier === undefined &&
+          body.split('.').some((part) => /[\s`()]/.test(part.trim()));
+        if (doubleBacktickSql || (inlineSql && callee === undefined)) {
           collectReferences(body, references, false, ordinaryQuotes);
         } else {
-          for (const [part] of (nestedIdentifier ?? body).matchAll(quotedPart)) {
+          if (callee !== undefined) collectReferences(body.slice(callee.length), references, false, ordinaryQuotes);
+          for (const [part] of (nestedIdentifier ?? callee ?? body).matchAll(quotedPart)) {
             const kind = part === '.' || part === '-' || !part.trim() ? 'syntax' : 'quoted';
-            tokens.push({ value: part.trim(), kind, spaceBefore, ...(part === '-' && { quotedHyphen: true }) });
+            tokens.push({ value: part.trim(), kind, spaceBefore, ...(fenceBefore && { fenceBefore: true }),
+              ...(part === '-' && { quotedHyphen: true }) });
             spaceBefore = false;
+            fenceBefore = false;
           }
+          commentBefore = false;
           continue;
         }
       }
     }
     const kind = /^[a-z0-9_]/i.test(value) ? 'name' : 'syntax';
-    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore });
+    tokens.push({ value: value === '\\\\' ? '\\' : value, kind, spaceBefore, ...(commentBefore && { commentBefore: true }),
+      ...(fenceBefore && { fenceBefore: true }) });
     spaceBefore = false;
+    fenceBefore = false;
+    commentBefore = false;
   }
   return { tokens, ambiguousApostrophe, ambiguousTripleQuote };
 }
@@ -251,6 +284,29 @@ function isAllowedChain(segments: string[]): boolean {
   return tableIndex >= 0 &&
     (segments.length === tableIndex + 1 || segments.length === tableIndex + 2) &&
     TV_TABLES.some((table) => table === segments[tableIndex]);
+}
+
+/**
+ * True when the FROM token at `index` is the keyword inside EXTRACT(part FROM expr): exactly one
+ * date-part name (optionally WEEK(<weekday>)) between `EXTRACT(` and the FROM. Any other
+ * FROM, including prose such as "extract (from x.y)", still starts a table list.
+ */
+function isExtractKeywordFrom(tokens: ScanToken[], index: number): boolean {
+  if (!/^FROM$/i.test(tokens[index]?.value ?? '') || tokens[index].kind !== 'name') return false;
+  let part = index - 1;
+  if (tokens[part]?.value === ')' && tokens[part - 1]?.kind === 'name' && tokens[part - 2]?.value === '(') {
+    part -= 3;
+  }
+  return tokens[part]?.kind === 'name' && tokens[part - 1]?.value === '(' &&
+    /^EXTRACT$/i.test(tokens[part - 2]?.value ?? '');
+}
+
+/** True when the FROM at `index` ends the comparison `IS [NOT] DISTINCT FROM`, which takes an expression. */
+function isDistinctKeywordFrom(tokens: ScanToken[], index: number): boolean {
+  if (!/^FROM$/i.test(tokens[index]?.value ?? '') || tokens[index].kind !== 'name') return false;
+  const word = (offset: number) => tokens[index - offset]?.kind === 'name' ? tokens[index - offset].value : '';
+  if (!/^DISTINCT$/i.test(word(1))) return false;
+  return /^IS$/i.test(word(2)) || (/^NOT$/i.test(word(2)) && /^IS$/i.test(word(3)));
 }
 
 function collectReferences(
@@ -285,15 +341,22 @@ function collectReferences(
         index += 2;
       }
 
+      const chainStart = index;
       const segments = [previous.value];
       let quoted = previous.kind === 'quoted';
 
       while (tokens[index + 1]?.value === '.') {
         const dot = tokens[index + 1];
         const next = tokens[index + 2];
-        if (!next || next.kind === 'syntax') break;
-        if (!tablePosition && (dot.spaceBefore || next.spaceBefore) &&
-            previous.kind !== 'quoted' && next.kind !== 'quoted') break;
+        if (!next || next.kind === 'syntax' || dot.fenceBefore || next.fenceBefore) break;
+        const unquotedPair = previous.kind !== 'quoted' && next.kind !== 'quoted';
+        if (!tablePosition && (dot.spaceBefore || next.spaceBefore) && unquotedPair) break;
+        // In table position, "from some_column. SQL:" ends a sentence: the dot is attached,
+        // whitespace (not a comment) follows, and the next word is capitalized. A spaced
+        // `dataset . table`, a wrapped `dataset.\n  table` and a lowercase `dataset. table` still join.
+        // Deliberate gap: `FROM dataset. Table` (capitalized after the dot) is not flagged.
+        if (tablePosition && !dot.spaceBefore && next.spaceBefore && !next.commentBefore &&
+            unquotedPair && /^[A-Z]/.test(next.value)) break;
         segments.push(next.value);
         quoted ||= next.kind === 'quoted';
         previous = next;
@@ -301,10 +364,16 @@ function collectReferences(
       }
 
       if (segments.length >= 2) {
-        const namesTable = tablePosition || quoted || segments[0].toLowerCase() === TV_DATASET;
         const standaloneNumber = !hyphenAttached && segments.every((segment) => /^\d+$/.test(segment));
         const prefix = tablePrefix || attachedPrefix;
-        if ((namesTable || (segments.length >= 3 && !standaloneNumber)) &&
+        // An unquoted run of digits ("from 13.0%") is a number, not a table name. Deliberate
+        // gap: BigQuery allows all-digit dataset names, so an unquoted `FROM 2024.01` passes.
+        const bareNumber = standaloneNumber && !quoted && !prefix;
+        const namesTable = (tablePosition && !bareNumber) || quoted || segments[0].toLowerCase() === TV_DATASET;
+        // "Permission bigquery.tables.update denied" names an IAM permission, not a table.
+        const iamPermission = !namesTable && !prefix && segments.length === 3 && segments[0] === 'bigquery' &&
+          /^permissions?$/i.test(tokens[chainStart - 1]?.value ?? '');
+        if ((namesTable || (segments.length >= 3 && !standaloneNumber && !iamPermission)) &&
             (prefix || !isAllowedChain(segments))) {
           references.add(prefix + segments.join('.'));
         }
@@ -321,8 +390,13 @@ function collectReferences(
       if (depth > 0) fromLists.pop();
       else fromLists[0] = false;
       tablePosition = false;
-    } else if (endFrom.test(token.value) || (tablePosition && /^(?:SELECT|WITH)$/i.test(token.value))) {
+    // A SELECT at this depth starts a new query, so any open FROM list has ended. WITH only
+    // ends one in table position, since `UNNEST(x) WITH OFFSET` sits inside a FROM list.
+    } else if (endFrom.test(token.value) || /^SELECT$/i.test(token.value) ||
+        (tablePosition && /^WITH$/i.test(token.value))) {
       fromLists[depth] = false;
+      tablePosition = false;
+    } else if (isExtractKeywordFrom(tokens, index) || isDistinctKeywordFrom(tokens, index)) {
       tablePosition = false;
     } else if (/^FROM$/i.test(token.value)) {
       fromLists[depth] = true;

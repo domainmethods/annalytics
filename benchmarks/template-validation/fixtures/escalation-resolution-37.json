@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-37",
+  "originalQuestion": "Where did the centers with no receipts go?",
+  "clarifiedQuestion": "For each listed distribution center, how many inventory units were stocked during November 2025 UTC? Include centers with zero receipts.",
+  "humanResponse": "Keep the receipt window in the join condition so every center survives the join. Count matched inventory IDs to give an empty center a count of zero.\n\n```sql\nSELECT d.id AS center_id, d.name AS center_name, COUNT(i.id) AS units_received\nFROM `tv_thelook.distribution_centers` AS d\nLEFT JOIN `tv_thelook.inventory_items` AS i\n  ON i.product_distribution_center_id = d.id\n AND i.created_at >= TIMESTAMP '2025-11-01 00:00:00 UTC'\n AND i.created_at < TIMESTAMP '2025-12-01 00:00:00 UTC'\nGROUP BY d.id, d.name\nORDER BY units_received DESC, center_id ASC\nLIMIT 1000\n```",
+  "failedSql": "SELECT d.id AS center_id, d.name AS center_name, COUNT(i.id) AS units_received\nFROM `tv_thelook.distribution_centers` AS d\nLEFT JOIN `tv_thelook.inventory_items` AS i ON i.product_distribution_center_id = d.id\nWHERE i.created_at >= TIMESTAMP '2025-11-01 00:00:00 UTC'\n  AND i.created_at < TIMESTAMP '2025-12-01 00:00:00 UTC'\nGROUP BY d.id, d.name\nORDER BY units_received DESC, center_id ASC\nLIMIT 1000",
+  "supervisorNotes": null
+}

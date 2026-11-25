@@ -1,15 +1,15 @@
+import { escapeMrkdwn } from './limits.js';
+import type { KnownBlock } from '@slack/types';
+
 export interface ClarificationBlocksOptions {
   clarificationId: string;
   clarifyingQuestions: string[];
   originalQuestion: string;
 }
 
-export function buildClarificationBlocks(
-  options: ClarificationBlocksOptions,
-): Record<string, unknown>[] {
-  const { clarifyingQuestions } = options;
-
-  const blocks: Record<string, unknown>[] = [
+/** The introduction and the numbered questions: what stays once they are answered. */
+function questionBlocks(clarifyingQuestions: string[]): KnownBlock[] {
+  const blocks: KnownBlock[] = [
     {
       type: 'section',
       text: {
@@ -28,6 +28,14 @@ export function buildClarificationBlocks(
       },
     });
   }
+
+  return blocks;
+}
+
+export function buildClarificationBlocks(
+  options: ClarificationBlocksOptions,
+): KnownBlock[] {
+  const blocks = questionBlocks(options.clarifyingQuestions);
 
   blocks.push({
     type: 'context',
@@ -57,6 +65,14 @@ export function buildClarificationBlocks(
   return blocks;
 }
 
+/**
+ * The clarifying message after the user has answered it: the questions stay so
+ * the thread still reads in order, the reply hint and the Cancel button go.
+ */
+export function buildAnsweredClarificationBlocks(clarifyingQuestions: string[]): KnownBlock[] {
+  return questionBlocks(clarifyingQuestions);
+}
+
 export interface PendingClarificationBlocksOptions {
   clarificationId: string;
   originalQuestion: string;
@@ -66,17 +82,18 @@ export interface PendingClarificationBlocksOptions {
 export const PENDING_CLARIFICATION_TEXT =
   "I'm still waiting on your answer to my earlier question — reply to that message and I'll pick it up from there.";
 
-// Slack mrkdwn entity escapes. Without them a stored "<!channel>" in the
-// echoed original question would re-ping the channel.
-function escapeMrkdwn(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+/**
+ * What a clarification answer is told when another run has the thread. The
+ * answer was not taken and nothing running will use it, so it asks for it again.
+ */
+export const CLARIFICATION_ANSWER_NOT_TAKEN_TEXT =
+  "I'm still finishing something in this thread, so I haven't picked up your answer yet. Please send it again in a moment.";
 
 /** Preflight guard 2 block message: the nudge, the question being waited on, and a way out. */
 export function buildPendingClarificationBlocks(
   options: PendingClarificationBlocksOptions,
-): Record<string, unknown>[] {
-  const blocks: Record<string, unknown>[] = [
+): KnownBlock[] {
+  const blocks: KnownBlock[] = [
     {
       type: 'section',
       text: {
@@ -119,7 +136,7 @@ export const CANCEL_FAILED_TEXT =
 /** Shown when the cancel delete fails: the failure copy plus a retry button. */
 export function buildCancelFailedBlocks(
   clarificationId: string,
-): Record<string, unknown>[] {
+): KnownBlock[] {
   return [
     {
       type: 'section',

@@ -6,7 +6,7 @@ import { resolveDbtArtifactPath } from '../src/dbt/artifactPaths.js';
  *
  * Runs the corpus N times with the current node profiles and
  * reports, per swept node, the run-to-run noise band ε computed EXACTLY as
- * runSweep's calibration does (id-aligned per-entry diff via computeEpsilon).
+ * runSweep's calibration does (id-aligned paired diffs → noise on the mean, via computeEpsilon).
  * It builds its corpus pass through the SAME createRunCorpusOnce seam the real
  * sweep uses, so there is zero logic drift between this estimate and the full run.
  *
@@ -217,7 +217,7 @@ async function main() {
     console.log(`done in ${(ms / 1000).toFixed(1)}s (${run.perEntry.length} entries scored)`);
   }
 
-  // ── ε per node (id-aligned per-entry max diff across the first two passes) ─────
+  // ── ε per node (noise on the mean of id-aligned paired diffs, first two passes) ─
   const runA = runs[0], runB = runs[1];
   console.log('\n══ Per-node ε (run-to-run noise band, lower = more sizable) ══');
   console.log('node           ε(metric)   baseline metric   scale');

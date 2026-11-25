@@ -84,16 +84,18 @@ describe('registry metadata', () => {
 describe('listRegisteredModels — the sweep enumeration source of truth', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
-  it('enumerates EVERY published 3.x model (no silent subset)', async () => {
+  it('enumerates EVERY registered model, cheapest first (no silent subset)', async () => {
     const { listRegisteredModels, resolveModelId } = await import('../../src/agents/modelConfig.js');
     const models = listRegisteredModels();
     // The whole point of this helper: a sweep that walks it can never cover a
-    // subset. Assert every non-retired 3.x coordinate,
+    // subset. Assert every non-retired registered coordinate,
     // and that each one actually resolves to a model id.
-    const keys = models.map((m) => `${m.tier}/${m.version}`).sort();
-    expect(keys).toEqual(
-      ['flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'pro/3.1'].sort(),
-    );
+    // Exact order: tier first, then input price, ties in registry order.
+    const keys = models.map((m) => `${m.tier}/${m.version}`);
+    expect(keys).toEqual([
+      'flash-lite/3.1', 'flash-lite/3.5', 'flash/3', 'flash/3.6', 'flash/3.8', 'flash/4-hydrogen',
+      'pro/3.1', 'pro/4-neon', 'pro/4-argon', 'pro/4-carbon',
+    ]);
     for (const m of models) {
       expect(() => resolveModelId(m.tier, m.version)).not.toThrow();
     }
@@ -113,7 +115,7 @@ describe('listRegisteredModels — the sweep enumeration source of truth', () =>
     const a = listRegisteredModels();
     a.pop();
     (a[0] as { tier: string }).tier = 'mutated';
-    expect(listRegisteredModels()).toHaveLength(6);
+    expect(listRegisteredModels()).toHaveLength(10);
     expect(listRegisteredModels()[0].tier).not.toBe('mutated');
   });
 });

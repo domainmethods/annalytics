@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import {
   scanTemplateSafety,
 } from '../../../scripts/template-validation/items.js';
 import { TV_ROOT } from '../../../scripts/template-validation/warehouse.js';
+import { NODE_IDS } from '../../../src/agents/nodeProfiles.js';
 
 let root: string;
 
@@ -92,6 +93,16 @@ it.each([
   ['Use `` `private_dataset` `` . customers for orders.', 'private_dataset.customers'],
   ['Use ``SELECT * FROM private_dataset.customers`` for orders.', 'private_dataset.customers'],
   ['Use ``SELECT*FROM(private_dataset.customers)`` for orders.', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR FROM u.created_at) FROM private_dataset.customers u', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR FROM (SELECT MAX(x) FROM private_dataset.customers))', 'private_dataset.customers'],
+  ['FROM `123.456`', '123.456'],
+  ['Use EXTRACT(YEAR FROM d FROM private_dataset.customers', 'private_dataset.customers'],
+  ['Use EXTRACT( then SELECT * FROM private_dataset.customers', 'private_dataset.customers'],
+  // Only IS [NOT] DISTINCT FROM is a comparison; a bare DISTINCT before FROM is not.
+  ['SELECT a.x IS DISTINCT FROM b.y FROM private_dataset.customers', 'private_dataset.customers'],
+  ['SELECT DISTINCT FROM private_dataset.customers', 'private_dataset.customers'],
+  ['We extract (from private_dataset.customers) the rows.', 'private_dataset.customers'],
+  ['SELECT EXTRACT(YEAR, MONTH FROM private_dataset.customers)', 'private_dataset.customers'],
   ['acme-prod.analytics.orders', 'prod.analytics.orders'],
   ['Read warehouse-12345.45678.20261118 for the daily snapshot.', '12345.45678.20261118'],
   ['`acme-prod.analytics.orders`', 'acme-prod.analytics.orders'],
@@ -128,7 +139,40 @@ it.each([
   [JSON.stringify({ text: 'Pull data from the acme warehouse: acme.analytics.orders' }), 'acme.analytics.orders'],
   ['Join two acme tables: acme.analytics.orders', 'acme.analytics.orders'],
   ['FROM private_dataset . customers', 'private_dataset.customers'],
+  ['FROM private_dataset .customers', 'private_dataset.customers'],
+  // Capitalized after the comment, so only the comment keeps these from reading as sentence ends.
+  ['FROM private_dataset. /* note */ Customers', 'private_dataset.Customers'],
+  ['FROM private_dataset. -- note\n Customers', 'private_dataset.Customers'],
+  ['FROM private_dataset. customers', 'private_dataset.customers'],
+  ['FROM private_dataset.\n  customers', 'private_dataset.customers'],
+  ['FROM `private_dataset`. customers', 'private_dataset.customers'],
   ['Use `private_dataset` . `customers`', 'private_dataset.customers'],
+  // The IAM-permission exemption covers only an unquoted bigquery.<resource>.<verb> after "Permission".
+  ['Permission acme.analytics.orders denied', 'acme.analytics.orders'],
+  ['Permission `bigquery.tables.update` denied', 'bigquery.tables.update'],
+  ['Permission bigquery.tables.update.extra denied', 'bigquery.tables.update.extra'],
+  ['Use bigquery.tables.update for this', 'bigquery.tables.update'],
+  ['Permission foo-bigquery.tables.update denied', 'bigquery.tables.update'],
+  ['permission BigQuery.tables.update denied', 'BigQuery.tables.update'],
+  // A new SELECT ends a prose FROM list, but its own FROM list is still scanned.
+  ['Data came from different builds.\nSELECT a FROM tv_thelook.orders, private_dataset.customers', 'private_dataset.customers'],
+  // WITH OFFSET inside a FROM list does not end it.
+  ['FROM tv_thelook.orders, UNNEST(o.items) WITH OFFSET AS i, private_dataset.customers', 'private_dataset.customers'],
+  ['Permission denied: SELECT * FROM bigquery.tables.update', 'bigquery.tables.update'],
+  // A fence only ends a dot chain; a table path inside the fenced SQL is still scanned.
+  ['Totals rose from 8,400 to 9,600.\n\n```sql\nSELECT 1 FROM private_dataset.customers\n```', 'private_dataset.customers'],
+  // Inline code with parentheses is scanned as SQL, not skipped.
+  ['Try `SELECT COUNT(*) FROM private_dataset.customers` instead', 'private_dataset.customers'],
+  ['Use `acme.analytics.orders(x)` here', 'acme.analytics.orders'],
+  // A dotted path right before a parenthesis stays a quoted identifier, in or out of a FROM list.
+  ['Use `private_dataset.customers(x)` in prose', 'private_dataset.customers'],
+  ['SELECT * FROM `private_dataset.some_tvf(1)`', 'private_dataset.some_tvf'],
+  ['Call `tv_thelook.orders_fn(SELECT 1 FROM private_dataset.customers)`', 'private_dataset.customers'],
+  ['Set `x=acme.analytics.orders(1)` here', 'acme.analytics.orders'],
+  // A namespace call is still scanned as SQL, so a table inside it is flagged.
+  ['Use `SAFE.DIVIDE((SELECT COUNT(*) FROM private_dataset.customers), 2)`', 'private_dataset.customers'],
+  // Without parentheses a single-backtick span is still one quoted identifier.
+  ['Use `private_dataset.customers` here', 'private_dataset.customers'],
 ])('flags the foreign reference in %s', (input, reference) => {
   expect(scanTemplateSafety(input)).toContain(`Foreign table reference: ${reference}`);
 });
@@ -164,6 +208,37 @@ it.each([
   'bigquery-public-data.thelook_ecommerce.users',
   'BIGQUERY-public-data.thelook_ecommerce.users',
   'SELECT o.price-u.cost FROM tv_thelook.orders o JOIN tv_thelook.users u ON TRUE',
+  'SELECT EXTRACT(YEAR FROM u.created_at) AS signup_year FROM tv_thelook.users u',
+  'SELECT EXTRACT(DATE FROM o.created_at AT TIME ZONE "UTC") FROM tv_thelook.orders o',
+  'SELECT EXTRACT(WEEK(MONDAY) FROM o.created_at) FROM tv_thelook.orders o',
+  // IS [NOT] DISTINCT FROM compares two expressions; its FROM does not start a table list.
+  'SELECT 1 FROM tv_thelook.products AS sold WHERE sold.category IS DISTINCT FROM reported.category',
+  'WHERE a.x is not distinct from b.y, c.z',
+  'select extract(isoweek from o.created_at) from tv_thelook.orders o',
+  'The spread runs from 13.0% for Dresses down to 11.8% for Shorts.',
+  'Revenue grew from 1.25 to 3.5 million.',
+  'Take the site from product_distribution_center_id. SQL:',
+  'Take the site from product_distribution_center_id. SQL:\nSELECT 1 FROM tv_thelook.orders',
+  'Start from private_dataset. Then join the rest.',
+  // Deliberate gap: a capitalized word after "dataset. " reads as a new sentence.
+  'FROM private_dataset. Customers',
+  // Deliberate gap: BigQuery allows all-digit dataset names, but an unquoted run of digits reads as a number.
+  'FROM 2024.01',
+  'Access Denied: Table tv_thelook.distribution_centers: Permission bigquery.tables.update denied on table tv_thelook.distribution_centers',
+  'Missing permissions bigquery.jobs.create',
+  // A prose number before a code fence is not joined to the fence's language tag.
+  'Total selling price rose from 8,400 to 9,600.\n\n```sql\nSELECT SUM(sale_price) FROM `tv_thelook.order_items`\n```',
+  // A BigQuery function namespace before a parenthesis is a call, not a table-valued function.
+  'Use `SAFE.DIVIDE(a, b)` to avoid divide-by-zero, or `NET.HOST(url)`.',
+  // A fence after a name with no dot does not matter.
+  'Total was 9,600\n```sql\nSELECT 1\n```',
+  // Only an identifier path before a parenthesis stays quoted; an expression is scanned as SQL.
+  'Revenue per order is `o.revenue/NULLIF(COUNT(o.id), 0)`, and `1.0*COUNT(i.id)` scales it.',
+  // A fence between a name and a following dot also ends the chain.
+  'Totals rose from 8,400 to 9,600\n```\n.sql files are attached',
+  // Inline code naming functions is not a quoted table path.
+  'I changed `COUNT(i.id)` to `COUNT(*)`. Which row is mine counting?',
+  'Flag it if the two sides came from different builds.\n\nSELECT u.traffic_source AS signup_source, e.event_type FROM tv_thelook.users u JOIN tv_thelook.events e ON e.user_id = u.id',
 ])('allows %s', (text) => {
   expect(scanTemplateSafety(text)).toEqual([]);
 });
@@ -224,15 +299,13 @@ it('loads JSON fixtures by name from the supplied root', () => {
 it.each([
   ['slackIntake', 14],
   ['followUpClassifier', 12],
-] as const)('loads all %s seeds with stable hashes and manual provenance', (node, count) => {
+] as const)('keeps all %s seeds alongside labeled items with stable hashes', (node, count) => {
   const items = loadItems(node);
-  expect(items).toHaveLength(count);
-  expect(new Set(items.map((item) => item.id)).size).toBe(count);
-  for (const item of items) {
-    expect(item.source).toBe('manual');
-    expect(item.agreement).toEqual({ members: ['manual'] });
-    expect(item.inputHash).toBe(hashItemInput(item));
-  }
+  const seeds = items.filter((item) => item.source === 'manual');
+  expect(seeds).toHaveLength(count);
+  expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
+  for (const item of seeds) expect(item.agreement).toEqual({ members: ['manual'] });
+  for (const item of items) expect(item.inputHash).toBe(hashItemInput(item));
   expect(scanTemplateSafety(readFileSync(join(TV_ROOT, 'items', node + '.jsonl'), 'utf8'))).toEqual([]);
 });
 
@@ -246,4 +319,26 @@ note${quote}`;
   return [['raw', quote, sql], ['serialized', quote, JSON.stringify({ sql })]];
 }))('retains FROM-list detections in %s SQL with ambiguous %s', (_format, _quote, input) => {
   expect(scanTemplateSafety(input)).toContain('Foreign table reference: private_dataset.customers');
+});
+
+it('keeps every committed item file at its frozen digest and count', () => {
+  const provenance = JSON.parse(readFileSync(join(TV_ROOT, 'provenance.json'), 'utf8')) as {
+    version: string; perNode: Record<string, { accepted: number; itemsSha256: string }>;
+  };
+  expect(provenance.version).toBe(readFileSync(join(TV_ROOT, 'VERSION'), 'utf8').trim());
+  for (const node of NODE_IDS) {
+    const frozen = provenance.perNode[node];
+    expect(frozen, node).toBeDefined();
+    expect(frozen.itemsSha256, node).toMatch(/^[0-9a-f]{64}$/);
+    expect(loadItems(node, TV_ROOT, frozen.itemsSha256), node).toHaveLength(frozen.accepted);
+  }
+});
+
+it.each(['items', 'quarantine', 'fixtures'])('keeps every committed %s file template-safe', (dir) => {
+  const files = readdirSync(join(TV_ROOT, dir), { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile());
+  expect(files.length).toBeGreaterThan(0);
+  for (const file of files) {
+    const path = join(file.parentPath, file.name);
+    expect(scanTemplateSafety(readFileSync(path, 'utf8')), path).toEqual([]);
+  }
 });

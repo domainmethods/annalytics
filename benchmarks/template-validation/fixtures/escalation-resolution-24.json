@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-24",
+  "originalQuestion": "How many April orders came from each acquisition source?",
+  "clarifiedQuestion": "Count orders created in April 2025 UTC by the customer's recorded acquisition source. Put missing profiles and null sources in an Unattributed bucket.",
+  "humanResponse": "Use the acquisition source on the customer profile. A left join keeps orders whose profile is missing, so those orders contribute to the Unattributed total.\n\n```sql\nSELECT COALESCE(u.traffic_source, 'Unattributed') AS acquisition_source,\n       COUNT(*) AS orders\nFROM `tv_thelook.orders` AS o\nLEFT JOIN `tv_thelook.users` AS u ON u.id = o.user_id\nWHERE o.created_at >= TIMESTAMP '2025-04-01 00:00:00 UTC'\n  AND o.created_at < TIMESTAMP '2025-05-01 00:00:00 UTC'\nGROUP BY acquisition_source\nORDER BY orders DESC, acquisition_source ASC\nLIMIT 100\n```",
+  "failedSql": null,
+  "supervisorNotes": null
+}

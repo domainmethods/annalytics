@@ -1,0 +1,8 @@
+{
+  "escalationId": "escalation-resolution-34",
+  "originalQuestion": "Is the October stock discrepancy still open?",
+  "clarifiedQuestion": "Does the October 2025 stock ticket describe a second discrepancy or the one already reconciled?",
+  "humanResponse": "The inventory owner matched the ticket to the completed reconciliation and closed it as a duplicate.",
+  "failedSql": null,
+  "supervisorNotes": null
+}

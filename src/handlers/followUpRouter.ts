@@ -11,8 +11,9 @@ import { validateSql } from '../validation/pipeline.js';
 import { executeQuery } from '../execution/runner.js';
 import { reviewSql } from '../agents/supervisorAgent.js';
 import { friendlyErrorMessage } from '../errors.js';
-import { createTraceId } from '../logging.js';
+import { createLogger, createTraceId } from '../logging.js';
 import { formatValue } from '../slack/blocks.js';
+import { createStatusReporter } from '../slack/statusReporter.js';
 
 export async function routeFollowUp(
   intent: FollowUpIntent,
@@ -77,54 +78,55 @@ export async function routeFollowUp(
         await client.chat.update({ channel, ts: statusMsgTs, text: 'No previous query to investigate.' });
         return;
       }
+      // Status updates are cosmetic: a Slack failure on one must not stop the
+      // investigation.
+      const logger = createLogger(traceId);
+      const status = createStatusReporter({
+        write: (text) => client.chat.update({ channel, ts: statusMsgTs, text }),
+        onError: (err, text) => logger.warn({ err, text }, 'followup.status_update_failed'),
+      });
       try {
-        await client.chat.update({ channel, ts: statusMsgTs, text: 'Investigating...' });
-        const diagnostic = await generateDiagnosticSql(message, ctx, config.geminiApiKey);
+        // The steps run inside the heartbeat and hand back the final text, which
+        // is written once it has ended so it never carries the elapsed time.
+        const outcome = await status.withHeartbeat(async () => {
+          await status.set('Investigating the discrepancy...');
+          const diagnostic = await generateDiagnosticSql(message, ctx, config.geminiApiKey);
 
-        const validation = await validateSql(diagnostic.diagnosticSql, config.maxBytesProcessed);
-        if (!validation.valid) {
-          await client.chat.update({
-            channel,
-            ts: statusMsgTs,
-            text: `Could not validate diagnostic query. (trace: ${traceId})`,
+          await status.set('Verifying the approach...');
+          const validation = await validateSql(diagnostic.diagnosticSql, config.maxBytesProcessed);
+          if (!validation.valid) {
+            return `Could not validate diagnostic query. (trace: ${traceId})`;
+          }
+
+          // Lightweight supervisor review (single call)
+          await status.set('Reviewing for accuracy...');
+          const review = await reviewSql({
+            userQuestion: message,
+            clarifiedQuestion: `Diagnostic investigation: ${diagnostic.explanation}`,
+            generatedSql: diagnostic.diagnosticSql,
+            explanation: diagnostic.explanation,
+            reasoningChain: `Investigating discrepancy in: ${ctx.generatedSql}`,
+            groundingCitations: [],
+            apiKey: config.geminiApiKey,
           });
-          return;
-        }
+          if (review.verdict === 'FAIL') {
+            return `Diagnostic query did not pass review: ${review.issues.join('; ')} (trace: ${traceId})`;
+          }
 
-        // Lightweight supervisor review (single call)
-        const review = await reviewSql({
-          userQuestion: message,
-          clarifiedQuestion: `Diagnostic investigation: ${diagnostic.explanation}`,
-          generatedSql: diagnostic.diagnosticSql,
-          explanation: diagnostic.explanation,
-          reasoningChain: `Investigating discrepancy in: ${ctx.generatedSql}`,
-          groundingCitations: [],
-          apiKey: config.geminiApiKey,
-        });
-        if (review.verdict === 'FAIL') {
-          await client.chat.update({
-            channel,
-            ts: statusMsgTs,
-            text: `Diagnostic query did not pass review: ${review.issues.join('; ')} (trace: ${traceId})`,
+          await status.set('Retrieving the data...');
+          const result = await executeQuery(diagnostic.diagnosticSql, {
+            maxRows: config.maxResultRows,
+            timeoutMs: config.queryTimeoutMs,
+            maxBytes: config.maxBytesProcessed,
           });
-          return;
-        }
 
-        const result = await executeQuery(diagnostic.diagnosticSql, {
-          maxRows: config.maxResultRows,
-          timeoutMs: config.queryTimeoutMs,
-          maxBytes: config.maxBytesProcessed,
+          const rowSummary = result.rows.slice(0, 10)
+            .map(row => Object.entries(row).map(([k, v]) => `${k}: ${formatValue(v)}`).join(', '))
+            .join('\n');
+
+          return `*Investigation:* ${diagnostic.explanation}\n\n\`\`\`${diagnostic.diagnosticSql}\`\`\`\n\n*Findings (${result.totalRows} rows):*\n${rowSummary}`;
         });
-
-        const rowSummary = result.rows.slice(0, 10)
-          .map(row => Object.entries(row).map(([k, v]) => `${k}: ${formatValue(v)}`).join(', '))
-          .join('\n');
-
-        await client.chat.update({
-          channel,
-          ts: statusMsgTs,
-          text: `*Investigation:* ${diagnostic.explanation}\n\n\`\`\`${diagnostic.diagnosticSql}\`\`\`\n\n*Findings (${result.totalRows} rows):*\n${rowSummary}`,
-        });
+        await client.chat.update({ channel, ts: statusMsgTs, text: outcome });
       } catch (error) {
         await client.chat.update({
           channel,

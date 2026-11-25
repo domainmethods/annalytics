@@ -1,0 +1,34 @@
+[
+  {
+    "model": "events",
+    "status": "success",
+    "executionTime": 8.3,
+    "runId": "dbt-history-4-retry",
+    "runStartedAt": "2026-10-05T02:30:00Z",
+    "errorMessage": null
+  },
+  {
+    "model": "users",
+    "status": "success",
+    "executionTime": 2.9,
+    "runId": "dbt-history-4",
+    "runStartedAt": "2026-10-05T02:00:00Z",
+    "errorMessage": null
+  },
+  {
+    "model": "events",
+    "status": "error",
+    "executionTime": 9.6,
+    "runId": "dbt-history-4",
+    "runStartedAt": "2026-10-05T02:00:00Z",
+    "errorMessage": "A sequence number occurs more than once in the same session.\nSELECT sequence_number, COUNT(*) AS affected_sessions\nFROM (\n  SELECT session_id, sequence_number\n  FROM `tv_thelook.events`\n  WHERE created_at >= TIMESTAMP '2026-10-04 00:00:00+00'\n    AND created_at < TIMESTAMP '2026-10-05 00:00:00+00'\n    AND session_id IS NOT NULL\n    AND sequence_number IS NOT NULL\n  GROUP BY session_id, sequence_number\n  HAVING COUNT(*) > 1\n)\nGROUP BY sequence_number\nORDER BY sequence_number\nLIMIT 100"
+  },
+  {
+    "model": "orders",
+    "status": "skipped",
+    "executionTime": 0,
+    "runId": "dbt-history-4",
+    "runStartedAt": "2026-10-05T02:00:00Z",
+    "errorMessage": null
+  }
+]

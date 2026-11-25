@@ -56,7 +56,8 @@ const DEFAULT_SWEEP_NODES: NodeId[] = ['clarification', 'sqlGenerator', 'supervi
 //     (listRegisteredModels — the registry, not a hand list), pick the cheapest
 //     within ε of the best.
 //   Stage 2 (THINKING axis): hold the winning model fixed, walk every thinking
-//     level (incl. `default`), pick the fastest within ε of the best.
+//     level (incl. `default`), pick the fastest within ε of the best seen in
+//     either stage (one shared bar, so the two ε allowances can't stack).
 //
 // The anchor is `high` on purpose: give every model ample reasoning budget in
 // Stage 1 so the model comparison reflects each one's best-case capability (we
@@ -77,17 +78,21 @@ interface SweepArgs {
   nodes: NodeId[];
   corpus: string;
   bypassClarification: boolean;
+  resume: boolean;
 }
 
 export function parseArgs(argv: string[]): SweepArgs {
   const nodes: NodeId[] = [];
   let corpus = 'benchmarks/corpus.json';
   let bypassClarification = false;
+  let resume = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--bypass-clarification') {
       bypassClarification = true;
+    } else if (arg === '--resume') {
+      resume = true;
     } else if (arg === '--node') {
       const value = argv[++i];
       if (value) {
@@ -103,10 +108,14 @@ export function parseArgs(argv: string[]): SweepArgs {
     }
   }
 
+  if (resume && corpus !== 'template') {
+    throw new Error('--resume is only supported with --corpus template');
+  }
   return {
     nodes: nodes.length > 0 ? nodes : [...(corpus === 'template' ? NODE_IDS : DEFAULT_SWEEP_NODES)],
     corpus,
     bypassClarification,
+    resume,
   };
 }
 
@@ -472,12 +481,16 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       const label = formatSweepProfile(profile);
       profileByLabel.set(label, profile);
       const score = await scorePoint(node, profile, label);
-      stage1.push(score);
-      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
+      // Under MODEL_ID_OVERRIDES the coordinate may run a different model; its notice doesn't apply.
+      const entry = getRegisteredModel(model.tier, model.version);
+      const shutdown = entry?.id === resolveModelId(model.tier, model.version) ? entry?.sunset?.shutdownDate : undefined;
+      stage1.push(shutdown ? { ...score, scheduledShutdown: true } : score);
+      const note = shutdown ? ` (shutdown ${shutdown}; ranked after viable undated models)` : '';
+      log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms${note}`);
     }
     const modelWinnerScore = pickWithinEpsilon(stage1, metricEps, e2eEps, 'cost');
     const stage1Winner = profileByLabel.get(modelWinnerScore.label)!;
-    log(`  → Stage 1 winner (cheapest within ε): ${stage1Winner.tier}/${stage1Winner.version}`);
+    log(`  → Stage 1 winner (cheapest within ε, dated shutdowns last): ${stage1Winner.tier}/${stage1Winner.version}`);
 
     // Stage 2 — THINKING axis. Hold the winning model fixed, walk every thinking
     // level the WINNING MODEL actually serves, incl. `default`. Reuse the Stage-1
@@ -506,7 +519,12 @@ export async function runSweep(cfg: SweepConfig): Promise<SweepResult> {
       stage2.push(score);
       log(`    ${label}: metric=${score.metric.toFixed(3)} e2e=${score.e2e.toFixed(3)} p95=${score.p95LatencyMs}ms`);
     }
-    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency');
+    // Gate Stage 2 against the best seen in EITHER stage, so the two ε allowances can't stack.
+    const stage1Best = {
+      metric: Math.max(...stage1.map((p) => p.metric)),
+      e2e: Math.max(...stage1.map((p) => p.e2e)),
+    };
+    const thinkingWinnerScore = pickWithinEpsilon(stage2, metricEps, e2eEps, 'latency', stage1Best);
     const chosenProfile = profileByLabel.get(thinkingWinnerScore.label)!;
 
     // Guard against the search landing somewhere worse than the node's current
@@ -825,7 +843,7 @@ export function createRunCorpusOnce(deps: RealCorpusDeps): () => Promise<CorpusR
 
 // ── Main (IO shell: env + corpus/dbt load + real runCorpusOnce + file write) ───
 
-async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string) {
+async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string, resultsDir: string, resume = false) {
   const selected = new Set(nodes);
   const ordered: NodeId[] = [
     ...[...selected].filter(node => node !== 'sqlGenerator' && node !== 'supervisor'),
@@ -863,6 +881,9 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   const setHash = hashValidationSet();
   const { createTemplateRunner, loadTemplateEnv, verifyCrossPass } = await import('./template-validation/runners.js');
   const env = await loadTemplateEnv(apiKey);
+  await mkdir(resultsDir, { recursive: true });
+  const { checkpointFileName, openSweepCheckpoint } = await import('./template-validation/checkpoint.js');
+  const checkpoint = await openSweepCheckpoint(join(resultsDir, checkpointFileName(setHash, selected)), setHash, resume);
   const outcomes: NodeOutcome[] = [];
   const epsByNode = new Map<NodeId, number>();
   const failuresByNode = new Map<NodeId, ProfileFailureCount[]>();
@@ -880,13 +901,14 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
   };
   let sqlRunner: (() => Promise<CorpusRunResult>) | undefined;
   for (const { node, items } of corpora) {
-    const runner = createTemplateRunner(node, items, env);
+    const raw = createTemplateRunner(node, items, env);
+    const runner = checkpoint.wrap(node, raw);
     const runCorpusOnce = async () => {
       const run = await runner();
       recordFailures(node, profileOf(node), run);
       return run;
     };
-    if (node === 'sqlGenerator') sqlRunner = runner;
+    if (node === 'sqlGenerator') sqlRunner = checkpoint.wrap('paired-sqlGenerator', raw);
     const result = await runSweep({
       nodes: [node], corpusCount: items.length, corpusLabel: `template/${node}`, runDate, runCorpusOnce,
     });
@@ -933,6 +955,8 @@ async function runTemplateSweep(nodes: NodeId[], apiKey: string, runDate: string
     ...(selected.size < NODE_IDS.length && { partialNodes: [...selected].sort() }),
   });
   console.log(`\nReport written to ${base}.md and .json`);
+  if (checkpoint.replayed) console.log(`(${checkpoint.replayed} pass${checkpoint.replayed === 1 ? '' : 'es'} replayed from checkpoint)`);
+  await checkpoint.discard();
 }
 
 export async function main(argv = process.argv.slice(2), templateResultsDir = join('benchmarks', 'results')) {
@@ -946,7 +970,7 @@ export async function main(argv = process.argv.slice(2), templateResultsDir = jo
       if (process.env[name]) throw new Error(`Unset ${name} in the shell and .env before running a template sweep`);
     }
     if (!apiKey) throw new Error('GEMINI_API_KEY is required for template sizing');
-    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir);
+    await runTemplateSweep(args.nodes, apiKey, runDate, templateResultsDir, args.resume);
     return;
   }
   const projectId = process.env.GCP_PROJECT_ID;
